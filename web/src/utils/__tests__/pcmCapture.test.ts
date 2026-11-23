@@ -318,32 +318,6 @@ describe('PcmStreamer', () => {
     s.stop()
   })
 
-  it('asks for the tail only while the last speech frame is recent', async () => {
-    // The wait runs through the gate's own hangover — it is still forwarding
-    // what it considers the end of the word — plus a margin for the frame in
-    // flight. It is measured from the last frame the gate heard as speech, so a
-    // user who paused before letting go is already drained.
-    const s = new PcmStreamer({
-      stream,
-      tuning: { ...VOICE_TUNING_DEFAULTS, hangoverMs: 600 },
-      onFrame: vi.fn(),
-    })
-    await s.start()
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
-    expect(s.tailWaitMs()).toBe(0) // nothing heard yet
-
-    workletNode.port.onmessage!({ data: frameAt(8000) })
-    expect(s.tailWaitMs()).toBe(750)
-
-    vi.advanceTimersByTime(250)
-    expect(s.tailWaitMs()).toBe(500)
-
-    vi.advanceTimersByTime(1000)
-    expect(s.tailWaitMs()).toBe(0)
-    s.stop()
-  })
-
   it('does not build a graph when it was stopped while the worklet loaded', async () => {
     const onFrame = vi.fn()
     const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame })

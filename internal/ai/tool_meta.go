@@ -292,23 +292,32 @@ func ExtractDisplayName(name string, input map[string]any) string {
 	return ""
 }
 
-// fileTools is the set of canonical tool names whose primary target is a
-// single file path. Only these tools have a detected FilePath promoted to
+// fileTools is the set of tool names whose primary target is a single file
+// path. Only these tools have a detected FilePath promoted to
 // ToolCallMeta/block metadata; other tools may carry coincidental path-like
 // input fields (e.g. a Bash command string containing "filename=…", or a
 // Glob/LS "path" that is a directory or pattern) that must not be treated as
 // the file identity of the call. Consumers of FilePath (file-modification
 // detection, preview refresh) only act on Write/Edit; Read is kept so file
 // reads still surface the path they operated on.
+//
+// Stored lowercased and looked up the same way: backends do not agree on
+// casing (the builtin agent's in-process tools are the bare lowercase
+// write/edit/read, ACP backends mostly report PascalCase) and there is no
+// normalization step in between. An exact map lookup silently returned "" for
+// the whole builtin family — the call carried no file_path at all, so the
+// file-changes banner, the preview refresh and the summary cards all skipped
+// it no matter how lenient the downstream name checks were.
 var fileTools = map[string]bool{
-	"Write": true,
-	"Edit":  true,
-	"Read":  true,
+	"write": true,
+	"edit":  true,
+	"read":  true,
 }
 
-// isFileTool reports whether the canonical tool name operates on a file path.
+// isFileTool reports whether the tool name operates on a file path.
+// Case-insensitive; see fileTools.
 func isFileTool(name string) bool {
-	return fileTools[name]
+	return fileTools[strings.ToLower(name)]
 }
 
 // ExtractFilePath extracts the file path from a tool call input.

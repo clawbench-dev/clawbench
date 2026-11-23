@@ -2638,12 +2638,24 @@ type SessionInfo struct {
 type ContextState struct {
 	Mode           *ModeStatePersist      `json:"mode,omitempty"`
 	ThinkingEffort *ThinkingEffortPersist `json:"thinkingEffort,omitempty"`
-	Usage          *UsageStatePersist     `json:"usage,omitempty"`
+	// ConfigOptions holds the user's picks among the agent's own generic config
+	// options (issue #746), keyed by the wire config id the agent advertised.
+	// Persisted so the choice survives a restart, a model switch and the
+	// connection being absent or busy — the value is re-applied at the start of
+	// the next turn.
+	ConfigOptions *ConfigOptionsPersist `json:"configOptions,omitempty"`
+	Usage         *UsageStatePersist    `json:"usage,omitempty"`
 	// TokenRate is the model's output speed on the session's MOST RECENT turn.
 	// Kept outside Usage because it is turn-scoped, not a context-window fact:
 	// merging it into the usage snapshot would make a reconnecting client read
 	// an old turn's speed as part of the current window.
 	TokenRate *TokenRateStat `json:"tokenRate,omitempty"`
+}
+
+// ConfigOptionsPersist is the DB-persisted form of the user's picks among the
+// agent's generic config options.
+type ConfigOptionsPersist struct {
+	Values map[string]string `json:"values"`
 }
 
 // TokenRateStat is the measured output speed of one turn.
@@ -3179,6 +3191,56 @@ func GetSessionModeID(sessionID string) string {
 		return cs.Mode.CurrentModeID
 	}
 	return ""
+}
+
+// PersistConfigOptionPicks records the user's picks among the agent's own
+// generic config options (issue #746).
+//
+// Merged into whatever is stored, not replaced: the drawer sends one option at
+// a time, and a replace would drop the others. Picks are kept even when no ACP
+// connection exists — the value is applied at the start of the next turn (see
+// ai.ChatRequest.ConfigOptions), which is what makes "change it while the agent
+// is busy" work instead of being silently discarded.
+func PersistConfigOptionPicks(sessionID string, picks map[string]string) {
+	if sessionID == "" || len(picks) == 0 {
+		return
+	}
+	merged := GetSessionConfigOptionPicks(sessionID)
+	if merged == nil {
+		merged = make(map[string]string, len(picks))
+	}
+	for id, value := range picks {
+		if id == "" {
+			continue
+		}
+		if value == "" {
+			// An empty value CLEARS the pick (the option went away or the user
+			// reset it), rather than storing a blank that would be replayed.
+			delete(merged, id)
+			continue
+		}
+		merged[id] = value
+	}
+	payload, err := json.Marshal(ConfigOptionsPersist{Values: merged})
+	if err != nil {
+		slog.Warn("persist config options: marshal", "sid", sessionID, "err", err)
+		return
+	}
+	PatchContextStateMerge(sessionID, map[string]string{"configOptions": string(payload)})
+}
+
+// GetSessionConfigOptionPicks returns the session's stored picks among the
+// agent's generic config options, or nil when nothing is stored.
+func GetSessionConfigOptionPicks(sessionID string) map[string]string {
+	state := GetContextState(sessionID)
+	if state == nil || state.ConfigOptions == nil || len(state.ConfigOptions.Values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(state.ConfigOptions.Values))
+	for id, value := range state.ConfigOptions.Values {
+		out[id] = value
+	}
+	return out
 }
 
 // PersistThinkingEffortPick records an EXPLICIT user effort pick for a session.

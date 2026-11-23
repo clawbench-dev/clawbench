@@ -87,6 +87,15 @@ type Spec struct {
 	// images, so a long conversation does not re-send every screenshot on every
 	// turn.
 	PromptParts []llm.Part
+	// Injections carries messages that join THIS turn after it has started (the
+	// chat queue's "insert into the current reply" action). The engine reads it
+	// between model rounds and emits EventInjected at that point.
+	//
+	// nil means the run cannot be joined — a background task or a sub-agent.
+	// A sub-agent must NEVER inherit the parent's mailbox: it runs its own model
+	// loop, and a message meant for the parent would be answered inside a task
+	// card the user cannot reply to.
+	Injections *InjectionMailbox
 	// Timeout bounds the whole run. Zero means no extra bound beyond ctx.
 	Timeout time.Duration
 
@@ -139,6 +148,11 @@ const (
 	// reasoning block would stay "in progress" forever, which the UI renders as
 	// a spinner with no body.
 	EventReasoningDone EventKind = "reasoning_done"
+	// EventInjected reports that a message injected mid-turn has just entered
+	// the conversation, at the boundary between two model rounds. It is the
+	// point where the assistant reply splits into a "before" and an "after"
+	// half, so the caller can persist the two halves in conversational order.
+	EventInjected EventKind = "injected"
 )
 
 // Event is one update from a run.
@@ -158,6 +172,10 @@ type Event struct {
 
 	Usage *llm.Usage
 	Err   error
+
+	// ClientUserMessageID is set on EventInjected: the caller's id for the
+	// message that just joined the turn. It is the split point for the reply.
+	ClientUserMessageID string
 
 	// ParentToolCallID is the id of the task call that spawned the sub-agent
 	// which produced this event, or "" for top-level output. The event pump
@@ -284,6 +302,7 @@ func Run(ctx context.Context, spec Spec) <-chan Event {
 				// A panic after the terminal event (e.g. in a deferred cleanup)
 				// must not emit a second one.
 				if !r.terminated {
+					r.discardInjections("panic")
 					r.emit(Event{Kind: EventError, Err: fmt.Errorf("internal error: %v", rec)})
 				}
 			}
@@ -360,6 +379,11 @@ type runner struct {
 	// lastTruncated records that the most recent round was cut off at the
 	// output cap, so the terminal event can say the answer may be incomplete.
 	lastTruncated bool
+	// closed records that the budget's closing round already ran. A message
+	// injected during that round gets a normal round instead of a second
+	// hand-off: the closing prompt is a summary of what was done, not an answer
+	// to the new question.
+	closed bool
 	// terminated records that a done/error event was already sent. The panic
 	// guard reads it so a panic after the terminal event cannot emit a second.
 	terminated bool
@@ -464,12 +488,7 @@ func (r *runner) run(ctx context.Context) {
 	r.compactIfNeeded(runCtx, system)
 
 	for {
-		if runCtx.Err() != nil {
-			r.finishCancelled()
-			return
-		}
-		if r.roundsExhausted() {
-			r.finishWithClosing(runCtx, StopMaxRounds, system)
+		if !r.beginRound(runCtx, system) {
 			return
 		}
 		round := r.spec.Budget.AddRound()
@@ -492,14 +511,10 @@ func (r *runner) run(ctx context.Context) {
 		// at the output cap is a prefix, and a round with no text at all is a
 		// stall.
 		if len(out.calls) == 0 {
-			if r.continueTruncated(out) {
-				continue
+			if r.finishAfterAnswer(out) {
+				return
 			}
-			if r.nudgeEmptyRound(out.texts) {
-				continue
-			}
-			r.finish(StopComplete, 0)
-			return
+			continue
 		}
 
 		results := r.executeTools(env, out.calls)
@@ -520,9 +535,108 @@ func (r *runner) run(ctx context.Context) {
 			// The budget is spent. Do one last model round WITHOUT tools so the
 			// model has a chance to summarize what it found instead of the turn
 			// ending with a bare tool result the user never sees.
-			r.finishWithClosing(runCtx, StopMaxToolCalls, system)
-			return
+			r.closed = true
+			if r.finishWithClosing(runCtx, StopMaxToolCalls, system) {
+				return
+			}
+			continue
 		}
+	}
+}
+
+// beginRound decides whether the turn can run another model round. It reports
+// false when the turn ended here.
+//
+// It absorbs messages injected while the previous round was running — before
+// the next model request, the only point at which the turn can see them — and
+// emits the boundary event the caller uses to split the assistant reply.
+//
+// An injected message buys the round that answers it even when the budget is
+// spent: the cap exists to stop runaway TOOL loops, and a human typing is not
+// one. `closed` keeps the hand-off round from running twice when a message
+// arrives during it.
+func (r *runner) beginRound(ctx context.Context, system string) bool {
+	if ctx.Err() != nil {
+		r.finishCancelled()
+		return false
+	}
+	injected := r.absorbInjections()
+	if injected || r.closed || !r.roundsExhausted() {
+		return true
+	}
+	r.closed = true
+	return !r.finishWithClosing(ctx, StopMaxRounds, system)
+}
+
+// finishAfterAnswer handles a round that made no tool calls. It reports whether
+// the turn ended; false means another round should run.
+//
+// Three things can keep a "finished" answer going: the endpoint cut it off (ask
+// the model to carry on), the round produced nothing at all (nudge it), or a
+// message was injected while it was streaming (answer that too).
+func (r *runner) finishAfterAnswer(out roundOutput) bool {
+	if r.continueTruncated(out) {
+		return false
+	}
+	if r.nudgeEmptyRound(out.texts) {
+		return false
+	}
+	return r.tryFinish(StopComplete, 0)
+}
+
+// absorbInjections appends the next injected message to the conversation and
+// announces the boundary. It reports whether one was waiting.
+func (r *runner) absorbInjections() bool {
+	p, ok := r.spec.Injections.Pop()
+	if !ok {
+		return false
+	}
+	r.absorb(p)
+	return true
+}
+
+// absorb records one injected message as a user turn and emits its boundary.
+//
+// The boundary goes out BEFORE the next model round produces anything, which is
+// what lets the caller finalize the reply so far and open a new assistant row
+// below the injected message.
+func (r *runner) absorb(p PendingInjection) {
+	r.messages = append(r.messages, llm.TextMessage(llm.RoleUser, p.Text))
+	r.emit(Event{Kind: EventInjected, ClientUserMessageID: p.ClientUserMessageID})
+}
+
+// tryFinish ends the turn unless a message was injected after the last model
+// round. It reports whether the turn ended.
+//
+// Popping and sealing happen under one lock: a concurrent Push either supplies
+// the returned message (and therefore gets a round) or is refused (and stays in
+// the queue). That is the property that keeps "the insertion reported success"
+// from ever meaning "nobody answered it".
+func (r *runner) tryFinish(reason string, limit int) bool {
+	pending, ok, sealed := r.spec.Injections.PopOrSeal()
+	if sealed {
+		r.finish(reason, limit)
+		return true
+	}
+	if ok {
+		r.absorb(pending)
+	}
+	return false
+}
+
+// discardInjections seals the mailbox on a path that cannot run another round
+// (cancellation, failure) and logs anything that was accepted but never
+// answered.
+//
+// Those messages are already in chat_history and were announced to the user, so
+// they remain visible and unanswered — the same outcome as cancelling a turn
+// right after CodeBuddy accepted a steer. The log is the only trace that the
+// model never saw them.
+func (r *runner) discardInjections(reason string) {
+	pending := r.spec.Injections.Seal()
+	for _, p := range pending {
+		slog.Warn("agentcore: turn ended before an injected message could be answered",
+			"client_user_message_id", p.ClientUserMessageID, "reason", reason)
 	}
 }
 
@@ -1286,6 +1400,7 @@ const emitGrace = 30 * time.Second
 
 // fail sends the terminal error event.
 func (r *runner) fail(err error) {
+	r.discardInjections("turn failed")
 	r.emit(Event{Kind: EventError, Err: err})
 }
 
@@ -1294,6 +1409,7 @@ func (r *runner) fail(err error) {
 // A cancellation is an error rather than a done event so the caller can tell
 // "the model finished" from "the user cut it short".
 func (r *runner) finishCancelled() {
+	r.discardInjections("turn cancelled")
 	r.emit(Event{Kind: EventError, Err: context.Canceled})
 }
 
@@ -1322,22 +1438,24 @@ func closingPrompt(reason string) string {
 // `sed`/`grep` output and no answer, which reads as the agent dying mid-task.
 // The call is best-effort: if it fails, the run still ends with the same stop
 // reason and whatever the model already produced.
-func (r *runner) finishWithClosing(ctx context.Context, reason, system string) {
+//
+// It reports whether the run ended. false means a message was injected during
+// the closing round, so the caller must run a normal round to answer it.
+func (r *runner) finishWithClosing(ctx context.Context, reason, system string) bool {
 	limit := r.spec.Policy.Rounds()
 	if reason == StopMaxToolCalls {
 		limit = r.spec.Policy.ToolCalls()
 	}
 	if ctx.Err() != nil {
 		r.finishCancelled()
-		return
+		return true
 	}
 	// A sub-agent does not get a closing round. Its budget is the parent's, so
 	// a child that hit the cap must hand back what it has; the parent is the
 	// one that writes the user-facing hand-off, and two closing rounds would
 	// spend two extra calls past the cap.
 	if r.spec.Depth > 0 {
-		r.finish(reason, limit)
-		return
+		return r.tryFinish(reason, limit)
 	}
 	// Counted in Rounds because it really is a model call; the budget is
 	// already spent, so this is deliberately the one call past the cap.
@@ -1348,14 +1466,14 @@ func (r *runner) finishWithClosing(ctx context.Context, reason, system string) {
 		// a completed turn that happened to run out of budget.
 		if ctx.Err() != nil {
 			r.finishCancelled()
-			return
+			return true
 		}
 		slog.Warn("agentcore: closing round failed, ending without a summary",
 			"err", err, "stop_reason", reason)
 	} else {
 		r.lastTruncated = out.truncated
 	}
-	r.finish(reason, limit)
+	return r.tryFinish(reason, limit)
 }
 
 // finish sends the terminal success event with the run's totals.

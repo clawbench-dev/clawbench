@@ -266,13 +266,19 @@ export function applySummaryUpdate(msg: Record<string, unknown>, summary: string
  * Whether a queued message's single action should be "insert into the current
  * reply" (true) or "interrupt and send" (false).
  *
- * Both conditions are about the AGENT, not the session: injection goes through
- * the agent's live ACP connection, and an agent runs over ACP exactly when it
- * has an ACP command (model.Agent.DeriveTransport — the single source of truth).
- * The in-process built-in agent is the only one without a connection, so a
- * capable agent whose command is missing cannot insert.
+ * The answer is the AGENT's capability, nothing else. It used to also require
+ * "runs over ACP", because injection only existed as an ACP extension and the
+ * in-process built-in agent had no connection — a capable flag on a non-ACP
+ * agent could not actually land. That is no longer true: the built-in agent
+ * injects through its own turn loop (ai.InProcessMidTurnInjector), so the
+ * capability bit is the whole truth for both transports. Keeping the transport
+ * check would hide the button for the one backend that now supports it.
  *
- * A GROUP session is forced to interrupt regardless of both. A group turn is a
+ * An agent the client has not fetched yet reports supportsMidTurn=false, so the
+ * mount-before-/api/agents window stays on "interrupt" rather than optimistically
+ * promising an insert.
+ *
+ * A GROUP session is forced to interrupt regardless. A group turn is a
  * multi-round loop with no single running reply to join, and the inject
  * endpoint resolves the connection by the session id it is given — but every
  * group member runs on its own connection keyed by the MEMBER row id, so the
@@ -282,9 +288,6 @@ export function applySummaryUpdate(msg: Record<string, unknown>, summary: string
 export function resolveMidTurnSupported(
   isGroupSession: boolean,
   agentSupportsMidTurn: boolean,
-  agentRunsOverACP: boolean,
 ): boolean {
-  if (isGroupSession) return false
-  if (!agentSupportsMidTurn) return false
-  return agentRunsOverACP
+  return !isGroupSession && agentSupportsMidTurn
 }

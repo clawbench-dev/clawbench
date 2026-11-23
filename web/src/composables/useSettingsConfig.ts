@@ -927,6 +927,13 @@ export async function patchAgentField(
     await loadAgents(true)
     return
   }
+  // preferred_config_options: the server stores it per model and the client only
+  // sends a flat map, so the value shown (defaultModelConfigOptions) is derived
+  // server-side. Mirroring the flat map locally would not match that shape.
+  if (field === 'preferred_config_options') {
+    await loadAgents(true)
+    return
+  }
   // tool_policy: same reason, and stronger — the server closes the capability
   // set over its implications (exec implies write implies read). Mirroring the
   // raw payload would leave the UI showing "exec only" while the agent can also

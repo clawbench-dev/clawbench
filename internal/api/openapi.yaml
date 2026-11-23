@@ -2158,18 +2158,18 @@ paths:
         分组数量上限由 `chat.recent_project_cards_max_count`（默认 10）决定，
         **在排除当前项目、去掉已有活跃会话的项目之后**再截断，因此上限计的就是
         界面上实际会显示的卡片数。调用方的当前项目永远不作为卡片返回。
+
+        **目录已不存在的项目不会返回**：这类卡片点了也打不开，只会在列表里留
+        一行死数据。活跃分组与仅最近活跃的项目都按这条规则过滤，且被过滤的项目
+        不计入 `total`、不占用卡片上限。
       operationId: sessionsOverview
       responses:
         "200":
           description: |
-            各项目会话概览（`{projects: [{name, projectId?, dirMissing?, sessions, lastActiveAt?}], total}`）。
+            各项目会话概览（`{projects: [{name, sessions, lastActiveAt?}], total}`）。
             每行携带 `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
-            `total` 仍是**活跃会话**总数，不含仅最近活跃的项目。
-
-            分组上的两个可选字段用于「其他项目」卡片清理失效项目：
-            - `projectId`：项目注册表 id；省略 = 该路径未在注册表中（无法直接清理）。
-            - `dirMissing`：项目目录在磁盘上已不存在；客户端据此显示「目录不存在」
-              并允许直接删除项目，避免先切到该路径。
+            `total` 仍是**活跃会话**总数，不含仅最近活跃的项目，也不含目录已
+            不存在的项目。
 
   /api/ai/sessions/by-project:
     get:
@@ -2659,17 +2659,13 @@ paths:
         物理删除会话及其全部数据（chat_history、tool_calls、raw_responses、
         task_executions、会话记录），正在运行的会话会先被取消。
 
-        **不校验项目 cookie，也不做归属校验**：任意已认证调用方可以销毁任意
-        `session_id`。这是为「其他项目」卡片清理会话（包括项目目录已从磁盘
-        移除、无法先切过去的会话）而刻意放弃的项目作用域检查，与本产品
-        「认证即拥有全部项目」的模型一致。
+        与其它会话接口一致，**要求已选定项目**（`clawbench_project` cookie
+        非空），否则返回 `403` 且不删除任何数据。
 
-        返回值里的 `sessionCount` 仍是**调用方当前项目**的会话数；调用方没有
-        项目 cookie 时按全局作用域（`project_id=0`）计数。
+        返回值里的 `sessionCount` 是**调用方当前项目**的会话数。
 
         销毁成功会向所有已连接的客户端广播 `session_removed` 事件，`project_path`
-        取被销毁会话自身所属项目（删除前读取），因此无 cookie 的跨项目销毁也能
-        让对应项目的客户端收起该会话。
+        取被销毁会话自身所属项目（删除前读取），而不是调用方的 cookie。
       operationId: sessionDestroy
       parameters:
         - name: session_id
@@ -6785,10 +6781,10 @@ paths:
       summary: 更新 agent
       description: |
         部分更新单个 agent（body 含 `id`）。可更新字段：
-        `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
-        `acp_command`、`name`、`specialty`、`custom_system_prompt`、
-        `avatar`、`avatar_style`、`avatar_seed`、`sort_order`、`auto_approve`、`disabled`、`project_scope`、
-        `mcp_servers`、`provider_id`、`tool_policy`、`skip_project_context`。
+        `preferred_model`/`preferred_thinking_effort`/`preferred_mode`/`preferred_config_options`/
+        `acp_command`/`name`/`specialty`/`custom_system_prompt`/
+        `avatar`/`avatar_style`/`avatar_seed`/`sort_order`/`auto_approve`/`disabled`/`project_scope`/
+        `mcp_servers`/`provider_id`/`tool_policy`/`skip_project_context`。
         `avatar` 为原始 SVG 字符串或上传图片的 `data:image/...` URI；空串恢复内置图标，
         非空时校验大小、格式与安全性。`avatar_style`/`avatar_seed` 记录生成头像所用的
         DiceBear 风格与种子（上传图片与旧头像为空）；更换 `avatar` 时未同时提供的来源字段
@@ -6796,8 +6792,7 @@ paths:
         `acp_command` 为 ACP 启动命令（空格拆分、不支持引号、≤4096 字节），**仅
         无 spec 的 agent 可改**：改非空命令会重启其 ACP 连接（旧进程是用旧命令起的），
         `transport` 由命令推导、无需单独传；空串被拒（没有别的实现兜底）。内置后端的
-        命令由自动发现维护，发送即 `400` `AcpCommandManagedByDiscovery`。已废弃的
-        `transport` 字段会被忽略。
+        命令由自动发现维护，发送即 `400` `AcpCommandManagedByDiscovery`。已废弃的 `transport` 字段会被忽略。
         `disabled` 为布尔值：禁用后不再出现在任何新建入口；**默认智能体不能
         禁用**（`CannotDisableDefaultAgent`）。
         `project_scope` 为布尔值：`true` 表示「仅当前项目」（按

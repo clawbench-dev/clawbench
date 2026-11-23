@@ -41,6 +41,10 @@ func init() {
 	// CodeBuddy's session/steer) without importing the backends package.
 	ai.LookupMidTurnInjectorFn = LookupMidTurnInjector
 
+	// The in-process variant: the built-in agent's turn loop lives here, so its
+	// policy is reached directly instead of through an ACP connection.
+	ai.LookupInProcessMidTurnInjectorFn = LookupInProcessMidTurnInjector
+
 	// Wire up the spawn-hook lookup so the shared lifecycle can append a
 	// backend's own argv/env without naming the backend.
 	ai.LookupACPSpawnHooksFn = LookupACPSpawnHooks

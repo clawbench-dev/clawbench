@@ -352,3 +352,31 @@ func TestPreferredModelForProvider(t *testing.T) {
 		})
 	}
 }
+
+// ── Per-model config-option picks (issue #746) ──────────────────────────────
+
+func TestAgent_ConfigOptionsForModel(t *testing.T) {
+	a := &model.Agent{}
+	assert.Nil(t, a.ConfigOptionsForModel("m1"), "nothing remembered yields nil")
+
+	a.SetConfigOptionsForModel("m1", map[string]string{"fast-mode": "on"})
+	got := a.ConfigOptionsForModel("m1")
+	assert.Equal(t, "on", got["fast-mode"])
+	assert.Nil(t, a.ConfigOptionsForModel("m2"), "picks are per model")
+
+	// The returned map is a copy: mutating it must not change the agent (readers
+	// hold *Agent without a lock, so a shared map would race them).
+	got["fast-mode"] = "off"
+	assert.Equal(t, "on", a.ConfigOptionsForModel("m1")["fast-mode"])
+
+	// Copy-on-write: the map is replaced, so a previously handed-out value stays
+	// frozen for readers that still hold it.
+	before := a.PreferredConfigOptions["m1"]
+	a.SetConfigOptionsForModel("m1", map[string]string{"fast-mode": "off"})
+	assert.Equal(t, "on", before["fast-mode"], "the previous map must not be mutated in place")
+	assert.Equal(t, "off", a.ConfigOptionsForModel("m1")["fast-mode"])
+
+	// An empty map removes the model's entry entirely.
+	a.SetConfigOptionsForModel("m1", nil)
+	assert.Nil(t, a.ConfigOptionsForModel("m1"))
+}

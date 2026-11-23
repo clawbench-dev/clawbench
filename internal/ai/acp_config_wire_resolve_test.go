@@ -216,3 +216,86 @@ func TestSetSessionConfigOptionBool(t *testing.T) {
 	assert.Equal(t, "false", sent[1].value)
 	assert.Equal(t, "false", conn.GetCurrentSelection("fast-mode"))
 }
+
+// ---------------------------------------------------------------------------
+// Turn-start application of agent-declared config options (issue #746)
+// ---------------------------------------------------------------------------
+
+// A pick must reach the agent before the prompt, using the id the agent itself
+// advertised and the right RPC form: a boolean option sent as a string value is
+// rejected. Options this model does not advertise are skipped — a pick can
+// outlive the model it was made under, and sending it would fail every turn.
+func TestApplyExtraConfigOptionsAtTurn_SendsAdvertisedOnly(t *testing.T) {
+	conn := newLiveConnForConfigTest("prompt-extra")
+	conn.SetExtraConfigOptions([]ExtraConfigOption{
+		{
+			ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select", CurrentID: "off",
+			Values: []ConfigOptionValue{{ID: "off"}, {ID: "on"}},
+		},
+		{ConfigID: "fast-toggle", Name: "Fast toggle", Category: "model_config", Type: "boolean", CurrentID: "false"},
+	})
+	rec := installConfigSendRecorder(t, conn)
+
+	err := conn.applyExtraConfigOptionsAtTurn(context.Background(), "acp-sid", map[string]string{
+		"fast-mode":   "on",
+		"fast-toggle": "true",
+		"gone-option": "x", // not advertised for this model
+	})
+	require.NoError(t, err)
+
+	sent := rec.all()
+	require.Len(t, sent, 2, "only advertised options may be sent")
+	assert.Equal(t, "fast-mode", sent[0].configID)
+	assert.Equal(t, "on", sent[0].value)
+	assert.Equal(t, "fast-toggle", sent[1].configID)
+	assert.Equal(t, "true", sent[1].value)
+
+	// The session cache follows immediately, so the drawer shows the pick
+	// without waiting for the agent's notification.
+	assert.Equal(t, "on", conn.GetCurrentSelection("fast-mode"))
+	assert.Equal(t, "true", conn.GetCurrentSelection("fast-toggle"))
+}
+
+// The same pick applied twice must cost one RPC: every turn runs this path, and
+// re-sending an unchanged value would add a round trip to each turn.
+func TestApplyExtraConfigOptionsAtTurn_SkipsUnchanged(t *testing.T) {
+	conn := newLiveConnForConfigTest("prompt-extra-dedup")
+	conn.SetExtraConfigOptions([]ExtraConfigOption{
+		{ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select", CurrentID: "off"},
+	})
+	rec := installConfigSendRecorder(t, conn)
+
+	picks := map[string]string{"fast-mode": "on"}
+	require.NoError(t, conn.applyExtraConfigOptionsAtTurn(context.Background(), "acp-sid", picks))
+	require.NoError(t, conn.applyExtraConfigOptionsAtTurn(context.Background(), "acp-sid", picks))
+
+	assert.Len(t, rec.all(), 1, "an unchanged value must not be re-sent")
+}
+
+// A brand-new session may reach Prompt with no list on the connection (the
+// session/new response omitted configOptions, or a resume did). The agent-level
+// cache already knows what this model offers, so the pick must still be applied
+// — otherwise a value inherited from a previous session is never sent and the
+// drawer shows one thing while the agent runs another (issue #746).
+func TestApplyExtraConfigOptionsAtTurn_FallsBackToRegistry(t *testing.T) {
+	agent := &model.Agent{ID: "prompt-extra-fallback", Backend: "codex", AcpCommand: "codex"}
+	conn := newACPConn(agent, "prompt-extra-fallback-sid")
+	conn.SetAliveForTest()
+	conn.SetSessionMappingForTest("prompt-extra-fallback-sid", "acp-sid")
+	conn.UpdateCachedCurrent("model", "m1")
+
+	reg := GetAgentCapabilityRegistry()
+	reg.ResetForTest(agent.ID)
+	t.Cleanup(func() { reg.ResetForTest(agent.ID) })
+	reg.UpdateExtraConfigOptions(agent.ID, "m1", []ExtraConfigOption{
+		{ConfigID: "fast-mode", Name: "Fast mode", Category: "model_config", Type: "select"},
+	})
+
+	rec := installConfigSendRecorder(t, conn)
+	require.NoError(t, conn.applyExtraConfigOptionsAtTurn(context.Background(), "acp-sid", map[string]string{"fast-mode": "on"}))
+
+	sent := rec.all()
+	require.Len(t, sent, 1)
+	assert.Equal(t, "fast-mode", sent[0].configID)
+	assert.Equal(t, "on", sent[0].value)
+}

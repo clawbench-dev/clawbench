@@ -4,56 +4,6 @@ import (
 	"encoding/json"
 )
 
-// normalizeToolName maps backend-specific tool names to the canonical names
-// used by ToolCall throughout the codebase.
-//
-// Canonical names: Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch,
-// Agent, EnterPlanMode, Skill, TodoWrite.
-//
-// The same mapping is used by stream_json_parser.go and opencode_stream.go.
-//
-//nolint:gocyclo // complex stream parsing logic
-func normalizeToolName(toolName string) string {
-	switch toolName {
-	case "read_file", "read", "look_at":
-		return "Read"
-	case "write_file", "write":
-		return "Write"
-	case "edit_file", "replace", "edit":
-		return "Edit"
-	case "shell", "run_command", "bash", "exec_shell", "terminal", "run_shell_command":
-		return "Bash"
-	case "list_files", "list_directory", "ls", "list_dir", "list":
-		return "LS"
-	case "search_files", "grep", "grep_files", "grep_search", "search_file", "search_directory":
-		return "Grep"
-	case "file_search", "glob", "find":
-		return "Glob"
-	case "web_fetch", "webfetch", "fetch_url":
-		return "WebFetch"
-	case "google_web_search", "websearch", "web_search":
-		return "WebSearch"
-	case "invoke_agent", "task", "agent_spawn", "spawn_agent", "delegate_to_agent", "agent":
-		return "Agent"
-	case "enter_plan_mode", "enterplanmode":
-		return "EnterPlanMode"
-	case "exit_plan_mode", "exitplanmode":
-		return "ExitPlanMode"
-	case "activate_skill", "skill", "load_skill":
-		return "Skill"
-	case "todowrite", "todo_write", "checklist_write":
-		return "TodoWrite"
-	case "apply_patch":
-		return "Edit" // patch-based editing -> Edit
-	case "git_status", "git_diff", "git_log", "git_show", "git_blame":
-		return "Git" // git operations -> Git
-	case "save_memory":
-		return "save_memory" // no canonical PascalCase equivalent
-	default:
-		return toolName
-	}
-}
-
 // normalizeToolInput remaps camelCase input field names to canonical snake_case.
 // It accepts an optional pathMappings map to rename additional fields (e.g., dirPath->path).
 // If rawInput is not valid JSON, it returns the input unchanged.

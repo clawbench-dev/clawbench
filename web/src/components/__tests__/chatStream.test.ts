@@ -1,38 +1,36 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ref, nextTick, computed, isReactive, toRaw } from 'vue'
 import {
-  FILE_MODIFYING_TOOLS,
+  isFileModifyingTool,
   findLastBlockOfType,
   forceCleanupStreamingState,
 } from '@/utils/chatStreamUtils.ts'
 
-describe('FILE_MODIFYING_TOOLS', () => {
-  it('includes Write tool', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Write')).toBe(true)
+describe('isFileModifyingTool', () => {
+  it('accepts the PascalCase names ACP backends report', () => {
+    expect(isFileModifyingTool('Write')).toBe(true)
+    expect(isFileModifyingTool('Edit')).toBe(true)
   })
 
-  it('includes Edit tool', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Edit')).toBe(true)
+  it('accepts the bare lowercase names the builtin agent reports', () => {
+    expect(isFileModifyingTool('write')).toBe(true)
+    expect(isFileModifyingTool('edit')).toBe(true)
   })
 
-  it('does not include Read tool', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Read')).toBe(false)
+  it('accepts any other casing', () => {
+    expect(isFileModifyingTool('WRITE')).toBe(true)
+    expect(isFileModifyingTool('eDiT')).toBe(true)
   })
 
-  it('does not include Bash tool', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Bash')).toBe(false)
+  it('rejects tools that do not modify files', () => {
+    for (const name of ['Read', 'bash', 'Grep', 'Glob', 'Task']) {
+      expect(isFileModifyingTool(name)).toBe(false)
+    }
   })
 
-  it('does not include Grep tool', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Grep')).toBe(false)
-  })
-
-  it('does not include Glob tool', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Glob')).toBe(false)
-  })
-
-  it('is case-sensitive (lowercase "write" is not included)', () => {
-    expect(FILE_MODIFYING_TOOLS.has('write')).toBe(false)
+  it('rejects missing names', () => {
+    expect(isFileModifyingTool(undefined)).toBe(false)
+    expect(isFileModifyingTool('')).toBe(false)
   })
 })
 
@@ -290,24 +288,29 @@ describe('tool_use event handling', () => {
 
   it('detects file modification for Write tool', () => {
     const data = { name: 'Write', id: '1', done: true, input: { file_path: '/tmp/test.go', content: 'hello' } }
-    const isFileModifying = FILE_MODIFYING_TOOLS.has(data.name)
-    const filePath = data.input?.file_path
-    expect(isFileModifying).toBe(true)
-    expect(filePath).toBe('/tmp/test.go')
+    expect(isFileModifyingTool(data.name)).toBe(true)
+    expect(data.input?.file_path).toBe('/tmp/test.go')
+  })
+
+  it('detects file modification for the builtin agent\'s lowercase write', () => {
+    const data = { name: 'write', id: '1', done: true, input: { file_path: '/tmp/test.go' } }
+    expect(isFileModifyingTool(data.name)).toBe(true)
   })
 
   it('detects file modification for Edit tool', () => {
     const data = { name: 'Edit', id: '2', done: true, input: { file_path: '/tmp/edit.go', old_string: 'a', new_string: 'b' } }
-    const isFileModifying = FILE_MODIFYING_TOOLS.has(data.name)
-    const filePath = data.input?.file_path
-    expect(isFileModifying).toBe(true)
-    expect(filePath).toBe('/tmp/edit.go')
+    expect(isFileModifyingTool(data.name)).toBe(true)
+    expect(data.input?.file_path).toBe('/tmp/edit.go')
+  })
+
+  it('detects file modification for the builtin agent\'s lowercase edit', () => {
+    const data = { name: 'edit', id: '2', done: true, input: { file_path: '/tmp/edit.go' } }
+    expect(isFileModifyingTool(data.name)).toBe(true)
   })
 
   it('does not detect file modification for Read tool', () => {
     const data = { name: 'Read', id: '3', done: true, input: { file_path: '/tmp/read.go' } }
-    const isFileModifying = FILE_MODIFYING_TOOLS.has(data.name)
-    expect(isFileModifying).toBe(false)
+    expect(isFileModifyingTool(data.name)).toBe(false)
   })
 })
 

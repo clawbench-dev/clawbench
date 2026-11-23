@@ -160,9 +160,6 @@ func NewToolCallDebouncerForTest(ch chan<- StreamEvent, conn *ACPConn) *toolCall
 	return newToolCallDebouncer(ch, conn)
 }
 
-// NormalizeToolName maps a backend's raw tool name to the canonical one.
-func NormalizeToolName(toolName string) string { return normalizeToolName(toolName) }
-
 // NormalizeToolInput rewrites a tool call's raw JSON input field names to the
 // canonical snake_case form, applying the caller's path mappings on top of the
 // shared defaults.

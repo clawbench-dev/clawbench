@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -291,13 +292,18 @@ func catalogModelsForAgent(a *model.Agent) []model.AgentModel {
 // GET /api/agents. It lets the client populate mode chips, effort pickers and
 // slash commands without extra round trips.
 type acpState struct {
-	Mode         *ai.ModeState             `json:"modeState,omitempty"`
-	Effort       *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
-	Commands     []ai.AvailableCommandInfo `json:"commands,omitempty"`
-	ModelList    *ai.ModelListState        `json:"modelListState,omitempty"`
-	Plan         *ai.PlanState             `json:"planState,omitempty"`
-	LoadSession  bool                      `json:"loadSession"`
-	ListSessions bool                      `json:"listSessions"`
+	Mode     *ai.ModeState             `json:"modeState,omitempty"`
+	Effort   *ai.ThinkingEffortState   `json:"thinkingEffortState,omitempty"`
+	Commands []ai.AvailableCommandInfo `json:"commands,omitempty"`
+	// ConfigOptions are the agent-declared generic options (codex's "Fast mode")
+	// for the agent's DEFAULT model, i.e. what the settings page configures
+	// (issue #746). Resolved against the default model for the same reason the
+	// effort list is: the live "current model" would flip between requests.
+	ConfigOptions []ai.ExtraConfigOption `json:"configOptions,omitempty"`
+	ModelList     *ai.ModelListState     `json:"modelListState,omitempty"`
+	Plan          *ai.PlanState          `json:"planState,omitempty"`
+	LoadSession   bool                   `json:"loadSession"`
+	ListSessions  bool                   `json:"listSessions"`
 }
 
 // resolveAgentModelLists fills in each agent's ACP state and replaces the
@@ -380,6 +386,7 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 		s.Effort = reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), "")
 		s.Commands = reg.GetCommands(a.ID)
 		s.ModelList = reg.GetModelListState(a.ID, connManager.GetCurrentModelIDByAgentID(a.ID))
+		s.ConfigOptions = reg.GetExtraConfigOptions(a.ID, a.DefaultModelID())
 		states[a.ID] = s
 
 		var acpModels []model.AgentModel
@@ -518,6 +525,12 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 		// surfaces cannot disagree about which command it is. Empty when the
 		// backend has no built-in installer.
 		InstallCmd string `json:"installCmd,omitempty"`
+		// DefaultModelConfigOptions are the remembered picks among the agent's
+		// own generic config options for its DEFAULT model, flattened (issue
+		// #746). The settings page configures exactly that model, and flattening
+		// here keeps the client from having to guess which model key the server
+		// writes to.
+		DefaultModelConfigOptions map[string]string `json:"defaultModelConfigOptions,omitempty"`
 	}
 	usageByAgent, usageErr := service.GetAllAgentUsage()
 	if usageErr != nil {
@@ -529,11 +542,12 @@ func serveAgentsGet(w http.ResponseWriter, r *http.Request) {
 	for i, a := range agents {
 		u := usageByAgent[a.ID]
 		out[i] = agentWithUsage{
-			Agent:           a,
-			SessionCount:    u.Sessions,
-			TaskCount:       u.Tasks,
-			MembershipCount: u.Memberships,
-			InstallCmd:      backendInstallCmd(a.Backend),
+			Agent:                     a,
+			SessionCount:              u.Sessions,
+			TaskCount:                 u.Tasks,
+			MembershipCount:           u.Memberships,
+			InstallCmd:                backendInstallCmd(a.Backend),
+			DefaultModelConfigOptions: a.ConfigOptionsForModel(a.DefaultModelID()),
 		}
 	}
 
@@ -1003,6 +1017,54 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			}
 		}
 		ap.PreferredThinkingEffort = &level
+	}
+
+	// Validate and apply preferred_config_options: the defaults for the agent's
+	// own generic config options (issue #746). The body is a FLAT map of
+	// configId → value; it is stored against the agent's default model, which is
+	// what the settings page shows and what a new session starts on. Other
+	// models keep whatever their own sessions remembered.
+	if v, exists := patch["preferred_config_options"]; exists {
+		raw, _ := v.(map[string]any)
+		// Same request may switch the default model; the picks then belong to
+		// the NEW default, not the one this row still holds.
+		defaultModelID := agent.DefaultModelID()
+		if next, ok := patch["preferred_model"].(string); ok && next != "" {
+			defaultModelID = next
+		}
+		picks := make(map[string]string, len(raw))
+		offered := ai.GetAgentCapabilityRegistry().GetExtraConfigOptions(agentID, defaultModelID)
+		known := make(map[string]ai.ExtraConfigOption, len(offered))
+		for _, opt := range offered {
+			known[opt.ConfigID] = opt
+		}
+		for id, rawValue := range raw {
+			value, _ := rawValue.(string)
+			if id == "" || value == "" {
+				continue
+			}
+			// offered != nil means this model's list is KNOWN — including the
+			// empty case, where every id must be refused. nil means it has never
+			// been learned, so there is nothing to validate against.
+			if offered != nil {
+				opt, ok := known[id]
+				if !ok {
+					writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidConfigOption")
+					return
+				}
+				if opt.Type == "boolean" {
+					if _, err := strconv.ParseBool(value); err != nil {
+						writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidConfigOption")
+						return
+					}
+				}
+			}
+			picks[id] = value
+		}
+		// One model's entry only: the read-modify-write runs in its own
+		// transaction, so another model's picks (or a concurrent session's) are
+		// never overwritten.
+		ap.ConfigOptionsForModel = &service.ConfigOptionsModelPatch{ModelID: defaultModelID, Picks: picks}
 	}
 
 	// Validate and apply acp_command. This is what makes a user-defined ACP

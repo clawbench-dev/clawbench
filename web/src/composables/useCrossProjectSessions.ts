@@ -79,10 +79,6 @@ export interface GroupMemberPreview {
 export interface CrossProjectGroup {
   /** Absolute project path (identity key). */
   name: string
-  /** Project registry ID when known (enables direct cleanup of missing projects). */
-  projectId?: number
-  /** True when the project directory no longer exists on disk. */
-  dirMissing?: boolean
   /** basename of the project path. */
   displayName: string
   /** Abbreviated path (homeDir → "~", middle-truncated when long). */
@@ -185,8 +181,6 @@ async function fetchOverview(): Promise<void> {
     sessions.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
     next.push({
       name,
-      projectId: typeof p.projectId === 'number' && p.projectId > 0 ? p.projectId : undefined,
-      dirMissing: !!p.dirMissing,
       displayName: baseName(name),
       displayPath: abbreviatePath(name, homeDir),
       sessions,

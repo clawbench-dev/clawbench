@@ -49,6 +49,17 @@ type Agent struct {
 	// default configured in Settings) so the two can coexist: the per-model
 	// pick wins, the global default is the fallback.
 	ThinkingEffortByModel map[string]string `json:"thinkingEffortByModel,omitempty"`
+	// PreferredConfigOptions remembers, per model, the values the USER picked
+	// among the agent's own generic config options (issue #746). Key = model id,
+	// inner key = the wire config id the agent advertised (e.g. "fast-mode"),
+	// value = the wire value ("on", "true", …).
+	//
+	// Keyed by model because the option LIST is model-scoped: codex only
+	// advertises "Fast mode" for models with a fast tier, so a pick made under
+	// one model must not leak to another. Written both by the settings default
+	// and by every session-level pick (the last pick is the default for the next
+	// session on that model), which mirrors ThinkingEffortByModel.
+	PreferredConfigOptions map[string]map[string]string `json:"preferredConfigOptions,omitempty"`
 	// RuntimeSystemPrompt is the fully composed prompt (shared prefix + the
 	// user's own text). It is a RUNTIME-ONLY value: composed on every load by
 	// LoadAgentsIntoMemoryFromDB and never persisted.
@@ -451,6 +462,52 @@ func (a *Agent) SetThinkingEffortForModel(modelID, level string) {
 		next[modelID] = level
 	}
 	a.ThinkingEffortByModel = next
+}
+
+// ConfigOptionsForModel returns the user's remembered picks among the agent's
+// generic config options for modelID, or nil when nothing was ever picked.
+//
+// An empty modelID is a legitimate key: some ACP agents advertise config
+// options without any model option at all (OpenClaw), so their picks are
+// stored under "".
+func (a *Agent) ConfigOptionsForModel(modelID string) map[string]string {
+	if a == nil || a.PreferredConfigOptions == nil {
+		return nil
+	}
+	picks := a.PreferredConfigOptions[modelID]
+	if len(picks) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(picks))
+	for k, v := range picks {
+		out[k] = v
+	}
+	return out
+}
+
+// SetConfigOptionsForModel records the user's picks for one model.
+//
+// Copy-on-write like SetThinkingEffortForModel: readers hold a *Agent without
+// the agents lock, so mutating a shared map in place would race them. An empty
+// map removes the entry entirely.
+func (a *Agent) SetConfigOptionsForModel(modelID string, picks map[string]string) {
+	if a == nil {
+		return
+	}
+	next := make(map[string]map[string]string, len(a.PreferredConfigOptions)+1)
+	for k, v := range a.PreferredConfigOptions {
+		next[k] = v
+	}
+	if len(picks) == 0 {
+		delete(next, modelID)
+	} else {
+		copied := make(map[string]string, len(picks))
+		for k, v := range picks {
+			copied[k] = v
+		}
+		next[modelID] = copied
+	}
+	a.PreferredConfigOptions = next
 }
 
 // EffectiveModeID returns the mode ID for new sessions.

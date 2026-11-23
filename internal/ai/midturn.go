@@ -80,6 +80,17 @@ type MidTurnInjector interface {
 	Inject(ctx context.Context, transport RawRPCTransport, req MidTurnInjectRequest) (MidTurnInjectResult, error)
 }
 
+// InProcessMidTurnInjector is the mid-turn policy of a backend whose turn loop
+// runs inside this process (the built-in agent).
+//
+// It is a separate interface because there is no ACP connection to hand over:
+// such a backend reaches its own running turn directly, and a transport-shaped
+// policy would have to fake one. Core flow treats both kinds identically — it
+// only asks "can this message join the turn?".
+type InProcessMidTurnInjector interface {
+	InjectInProcess(ctx context.Context, req MidTurnInjectRequest) (MidTurnInjectResult, error)
+}
+
 // SteerEchoTracker is an OPTIONAL capability a RawRPCTransport may implement:
 // "I expect the agent to echo this injected message id back at the point it
 // entered the turn". A policy that knows its backend emits such an echo
@@ -103,8 +114,14 @@ type SteerEchoTracker interface {
 // cycle. Nil (or returning nil) means no backend supports injection.
 var LookupMidTurnInjectorFn func(backendID string) MidTurnInjector
 
+// LookupInProcessMidTurnInjectorFn resolves the mid-turn policy of a backend
+// that runs in this process. Wired by internal/ai/backends alongside the ACP
+// lookup; nil means no in-process backend supports injection.
+var LookupInProcessMidTurnInjectorFn func(backendID string) InProcessMidTurnInjector
+
 // InjectMidTurn is the single generic entry point used by core flow. It resolves
-// the backend's policy and the session's live ACP connection, then delegates.
+// the backend's policy and, for a process-spawning backend, the session's live
+// ACP connection, then delegates.
 //
 // It reports Injected == false — never an error — when no policy is registered,
 // no live connection exists, or the policy declines. Callers fall back to
@@ -115,6 +132,28 @@ func InjectMidTurn(
 	backendID, sessionID, agentID, content string,
 	clientUserMessageID string,
 ) MidTurnInjectResult {
+	req := MidTurnInjectRequest{
+		SessionID:           sessionID,
+		AgentID:             agentID,
+		Content:             content,
+		ClientUserMessageID: clientUserMessageID,
+	}
+
+	// An in-process backend has no ACP connection; its policy owns the running
+	// turn and is asked first. The two lookups are mutually exclusive per
+	// backend, so ordering only decides which one answers.
+	if LookupInProcessMidTurnInjectorFn != nil {
+		if inproc := LookupInProcessMidTurnInjectorFn(backendID); inproc != nil {
+			res, err := inproc.InjectInProcess(ctx, req)
+			if err != nil {
+				slog.Warn("ai: in-process mid-turn injection failed",
+					"backend", backendID, "session", sessionID, "err", err)
+				return MidTurnInjectResult{Reason: "error"}
+			}
+			return res
+		}
+	}
+
 	if LookupMidTurnInjectorFn == nil {
 		return MidTurnInjectResult{}
 	}
@@ -128,12 +167,7 @@ func InjectMidTurn(
 		return MidTurnInjectResult{}
 	}
 
-	res, err := injector.Inject(ctx, conn, MidTurnInjectRequest{
-		SessionID:           sessionID,
-		AgentID:             agentID,
-		Content:             content,
-		ClientUserMessageID: clientUserMessageID,
-	})
+	res, err := injector.Inject(ctx, conn, req)
 	if err != nil {
 		slog.Warn("ai: mid-turn injection failed",
 			"backend", backendID, "session", sessionID, "err", err)

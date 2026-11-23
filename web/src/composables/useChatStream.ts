@@ -8,7 +8,7 @@ import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import type { ToastIconKey } from './useToast'
 import { updateTeamState } from './useTeamState'
-import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isAskQuestionTool, isElicitationRequest, closeToolAsInterrupted, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
+import { isFileModifyingTool, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, resolveStreamingMsg, isAskQuestionTool, isElicitationRequest, closeToolAsInterrupted, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
@@ -630,7 +630,7 @@ export function useChatStream(options: UseChatStreamOptions) {
   ) {
     if (!onFileModified || wasDone) return
     const name = data.name || block?.name
-    if (!name || !FILE_MODIFYING_TOOLS.has(name)) return
+    if (!name || !isFileModifyingTool(name)) return
     const filePath = data.file_path || block?.file_path
     if (filePath) {
       onFileModified(filePath)

@@ -1466,6 +1466,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	chatReq := ai.ChatRequest{
 		Prompt:             promptForAI,
 		SessionID:          sessionID,
+		ClawbenchSessionID: sessionID,
 		WorkDir:            projectPath,
 		SystemPrompt:       systemPrompt,
 		Model:              effectiveModel,

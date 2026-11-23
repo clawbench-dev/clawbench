@@ -9,14 +9,20 @@ import (
 
 // ChatRequest represents a request to the AI backend
 type ChatRequest struct {
-	Prompt                 string
-	SessionID              string
-	WorkDir                string
-	SystemPrompt           string
-	Model                  string // per-request model override (empty = use global default)
-	AgentID                string // agent ID for logging and persistence
-	ThinkingEffort         string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
-	Mode                   string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
+	Prompt         string
+	SessionID      string
+	WorkDir        string
+	SystemPrompt   string
+	Model          string // per-request model override (empty = use global default)
+	AgentID        string // agent ID for logging and persistence
+	ThinkingEffort string // thinking effort level, e.g., "high"; empty = auto (don't pass flag)
+	Mode           string // ACP session mode, e.g., "code", "ask", "architect"; empty = use current
+	// ConfigOptions are the user's picks among the agent's own generic config
+	// options (wire id → value, e.g. {"fast-mode": "on"}; issue #746). Applied
+	// before the prompt like mode/effort, so a pick made while the agent was
+	// busy takes effect on the next turn instead of being lost. Ids the agent
+	// does not advertise for the model now running are skipped.
+	ConfigOptions          map[string]string
 	Resume                 bool   // If true, resume an existing session instead of creating new
 	ScheduledExecution     bool   // If true, this is a task execution — skill-level anti-recursion block
 	HasAttachments         bool   // If true, the user message carries file attachments (triggers media rules injection)
@@ -60,6 +66,20 @@ type ChatRequest struct {
 	// instead of re-summarizing the same history every turn. Only the built-in
 	// backend reads it: an external CLI manages its own compaction.
 	PriorSummary string
+
+	// ClawbenchSessionID is this conversation's id in OUR database. Unlike
+	// SessionID it is always set, including on a resumed turn of a self-hosted
+	// backend (which replays our history instead of resuming an external one).
+	//
+	// SessionID is the id the BACKEND should work with: our own id for an ACP
+	// backend, the id handed to --resume for a CLI one — and that one is
+	// deliberately blanked when the external id is unknown (see
+	// resolveResumeSessionID), so a CLI is never told to resume an id it has
+	// never seen. Anything keyed by the conversation the USER sees must use this
+	// field instead. Mid-turn injection is addressed by it: registering the
+	// mailbox under SessionID left the registry empty from the second turn on,
+	// and every insertion declined as "idle".
+	ClawbenchSessionID string
 }
 
 // HistoryMessage is one prior turn handed to a self-hosted backend.

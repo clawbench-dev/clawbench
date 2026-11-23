@@ -86,6 +86,11 @@ func init() {
 			OpenAI:    model.ProtoEnv("", "", ""),
 			InProcess: true,
 		},
+		// The turn loop is ours, so a message can join it at the next model
+		// request and we know exactly where it entered — the reply splits, just
+		// like CodeBuddy's session/steer.
+		MidTurnInProcess:   midTurn{},
+		MidTurnSplitsReply: true,
 	})
 
 	// Mode and thinking-level options live in the capability registry so every
@@ -218,9 +223,29 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 		return nil, err
 	}
 
+	// Register the join target BEFORE the turn starts, so a message queued while
+	// the previous turn was still running can be inserted the moment this one is
+	// alive. The mailbox is sealed by the engine on its way out; cleanup here
+	// only removes the registry entry.
+	//
+	// Keyed by the ClawBench session id, NOT req.SessionID: on a resumed turn of
+	// a self-hosted backend SessionID is blanked (there is no external id to
+	// resume), while the inject endpoint addresses the turn by the id the user's
+	// conversation actually has. Registering under SessionID left the registry
+	// empty from the second turn on, so every insertion declined as "idle".
+	var releaseInjections func()
+	if req.ClawbenchSessionID != "" {
+		box := agentcore.NewInjectionMailbox()
+		spec.Injections = box
+		releaseInjections = registerInjectionBox(req.ClawbenchSessionID, box)
+	}
+
 	ch := make(chan ai.StreamEvent, 64)
 	go func() {
 		defer close(ch)
+		if releaseInjections != nil {
+			defer releaseInjections()
+		}
 		// One translator per turn: it tracks whether a reasoning block is
 		// still open, so the closing event is emitted exactly once.
 		tr := &translator{locale: model.Language}

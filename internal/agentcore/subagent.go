@@ -150,6 +150,10 @@ func (t *taskTool) childSpec(prompt string, ordinal int) Spec {
 	child.History = nil
 	child.HistoryMessageIDs = nil
 	child.PriorSummary = ""
+	// A child runs its own model loop; the parent's injection mailbox belongs to
+	// the parent's turn. Inheriting it would let a message meant for the user's
+	// conversation be answered inside a task card.
+	child.Injections = nil
 	child.Depth = t.r.spec.Depth + 1
 	child.Timeout = 0
 	child.SystemPrompt = t.r.spec.SystemPrompt + "\n\n" + subagentRole

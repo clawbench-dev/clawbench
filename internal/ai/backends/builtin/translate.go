@@ -46,15 +46,7 @@ type translator struct {
 // so one input event can produce two outputs.
 func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 	var out []ai.StreamEvent
-
-	// Anything that appends visible content (or ends the turn) must close an
-	// open reasoning block first. An EventReasoningDone from a sub-agent closes
-	// its own parent's block even though it appends nothing.
-	switch ev.Kind {
-	case agentcore.EventText, agentcore.EventToolStart, agentcore.EventToolEnd,
-		agentcore.EventDone, agentcore.EventError, agentcore.EventReasoningDone:
-		t.closeReasoning(ev.ParentToolCallID, &out)
-	}
+	t.closeReasoningBefore(ev, &out)
 
 	switch ev.Kind {
 	case agentcore.EventText:
@@ -81,6 +73,16 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 
 	case agentcore.EventReasoningDone:
 		// The close (if one was open for this parent) was emitted above.
+
+	case agentcore.EventInjected:
+		// The message entered the conversation between two model rounds. The
+		// service layer finalizes the assistant row accumulated so far and opens
+		// a new one, so the injected user bubble lands between the two halves
+		// instead of below a reply that is still streaming.
+		out = append(out, ai.StreamEvent{
+			Type:          "steer_boundary",
+			SteerBoundary: &ai.SteerBoundaryData{ClientUserMessageID: ev.ClientUserMessageID},
+		})
 
 	case agentcore.EventToolStart:
 		out = append(out, ai.StreamEvent{
@@ -177,6 +179,19 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 		})
 	}
 	return out
+}
+
+// closeReasoningBefore closes an open reasoning block for any event that
+// appends visible content, ends the turn, or splits the reply. An
+// EventReasoningDone from a sub-agent closes its own parent's block even
+// though it appends nothing.
+func (t *translator) closeReasoningBefore(ev agentcore.Event, out *[]ai.StreamEvent) {
+	switch ev.Kind {
+	case agentcore.EventText, agentcore.EventToolStart, agentcore.EventToolEnd,
+		agentcore.EventDone, agentcore.EventError, agentcore.EventReasoningDone,
+		agentcore.EventInjected:
+		t.closeReasoning(ev.ParentToolCallID, out)
+	}
 }
 
 // closeReasoning closes the reasoning block belonging to parent, if one is

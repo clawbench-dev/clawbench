@@ -936,6 +936,20 @@ func sessionStateSnapshot(sessionID, sessionAgentID string) sessionState {
 			if ml := reg.GetModelListState(sessionAgentID, ""); ml != nil {
 				st.ModelList = ml
 			}
+			// Generic agent options are per MODEL (issue #746), so they are
+			// resolved against the model this session will run — the same rule
+			// the effort list above follows. Without this a new session had no
+			// list until its first message created an ACP session.
+			if extras := reg.GetExtraConfigOptions(sessionAgentID, effortModel); len(extras) > 0 {
+				// The registry knows the options, not the value: overlay the
+				// per-model default this agent remembers so the drawer opens on
+				// what the next turn will actually run.
+				var picks map[string]string
+				if a := model.GetAgent(sessionAgentID); a != nil {
+					picks = a.ConfigOptionsForModel(effortModel)
+				}
+				st.ConfigOptions = applyConfigOptionPicks(extras, picks)
+			}
 		}
 	}
 
@@ -970,7 +984,8 @@ func sessionStateSnapshot(sessionID, sessionAgentID string) sessionState {
 	// The built-in agent always consults context_state: its registry answer
 	// carries a derived default selection, which would otherwise look like a
 	// real per-session choice and mask the one the user persisted.
-	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil || isBuiltinAgent(sessionAgentID) {
+	if st.Mode == nil || modeStateHasNoSelection(st.Mode) || st.Effort == nil || st.Usage == nil ||
+		st.ConfigOptions != nil || isBuiltinAgent(sessionAgentID) {
 		if ctxState := service.GetContextState(sessionID); ctxState != nil {
 			// The per-session record wins over the agent-level registry for the
 			// parts it covers. The registry is keyed by AGENT and shared by every
@@ -1013,9 +1028,36 @@ func sessionStateSnapshot(sessionID, sessionAgentID string) sessionState {
 			if st.Usage == nil && ctxState.Usage != nil {
 				st.Usage = ctxState.Usage
 			}
+			// The stored pick wins over the value the agent reported for itself
+			// (its own default), which is what makes the drawer show the user's
+			// choice right after a restart — before any connection re-applies it.
+			if st.ConfigOptions != nil && ctxState.ConfigOptions != nil {
+				st.ConfigOptions = applyConfigOptionPicks(st.ConfigOptions, ctxState.ConfigOptions.Values)
+			}
 		}
 	}
 	return st
+}
+
+// applyConfigOptionPicks overlays the session's stored picks onto the list of
+// agent-declared config options, so the drawer shows the user's value instead of
+// the agent's own default. Returns the input unchanged when nothing is stored.
+func applyConfigOptionPicks(options any, picks map[string]string) any {
+	if len(picks) == 0 {
+		return options
+	}
+	list, ok := options.([]ai.ExtraConfigOption)
+	if !ok {
+		return options
+	}
+	out := make([]ai.ExtraConfigOption, len(list))
+	copy(out, list)
+	for i := range out {
+		if value, ok := picks[out[i].ConfigID]; ok && value != "" {
+			out[i].CurrentID = value
+		}
+	}
+	return out
 }
 
 // modeStateHasNoSelection reports whether a resolved mode state carries a list

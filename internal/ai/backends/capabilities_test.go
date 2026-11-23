@@ -38,7 +38,8 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 			},
 		},
 		{
-			// The only backend whose mid-turn injection SPLITS the reply.
+			// ACP + mid-turn steering that CAN split the reply: it echoes the
+			// injected message id back on the wire.
 			backend: "codebuddy",
 			want: model.BackendCapabilities{
 				HasACP:                 true,
@@ -76,13 +77,17 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 		},
 		{
 			// In-process: ClawBench calls the endpoint itself, so there is no
-			// env channel even though both protocols are declared.
+			// env channel even though both protocols are declared. Its turn loop
+			// is ours, so it can join a running turn and split the reply at the
+			// exact model-round boundary.
 			backend: "builtin",
 			want: model.BackendCapabilities{
-				HasACP:            false,
-				CanBindProvider:   true,
-				ProviderProtocols: []string{model.ProviderProtocolAnthropic, model.ProviderProtocolOpenAI},
-				ProviderMethods:   []string{model.ProviderMethodInProcess},
+				HasACP:             false,
+				SupportsMidTurn:    true,
+				MidTurnSplitsReply: true,
+				CanBindProvider:    true,
+				ProviderProtocols:  []string{model.ProviderProtocolAnthropic, model.ProviderProtocolOpenAI},
+				ProviderMethods:    []string{model.ProviderMethodInProcess},
 			},
 		},
 	}
@@ -125,6 +130,10 @@ func TestCapabilities_EveryBackendIsCovered(t *testing.T) {
 		}
 		if caps.MidTurnSplitsReply && !caps.SupportsMidTurn {
 			t.Errorf("backend %q splits a reply it cannot inject into", p.ID)
+		}
+		if p.MidTurn != nil && p.MidTurnInProcess != nil {
+			t.Errorf("backend %q declares both an ACP and an in-process mid-turn policy; "+
+				"a backend has exactly one transport", p.ID)
 		}
 	}
 }

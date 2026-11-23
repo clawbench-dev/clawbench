@@ -1,9 +1,13 @@
 // ─── Git Graph computation utilities ────────────────────────────────────────
 
-const LANE_WIDTH = 20
-const GRAPH_LEFT_PADDING = 10
+// Lane spacing has to stay a bit above the node's outer ring (r=6 + 1.5
+// stroke), otherwise neighbouring lanes look like one thick line. 16 leaves a
+// 2.5px gap between the rings while packing ~20% more lanes into the column
+// than the old 20.
+const LANE_WIDTH = 16
+const GRAPH_LEFT_PADDING = 8
 /** Floor for the graph column, wide enough for the main lane plus padding. */
-const MIN_GRAPH_WIDTH = 40
+export const MIN_GRAPH_WIDTH = LANE_WIDTH + GRAPH_LEFT_PADDING * 2
 const LANE_COLORS = [
   '#4a90d9', // blue
   '#e67e22', // orange
@@ -76,7 +80,7 @@ function laneCx(lane: number): number {
  */
 export function computeGraphData(commits: GitCommit[], rowHeight: number, previousShaToLane: Map<string, number> | null) {
   if (!commits || !commits.length) {
-    return { nodes: [], lines: [], laneCount: 0, graphWidth: 40, shaToLane: new Map() }
+    return { nodes: [], lines: [], laneCount: 0, graphWidth: MIN_GRAPH_WIDTH, shaToLane: new Map() }
   }
 
   const laneColor = (lane: number): string => LANE_COLORS[lane % LANE_COLORS.length]

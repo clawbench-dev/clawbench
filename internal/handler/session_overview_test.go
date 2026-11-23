@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -26,6 +27,7 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	// the registry's canonical path (which filepath.Join would not match on
 	// Windows, where the separator differs).
 	projectB := canonPath(filepath.Join(env.WatchDir, "project-b"))
+	require.NoError(t, os.MkdirAll(projectB, 0o755))
 	db := store.UnsafeDBForTest()
 
 	// projectA: running session A1
@@ -144,18 +146,35 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	}
 }
 
-func TestServeSessionsOverview_AnnotatesMissingProjectDir(t *testing.T) {
+// A project whose directory no longer exists has no place in the overview:
+// its card could never be opened, so both an active group and a merely-recent
+// card must be dropped. Existing projects keep their cards, and `total` counts
+// only the sessions actually returned.
+func TestServeSessionsOverview_DropsProjectsWithMissingDir(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	missingDir := canonPath(filepath.Join(env.WatchDir, "gone-project"))
 	db := store.UnsafeDBForTest()
+	missingActive := canonPath(filepath.Join(env.WatchDir, "gone-active"))
+	missingRecent := canonPath(filepath.Join(env.WatchDir, "gone-recent"))
+	existingRecent := canonPath(filepath.Join(env.WatchDir, "still-here"))
+	require.NoError(t, os.MkdirAll(existingRecent, 0o755))
 
-	// Create an unread session in a project whose directory does not exist on disk.
-	missingProjectID := store.ProjectIDForTest(t, missingDir)
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'Ghost', 'claude', 'default', '', 'chat', 0)`, "ghost-session", missingProjectID)
+	// Unread session in a missing directory: would otherwise be an active group.
+	missingActiveID := store.ProjectIDForTest(t, missingActive)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'Ghost active', 'claude', 'default', '', 'chat', 0)`, "ghost-active", missingActiveID)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread', 'ghost-session', 'claude', 0)`, missingProjectID)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread', 'ghost-active', 'claude', 0)`, missingActiveID)
+	require.NoError(t, err)
+
+	// Read, message-less session in a missing directory: would otherwise be a
+	// recent-project card (activity is recent, nothing unread).
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'Ghost recent', 'claude', 'default', '', 'chat', 0)`, "ghost-recent", store.ProjectIDForTest(t, missingRecent))
+	require.NoError(t, err)
+
+	// The same shape in an existing directory must stay: proof the filter is
+	// about the directory, not about recent cards in general.
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'Live recent', 'claude', 'default', '', 'chat', 0)`, "live-recent", store.ProjectIDForTest(t, existingRecent))
 	require.NoError(t, err)
 
 	// And an active session in the existing project directory.
@@ -170,26 +189,22 @@ func TestServeSessionsOverview_AnnotatesMissingProjectDir(t *testing.T) {
 
 	var result struct {
 		Projects []struct {
-			Name       string `json:"name"`
-			ProjectID  int64  `json:"projectId"`
-			DirMissing bool   `json:"dirMissing"`
+			Name     string `json:"name"`
+			Sessions []struct {
+				ID string `json:"id"`
+			} `json:"sessions"`
 		} `json:"projects"`
+		Total int `json:"total"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 
-	foundExisting, foundMissing := false, false
+	names := make([]string, 0, len(result.Projects))
 	for _, p := range result.Projects {
-		switch p.Name {
-		case env.ProjectDir:
-			foundExisting = true
-			assert.False(t, p.DirMissing, "existing project directory must not be marked dirMissing")
-			assert.Greater(t, p.ProjectID, int64(0))
-		case missingDir:
-			foundMissing = true
-			assert.True(t, p.DirMissing, "missing project directory must be marked dirMissing")
-			assert.Equal(t, missingProjectID, p.ProjectID)
-		}
+		names = append(names, p.Name)
 	}
-	assert.True(t, foundExisting, "existing project should be in overview")
-	assert.True(t, foundMissing, "missing project should be in overview")
+	assert.Contains(t, names, env.ProjectDir, "existing project with an active session must stay")
+	assert.Contains(t, names, existingRecent, "recent card for an existing directory must stay")
+	assert.NotContains(t, names, missingActive, "active group for a missing directory must be dropped")
+	assert.NotContains(t, names, missingRecent, "recent card for a missing directory must be dropped")
+	assert.Equal(t, 1, result.Total, "total must count only sessions that are actually returned")
 }

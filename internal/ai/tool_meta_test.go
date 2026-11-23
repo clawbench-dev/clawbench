@@ -529,6 +529,34 @@ func TestExtractFilePath(t *testing.T) {
 			input:    map[string]any{"location": map[string]any{"range": "1-5"}},
 			want:     "",
 		},
+		// The builtin agent's in-process tools report bare lowercase names and
+		// there is no normalization step between the backend and this lookup.
+		// An exact-case map lookup returned "" for them, so the call carried no
+		// file_path at all and every downstream file-change consumer skipped it.
+		{
+			name:     "lowercase write from the builtin agent",
+			toolName: "write",
+			input:    map[string]any{"path": "/src/builtin.go", "content": "x"},
+			want:     "/src/builtin.go",
+		},
+		{
+			name:     "lowercase edit from the builtin agent",
+			toolName: "edit",
+			input:    map[string]any{"path": "/src/builtin.go", "old_string": "a", "new_string": "b"},
+			want:     "/src/builtin.go",
+		},
+		{
+			name:     "lowercase read from the builtin agent",
+			toolName: "read",
+			input:    map[string]any{"path": "/src/builtin.go"},
+			want:     "/src/builtin.go",
+		},
+		{
+			name:     "mixed-case tool name is still recognized",
+			toolName: "wRiTe",
+			input:    map[string]any{"file_path": "/src/odd.go"},
+			want:     "/src/odd.go",
+		},
 	}
 
 	for _, tt := range tests {

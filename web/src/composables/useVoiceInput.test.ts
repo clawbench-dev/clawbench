@@ -616,12 +616,12 @@ describe('useVoiceInput', () => {
     v.cancel()
   })
 
-  // The last couple of characters were being lost because the capture graph was
-  // torn down the instant the button was released: the audio still inside the
-  // microphone pipeline (device buffer, echo cancellation, the worklet's partial
-  // frame) never reached the socket, so the recogniser heard the last syllable
-  // cut short. The tail keeps the graph alive until that audio has come through.
-  it('keeps capturing after release until the last speech frame has drained', async () => {
+  // The release is meant to be instant: no drain wait, so `end` goes out and the
+  // graph comes down in the same turn. A previous version kept the graph alive
+  // until the audio inside the microphone pipeline had come through, which cost
+  // roughly 750 ms of visible lag on every release; the price of dropping it is
+  // a clipped short ending, accepted deliberately (see useVoiceInput.stop).
+  it('ends the stream immediately on release, without draining', async () => {
     const { serverConfig } = await import('./useSettingsConfig')
     serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
     const env = stubStreamingEnv()
@@ -632,57 +632,21 @@ describe('useVoiceInput', () => {
     env.getWS()!.onopen!()
     await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
 
-    // A word that has already been heard: this is what starts the drain clock.
+    // A word that has already been heard. Under the old drain clock this
+    // started a wait of a few hundred milliseconds.
     env.workletNode.port.onmessage!({ data: new Int16Array(160).fill(8000).buffer })
 
-    const stopping = v.stop()
-    // The UI must read as "transcribing" straight away, not as still recording.
+    await v.stop()
     expect(v.state.value).toBe('transcribing')
     expect(v.isRecording.value).toBe(false)
 
-    // Audio that reaches the graph while the drain runs still goes out, and the
-    // end marker has not been sent yet.
-    const frame = new Int16Array(160).fill(8000).buffer
-    env.workletNode.port.onmessage!({ data: frame })
-    expect(env.getWS()!.send).toHaveBeenCalledWith(frame)
-    expect(env.getWS()!.send.mock.calls.at(-1)![0]).not.toBe(JSON.stringify({ type: 'end' }))
-
-    await stopping
+    // No frame may be forwarded after the end marker, the marker is the last
+    // thing sent, and the graph is already down.
     const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
     expect(JSON.parse(last)).toEqual({ type: 'end' })
-    // Only then is the graph torn down and the microphone released.
     expect(env.workletNode.port.onmessage).toBeNull()
     expect(env.workletNode.disconnect).toHaveBeenCalled()
     expect(env.track.stop).toHaveBeenCalled()
-    v.cancel()
-  })
-
-  // A pause before letting go means the pipeline is already empty: waiting for
-  // a tail that is not there would only delay the transcript.
-  it('does not wait when the user paused before releasing', async () => {
-    const { serverConfig } = await import('./useSettingsConfig')
-    serverConfig.value = { stt: { provider: 'doubao', doubao: { streaming: true } } }
-    const env = stubStreamingEnv()
-
-    const { useVoiceInput } = await import('./useVoiceInput')
-    const v = useVoiceInput()
-    await v.start()
-    env.getWS()!.onopen!()
-    await vi.waitFor(() => expect(env.workletNode.port.onmessage).toBeTypeOf('function'))
-
-    vi.useFakeTimers()
-    try {
-      env.workletNode.port.onmessage!({ data: new Int16Array(160).fill(8000).buffer })
-      // Two seconds of silence later the graph has nothing left to flush.
-      vi.advanceTimersByTime(2000)
-      const stopping = v.stop()
-      await vi.advanceTimersByTimeAsync(0)
-      await stopping
-      const last = env.getWS()!.send.mock.calls.at(-1)![0] as string
-      expect(JSON.parse(last)).toEqual({ type: 'end' })
-    } finally {
-      vi.useRealTimers()
-    }
     v.cancel()
   })
 

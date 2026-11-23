@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  FILE_MODIFYING_TOOLS,
+  isFileModifyingTool,
   findLastBlockOfType,
   findThinkingTarget,
   appendThinkingDelta,
@@ -58,39 +58,23 @@ describe('isElicitationRequest', () => {
   })
 })
 
-describe('FILE_MODIFYING_TOOLS', () => {
-  it('contains Write', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Write')).toBe(true)
+describe('isFileModifyingTool', () => {
+  it('accepts Write and Edit in any casing', () => {
+    for (const name of ['Write', 'write', 'WRITE', 'Edit', 'edit', 'eDiT']) {
+      expect(isFileModifyingTool(name)).toBe(true)
+    }
   })
 
-  it('contains Edit', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Edit')).toBe(true)
+  it('does not accept Read / Bash / Grep / Glob', () => {
+    for (const name of ['Read', 'read', 'Bash', 'bash', 'Grep', 'Glob']) {
+      expect(isFileModifyingTool(name)).toBe(false)
+    }
   })
 
-  it('does not contain Read', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Read')).toBe(false)
-  })
-
-  it('does not contain Bash', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Bash')).toBe(false)
-  })
-
-  it('does not contain Grep', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Grep')).toBe(false)
-  })
-
-  it('does not contain Glob', () => {
-    expect(FILE_MODIFYING_TOOLS.has('Glob')).toBe(false)
-  })
-
-  it('is case-sensitive', () => {
-    expect(FILE_MODIFYING_TOOLS.has('write')).toBe(false)
-    expect(FILE_MODIFYING_TOOLS.has('edit')).toBe(false)
-    expect(FILE_MODIFYING_TOOLS.has('WRITE')).toBe(false)
-  })
-
-  it('is a Set (no duplicates)', () => {
-    expect(FILE_MODIFYING_TOOLS.size).toBe(2)
+  it('does not accept an empty or missing name', () => {
+    expect(isFileModifyingTool('')).toBe(false)
+    expect(isFileModifyingTool(undefined)).toBe(false)
+    expect(isFileModifyingTool(null)).toBe(false)
   })
 })
 
@@ -803,6 +787,19 @@ describe('extractFileChanges', () => {
     expect(extractFileChanges(blocks)).toEqual({
       created: [fc('web/src/foo.ts')],
       modified: [fc('web/src/bar.ts')],
+    })
+  })
+
+  it('classifies the builtin agent\'s lowercase write/edit the same way', () => {
+    // The in-process builtin agent reports bare lowercase names; before this
+    // was made case-insensitive its writes produced NO banner at all.
+    const blocks = [
+      { type: 'tool_use', name: 'write', done: true, file_path: 'web/src/new.ts', id: 'w1' },
+      { type: 'tool_use', name: 'edit', done: true, file_path: 'web/src/old.ts', id: 'e1' },
+    ]
+    expect(extractFileChanges(blocks)).toEqual({
+      created: [fc('web/src/new.ts', ['w1'])],
+      modified: [fc('web/src/old.ts', ['e1'])],
     })
   })
 

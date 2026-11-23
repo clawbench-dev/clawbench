@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { ref, nextTick } from 'vue'
 import { useChatStream } from '@/composables/useChatStream'
-import { forceCleanupStreamingState, FILE_MODIFYING_TOOLS, chatMessageReducer } from '@/utils/chatStreamUtils'
+import { forceCleanupStreamingState, chatMessageReducer } from '@/utils/chatStreamUtils'
 import { addQueued, getQueue, resetQueuesForTest } from '@/composables/useMessageQueue'
 import { useThinkingContent } from '@/composables/useThinkingContent'
 import { useRetryNotice, clearRetryNotice } from '@/composables/useRetryNotice'
@@ -71,7 +71,6 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
   const actual = await importOriginal()
   return {
     ...actual,
-    FILE_MODIFYING_TOOLS: new Set(),
     findLastBlockOfType: (blocks: any[], type: string) =>
       [...blocks].reverse().find(b => b.type === type),
   forceCleanupStreamingState: vi.fn((messages: any[]) => {
@@ -945,9 +944,7 @@ describe('useChatStream', () => {
       expect(toolBlock.done).toBe(false)
     })
 
-    it('should call onFileModified for FILE_MODIFYING_TOOLS when done', () => {
-      FILE_MODIFYING_TOOLS.add('Write')
-
+    it('should call onFileModified for a file-modifying tool when done', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -963,8 +960,24 @@ describe('useChatStream', () => {
       })
 
       expect(options.onFileModified).toHaveBeenCalledWith('/tmp/newfile.txt')
+    })
 
-      FILE_MODIFYING_TOOLS.delete('Write')
+    it('should call onFileModified for the builtin agent\'s lowercase write', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { name: 'write', id: 'tool-write-lower' })
+      simulateWsEvent('tool_use', {
+        name: 'write',
+        id: 'tool-write-lower',
+        done: true,
+        status: 'success',
+        file_path: '/tmp/builtin-new.txt',
+      })
+
+      expect(options.onFileModified).toHaveBeenCalledWith('/tmp/builtin-new.txt')
     })
 
     it('should call onToolUpdate when onToolUpdate callback provided', () => {
@@ -1074,9 +1087,7 @@ describe('useChatStream', () => {
     // the `tool_use`+done branch alone meant the preview never auto-refreshed
     // for those backends; the fsnotify channel was the only thing left.
 
-    it('should call onFileModified for a FILE_MODIFYING_TOOLS tool_result (ACP terminal shape)', () => {
-      FILE_MODIFYING_TOOLS.add('Edit')
-
+    it('should call onFileModified for a file-modifying tool_result (ACP terminal shape)', () => {
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -1092,13 +1103,9 @@ describe('useChatStream', () => {
       })
 
       expect(options.onFileModified).toHaveBeenCalledWith('/tmp/acp-target.txt')
-
-      FILE_MODIFYING_TOOLS.delete('Edit')
     })
 
     it('falls back to the live block for name/file_path when tool_result omits them', () => {
-      FILE_MODIFYING_TOOLS.add('Write')
-
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -1115,13 +1122,9 @@ describe('useChatStream', () => {
       simulateWsEvent('tool_result', { id: 'acp-write-1', status: 'success' })
 
       expect(options.onFileModified).toHaveBeenCalledWith('/tmp/from-block.txt')
-
-      FILE_MODIFYING_TOOLS.delete('Write')
     })
 
     it('does not call onFileModified for a non-file-modifying tool_result', () => {
-      FILE_MODIFYING_TOOLS.add('Edit')
-
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -1131,13 +1134,9 @@ describe('useChatStream', () => {
       simulateWsEvent('tool_result', { id: 'acp-read-1', name: 'Read', status: 'success', file_path: '/tmp/read.txt' })
 
       expect(options.onFileModified).not.toHaveBeenCalled()
-
-      FILE_MODIFYING_TOOLS.delete('Edit')
     })
 
     it('does not fire twice when a backend emits both done tool_use and tool_result', () => {
-      FILE_MODIFYING_TOOLS.add('Edit')
-
       const options = createOptions()
       const { connectStream } = useChatStream(options)
 
@@ -1150,8 +1149,6 @@ describe('useChatStream', () => {
       simulateWsEvent('tool_result', { id: 'both-1', name: 'Edit', status: 'success', file_path: '/tmp/both.txt' })
 
       expect(options.onFileModified).toHaveBeenCalledTimes(1)
-
-      FILE_MODIFYING_TOOLS.delete('Edit')
     })
   })
 

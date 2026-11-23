@@ -46,6 +46,36 @@ func TestExtractSummaryCards(t *testing.T) {
 	}
 }
 
+func TestExtractSummaryCardsFileChangesLowercaseNames(t *testing.T) {
+	// The in-process builtin agent reports bare lowercase tool names. Before
+	// the match was made case-insensitive, its writes produced an empty
+	// created/modified list, so reloading the session lost the file changes.
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "write", ID: "w1", FilePath: "/src/new.go", Done: true},
+		{Type: "tool_use", Name: "edit", ID: "e1", FilePath: "/src/a.go", Done: true},
+	}
+	cards := extractSummaryCards(blocks)
+	if len(cards.CreatedFiles) != 1 || cards.CreatedFiles[0].Path != "/src/new.go" {
+		t.Fatalf("lowercase write must count as created, got %+v", cards.CreatedFiles)
+	}
+	if len(cards.ModifiedFiles) != 1 || cards.ModifiedFiles[0].Path != "/src/a.go" {
+		t.Fatalf("lowercase edit must count as modified, got %+v", cards.ModifiedFiles)
+	}
+}
+
+func TestExtractSummaryCardsFileChangesIgnoresOtherTools(t *testing.T) {
+	// Case-insensitivity must not turn every path-carrying tool into a change:
+	// a lowercase read is not a write.
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "read", ID: "r1", FilePath: "/src/read.go", Done: true},
+		{Type: "tool_use", Name: "bash", ID: "b1", FilePath: "/src/x.go", Done: true},
+	}
+	cards := extractSummaryCards(blocks)
+	if len(cards.CreatedFiles) != 0 || len(cards.ModifiedFiles) != 0 {
+		t.Fatalf("non-modifying tools must not register changes, got %+v / %+v", cards.CreatedFiles, cards.ModifiedFiles)
+	}
+}
+
 func TestExtractSummaryCardsFileChanges(t *testing.T) {
 	blocks := []model.ContentBlock{
 		{Type: "tool_use", Name: "Write", ID: "w1", FilePath: "/src/new.go", Done: true},

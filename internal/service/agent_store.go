@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	preferred_model TEXT NOT NULL DEFAULT '',
 	preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 	thinking_effort_by_model TEXT NOT NULL DEFAULT '{}',
+	preferred_config_options TEXT NOT NULL DEFAULT '{}',  -- per-model agent-config-option picks (issue #746)
 	custom_system_prompt TEXT NOT NULL DEFAULT '',
 	avatar TEXT NOT NULL DEFAULT '',
 	avatar_style TEXT NOT NULL DEFAULT '',
@@ -105,6 +106,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	acp_available_commands TEXT NOT NULL DEFAULT '[]',
 	acp_available_models TEXT NOT NULL DEFAULT '[]',
 	acp_config_options TEXT NOT NULL DEFAULT '',
+	acp_extra_config_options TEXT NOT NULL DEFAULT '{}',  -- per-model generic option lists (issue #746)
 	acp_mcp_http INTEGER NOT NULL DEFAULT 0,
 	acp_mcp_sse INTEGER NOT NULL DEFAULT 0,
 	acp_delete_session_probed INTEGER NOT NULL DEFAULT 0,  -- 1 = the session/delete probe got an answer (issue #707)
@@ -132,7 +134,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
 			sort_order,
 			acp_command, auto_approve, disabled, project_id,
-			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+			provider_id, thinking_effort_by_model, preferred_config_options, mcp_servers, tool_policy,
 			skip_project_context
 		FROM agents ORDER BY id
 	`)
@@ -144,7 +146,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 	var agents []*model.Agent
 	for rows.Next() {
 		a := &model.Agent{}
-		var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
+		var modelsJSON, levelsJSON, effortByModelJSON, configOptionsJSON, mcpServersJSON, toolPolicyJSON string
 		var modelsAutoDetected, autoApprove, disabled, skipProjectContext int
 		var projectID, providerID sql.NullInt64
 
@@ -155,7 +157,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.CustomSystemPrompt, &a.Avatar, &a.AvatarStyle, &a.AvatarSeed, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.AcpCommand, &autoApprove, &disabled, &projectID,
-			&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON,
+			&providerID, &effortByModelJSON, &configOptionsJSON, &mcpServersJSON, &toolPolicyJSON,
 			&skipProjectContext,
 		)
 		if err != nil {
@@ -175,7 +177,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			a.ProviderID = &id
 		}
 
-		parseAgentJSONColumns(a, modelsJSON, levelsJSON, effortByModelJSON)
+		parseAgentJSONColumns(a, modelsJSON, levelsJSON, effortByModelJSON, configOptionsJSON)
 		// Unreadable policy keeps the zero value, which Normalized() reads as
 		// "all" — the same default a fresh row gets.
 		if mcpServersJSON != "" && mcpServersJSON != jsonNull {
@@ -196,7 +198,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 // parseAgentJSONColumns decodes the three JSON-encoded agent columns into the
 // model. Unreadable values are left at their zero value rather than aborting
 // the load: they only degrade a default, and refusing to start would be worse.
-func parseAgentJSONColumns(a *model.Agent, modelsJSON, levelsJSON, effortByModelJSON string) {
+func parseAgentJSONColumns(a *model.Agent, modelsJSON, levelsJSON, effortByModelJSON, configOptionsJSON string) {
 	// Parse models JSON
 	if modelsJSON != "" && modelsJSON != "[]" {
 		var models []model.AgentModel
@@ -219,6 +221,20 @@ func parseAgentJSONColumns(a *model.Agent, modelsJSON, levelsJSON, effortByModel
 		if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
 			a.ThinkingEffortByModel = byModel
 		}
+	}
+
+	parseConfigOptionPicks(a, configOptionsJSON)
+}
+
+// parseConfigOptionPicks decodes the per-model config-option picks (issue #746).
+// An unparseable column yields nil, which reads as "nothing remembered".
+func parseConfigOptionPicks(a *model.Agent, raw string) {
+	if raw == "" || raw == "{}" || raw == jsonNull {
+		return
+	}
+	var byModel map[string]map[string]string
+	if err := json.Unmarshal([]byte(raw), &byModel); err == nil && len(byModel) > 0 {
+		a.PreferredConfigOptions = byModel
 	}
 }
 
@@ -243,9 +259,9 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected,
 			sort_order,
 			acp_command, auto_approve, disabled, project_id,
-			provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+			provider_id, thinking_effort_by_model, preferred_config_options, mcp_servers, tool_policy,
 			skip_project_context)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -269,6 +285,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			project_id = excluded.project_id,
 			provider_id = excluded.provider_id,
 			thinking_effort_by_model = excluded.thinking_effort_by_model,
+			preferred_config_options = excluded.preferred_config_options,
 			mcp_servers = excluded.mcp_servers,
 			tool_policy = excluded.tool_policy,
 			skip_project_context = excluded.skip_project_context,
@@ -286,6 +303,7 @@ type agentJSONColumns struct {
 	models        string
 	levels        string
 	effortByModel string
+	configOptions string
 	mcpServers    string
 	toolPolicy    string
 }
@@ -315,6 +333,13 @@ func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
 	if string(effortByModelJSON) == jsonNull {
 		effortByModelJSON = []byte("{}")
 	}
+	configOptionsJSON, err := json.Marshal(agent.PreferredConfigOptions)
+	if err != nil {
+		return agentJSONColumns{}, fmt.Errorf("marshal preferred_config_options: %w", err)
+	}
+	if string(configOptionsJSON) == jsonNull {
+		configOptionsJSON = []byte("{}")
+	}
 
 	// MCP and tool policies are normalized before encoding so the row never
 	// stores a shape the reader would have to repair. Both are encoded here
@@ -334,6 +359,7 @@ func encodeAgentJSONColumns(agent *model.Agent) (agentJSONColumns, error) {
 		models:        string(modelsJSON),
 		levels:        string(levelsJSON),
 		effortByModel: string(effortByModelJSON),
+		configOptions: string(configOptionsJSON),
 		mcpServers:    mcpServers,
 		toolPolicy:    toolPolicy,
 	}, nil
@@ -348,7 +374,7 @@ func agentInsertArgs(agent *model.Agent, cols agentJSONColumns) []any {
 		agent.CustomSystemPrompt, agent.Avatar, agent.AvatarStyle, agent.AvatarSeed, cols.models, boolToInt(agent.ModelsAutoDetected),
 		agent.SortOrder,
 		agent.AcpCommand, boolToInt(agent.AutoApprove), boolToInt(agent.Disabled),
-		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel,
+		nullableIDArg(agent.ProjectID), nullableIDArg(agent.ProviderID), cols.effortByModel, cols.configOptions,
 		cols.mcpServers, cols.toolPolicy, boolToInt(agent.SkipProjectContext),
 	}
 }
@@ -524,6 +550,11 @@ type AgentPatch struct {
 	PreferredMode           *string
 	PreferredModel          *string
 	PreferredThinkingEffort *string
+	// ConfigOptionsForModel replaces ONE model's picks among the agent's own
+	// config options (issue #746). Per-model like ThinkingEffortForModel: the
+	// read-modify-write runs in its own transaction, so two sessions of the same
+	// agent changing different models cannot overwrite each other.
+	ConfigOptionsForModel *ConfigOptionsModelPatch
 	// ThinkingEffortForModel sets (non-nil level) or clears (nil level) the
 	// user's effort pick for ONE model. Separate from PreferredThinkingEffort
 	// so a per-model pick never overwrites the model-independent default.
@@ -591,6 +622,13 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 	// stricter order: the caller sees an error and no partial edit.
 	if patch.ThinkingEffortForModel != nil {
 		if err := patchThinkingEffortForModel(id, patch.ThinkingEffortForModel); err != nil {
+			return err
+		}
+	}
+	// Same reason as the effort map above: a nested JSON object cannot be
+	// expressed as a plain column assignment (issue #746).
+	if patch.ConfigOptionsForModel != nil {
+		if err := patchConfigOptionsForModel(id, patch.ConfigOptionsForModel); err != nil {
 			return err
 		}
 	}
@@ -708,13 +746,104 @@ func encodeMCPPolicy(policy model.MCPServerPolicy) (string, error) {
 	return string(encoded), nil
 }
 
+// ConfigOptionsModelPatch replaces one model's picks among the agent's own
+// config options. An empty Picks map removes that model's entry (the user reset
+// every option, so nothing should be replayed).
+type ConfigOptionsModelPatch struct {
+	ModelID string
+	Picks   map[string]string
+}
+
+// patchConfigOptionsForModel applies one model's config-option picks.
+//
+// Same read-modify-write-in-a-transaction shape as patchThinkingEffortForModel:
+// two sessions of the same agent saving different models cannot lose each
+// other's entries, because the whole column is never written from a stale
+// in-memory copy.
+func patchConfigOptionsForModel(id string, p *ConfigOptionsModelPatch) error {
+	if p.ModelID == "" {
+		return nil
+	}
+	tx, err := store.WriteBegin()
+	if err != nil {
+		return fmt.Errorf("patch agent %s config options by model: %w", id, err)
+	}
+	// Defers run LIFO: Unlock is registered first so it runs LAST, keeping the
+	// write mutex held while the transaction is rolled back on an early return
+	// (same reasoning as patchThinkingEffortForModel).
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	byModel, err := readConfigOptionsByModel(tx, id)
+	if err != nil {
+		return err
+	}
+	if len(p.Picks) == 0 {
+		delete(byModel, p.ModelID)
+	} else {
+		copied := make(map[string]string, len(p.Picks))
+		for k, v := range p.Picks {
+			copied[k] = v
+		}
+		byModel[p.ModelID] = copied
+	}
+	encoded, err := json.Marshal(byModel)
+	if err != nil {
+		return fmt.Errorf("patch agent %s config options by model: marshal: %w", id, err)
+	}
+	res, err := tx.ExecContext(
+		context.Background(),
+		"UPDATE agents SET preferred_config_options = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		string(encoded), id,
+	)
+	if err != nil {
+		return fmt.Errorf("patch agent %s config options by model: write: %w", id, err)
+	}
+	// A vanished row must not be reported as a successful save of nothing.
+	if n, raErr := res.RowsAffected(); raErr == nil && n == 0 {
+		return fmt.Errorf("patch agent %s config options by model: %w", id, sql.ErrNoRows)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("patch agent %s config options by model: commit: %w", id, err)
+	}
+	return nil
+}
+
+// readConfigOptionsByModel loads one agent's per-model picks for a
+// read-modify-write inside an open transaction. A missing row is an error on
+// purpose (see readEffortByModel).
+func readConfigOptionsByModel(tx *sql.Tx, id string) (map[string]map[string]string, error) {
+	var raw string
+	if err := tx.QueryRowContext(context.Background(),
+		"SELECT COALESCE(preferred_config_options, '{}') FROM agents WHERE id = ?", id).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("patch agent %s config options by model: %w", id, err)
+		}
+		return nil, fmt.Errorf("patch agent %s config options by model: read: %w", id, err)
+	}
+	if raw == "" || raw == jsonNull || raw == "{}" {
+		return make(map[string]map[string]string), nil
+	}
+	// A corrupt column must not block the user's pick: an unparseable value
+	// reads as empty and this write replaces it.
+	return decodeConfigOptionsByModelLenient(raw), nil
+}
+
+// decodeConfigOptionsByModelLenient decodes the per-model picks, ignoring a
+// malformed column (see readConfigOptionsByModel for why that is safe here).
+func decodeConfigOptionsByModelLenient(raw string) map[string]map[string]string {
+	out := make(map[string]map[string]string)
+	_ = json.Unmarshal([]byte(raw), &out)
+	if out == nil {
+		return make(map[string]map[string]string)
+	}
+	return out
+}
+
 // patchThinkingEffortForModel applies one per-model effort write.
 //
 // Read-modify-write inside a single transaction under the store write mutex,
 // so two concurrent clicks (or two tabs) cannot lose each other's entries.
-// A missing agent row is NOT an error here: the caller's other patch fields
-// report that case the same way (no rows affected), and the read below simply
-// finds nothing.
 func patchThinkingEffortForModel(id string, p *ThinkingEffortModelPatch) error {
 	if p.ModelID == "" {
 		return nil

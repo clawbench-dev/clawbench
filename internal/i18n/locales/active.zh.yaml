@@ -152,6 +152,7 @@ AgentNotFound: 智能体未找到
 InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
+InvalidConfigOption: 无效的配置项
 AgentNameTaken: 已存在同名智能体
 AgentNameReserved: 该名称与群聊用户称谓冲突
 UserNicknameTaken: 该称谓已被某个智能体使用

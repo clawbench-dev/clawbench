@@ -282,6 +282,65 @@ func (s *stubMidTurnInjector) Inject(context.Context, ai.RawRPCTransport, ai.Mid
 	return ai.MidTurnInjectResult{}, nil
 }
 
+// TestLookupInProcessMidTurnInjector covers the in-process policy lookup. It is
+// a separate lookup from LookupMidTurnInjector because such a backend has no ACP
+// transport to hand over; if it ever returns the wrong one, ai.InjectMidTurn
+// either calls a transport-shaped policy that cannot work or reports "cannot
+// inject" for a backend that can.
+func TestLookupInProcessMidTurnInjector(t *testing.T) {
+	t.Cleanup(backends.ResetForTest())
+
+	inproc := &stubInProcessMidTurnInjector{}
+	backends.Register(&backends.BackendPlugin{ID: "with-inproc", MidTurnInProcess: inproc})
+	backends.Register(&backends.BackendPlugin{ID: "without-inproc"})
+	// An ACP-transport backend must NOT surface through the in-process lookup:
+	// the two transports are mutually exclusive.
+	backends.Register(&backends.BackendPlugin{ID: "acp-only", MidTurn: &stubMidTurnInjector{}})
+
+	if got := backends.LookupInProcessMidTurnInjector("with-inproc"); got != inproc {
+		t.Errorf("expected the registered in-process policy, got %v", got)
+	}
+	if got := backends.LookupInProcessMidTurnInjector("without-inproc"); got != nil {
+		t.Errorf("expected nil for a backend without a policy, got %v", got)
+	}
+	if got := backends.LookupInProcessMidTurnInjector("acp-only"); got != nil {
+		t.Errorf("expected nil for an ACP-transport backend, got %v", got)
+	}
+	if got := backends.LookupInProcessMidTurnInjector("nonexistent"); got != nil {
+		t.Errorf("expected nil for an unknown backend, got %v", got)
+	}
+}
+
+// TestLookupInProcessMidTurnInjector_MatchesCapability makes sure the capability
+// bit and the lookup agree: a backend advertising SupportsMidTurn must have at
+// least one resolvable policy, or core flow advertises injection and then queues.
+func TestLookupInProcessMidTurnInjector_MatchesCapability(t *testing.T) {
+	t.Cleanup(backends.ResetForTest())
+
+	backends.Register(&backends.BackendPlugin{
+		ID:               "inproc-cap",
+		MidTurnInProcess: &stubInProcessMidTurnInjector{},
+	})
+
+	caps, ok := backends.Capabilities("inproc-cap")
+	if !ok {
+		t.Fatal("capabilities missing for a registered backend")
+	}
+	if !caps.SupportsMidTurn {
+		t.Error("backend with an in-process policy should advertise SupportsMidTurn")
+	}
+	if backends.LookupInProcessMidTurnInjector("inproc-cap") == nil {
+		t.Error("advertised SupportsMidTurn but the in-process lookup returned nil")
+	}
+}
+
+// stubInProcessMidTurnInjector is a no-op in-process policy.
+type stubInProcessMidTurnInjector struct{}
+
+func (s *stubInProcessMidTurnInjector) InjectInProcess(context.Context, ai.MidTurnInjectRequest) (ai.MidTurnInjectResult, error) {
+	return ai.MidTurnInjectResult{}, nil
+}
+
 // TestLookupACPToolCallWrapperPrefixes covers the wrapper-frame filter lookup.
 // It is wired into ai.LookupACPToolCallWrapperPrefixesFn during init(), and a
 // backend that emits no wrappers must resolve to nil so the filter stays off.

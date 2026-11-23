@@ -258,10 +258,40 @@ function isGarbageOutput(output: string | undefined): boolean {
 }
 
 /**
- * Tool names that modify files on disk (canonical PascalCase, guaranteed by backend normalization).
- * Used to trigger file preview refresh after tool completion.
+ * Tool names that modify files on disk, in lowercase.
+ *
+ * There is NO system-wide normalization of tool names: each backend reports
+ * whatever its own CLI/ACP agent sends. Measured across the 19 backends, the
+ * same operation arrives as `Write`, `write`, `write_file`, or even a whole
+ * title sentence — so any exact comparison here silently misses those cases.
+ * Always go through isFileModifyingTool() instead of matching names by hand.
  */
-export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
+export const FILE_MODIFYING_TOOLS = new Set(['write', 'edit'])
+
+/**
+ * Whether a tool name means "this call creates or modifies a file".
+ *
+ * Case-insensitive on purpose: the builtin agent's in-process tools are the
+ * bare lowercase `write`/`edit`, while ACP backends mostly report PascalCase.
+ * Both must count, or the file-changes banner and the file-preview refresh
+ * are silently skipped for one family of backends.
+ */
+export function isFileModifyingTool(name?: string | null): boolean {
+  if (!name) return false
+  return FILE_MODIFYING_TOOLS.has(name.toLowerCase())
+}
+
+/**
+ * Whether a tool name denotes the PermissionApproval card (case-insensitive).
+ *
+ * The card is recognised by name in several places (this cleanup, the
+ * accumulator's CloseUnfinishedTools); an exact comparison would treat a
+ * lowercase report as an ordinary tool and paint a green check on a card that
+ * was never approved.
+ */
+export function isPermissionApprovalTool(name?: string | null): boolean {
+  return (name || '').toLowerCase() === 'permissionapproval'
+}
 
 /**
  * Close a tool block whose result this view will never see, marking it
@@ -279,7 +309,7 @@ export const FILE_MODIFYING_TOOLS = new Set(['Write', 'Edit'])
  */
 export function closeToolAsInterrupted<T extends object>(block: T): void {
   const b = block as T & { type?: string; name?: string; done?: boolean; status?: string; output?: string }
-  if (b.type !== 'tool_use' || b.name === 'PermissionApproval') return
+  if (b.type !== 'tool_use' || isPermissionApprovalTool(b.name)) return
   b.done = true
   if (!b.status) b.status = TOOL_STATUS_INTERRUPTED
   if (isGarbageOutput(b.output)) b.output = ''
@@ -397,7 +427,10 @@ export function extractFileChanges(blocks: ContentBlock[], summaryCards?: Summar
     if (block.type !== 'tool_use' || !block.done) continue
     const filePath = (block.file_path || (block.input as Record<string, unknown>)?.file_path) as string | undefined
     if (!filePath) continue
-    const map = block.name === 'Write' ? created : block.name === 'Edit' ? modified : null
+    // 'write'/'Write' → created, 'edit'/'Edit' → modified; case-insensitive
+    // because backends do not agree on casing (see isFileModifyingTool).
+    const lower = (block.name || '').toLowerCase()
+    const map = lower === 'write' ? created : lower === 'edit' ? modified : null
     if (!map) continue
     let fc = map.get(filePath)
     if (!fc) {

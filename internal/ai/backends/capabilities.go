@@ -25,7 +25,7 @@ func Capabilities(backendID string) (model.BackendCapabilities, bool) {
 		// ACP support is the spawn command, not the mapping data: backends with
 		// plain ACP (claude, cursor) leave ACP nil and use the generic remaps.
 		HasACP:                 p.Spec.AcpCommand != "",
-		SupportsMidTurn:        p.MidTurn != nil,
+		SupportsMidTurn:        p.MidTurn != nil || p.MidTurnInProcess != nil,
 		MidTurnSplitsReply:     p.MidTurnSplitsReply,
 		HasModelSource:         model.HasModelSource(backendID),
 		CanBindProvider:        model.ProviderEnvSupported(backendID, ""),

@@ -299,12 +299,14 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	req := ai.ChatRequest{
 		Prompt:                 prompt,
 		SessionID:              effectiveSessionID,
+		ClawbenchSessionID:     sessionID,
 		WorkDir:                fileDir,
 		SystemPrompt:           systemPrompt,
 		Model:                  agentModel,
 		AgentID:                agentID,
 		ThinkingEffort:         effectiveThinkingEffort,
 		Mode:                   effectiveMode,
+		ConfigOptions:          resolveConfigOptionPicks(sessionID, agentID, agentModel),
 		Resume:                 resume,
 		HasAttachments:         hasAttachments,
 		AssistantMessageCount:  GetAssistantMessageCount(sessionID),
@@ -377,6 +379,47 @@ func applySessionOverrides(sessionID, modelOverride, thinkingEffortOverride, mod
 		}
 	}
 	return modelOverride, thinkingEffortOverride, modeOverride
+}
+
+// resolveConfigOptionPicks returns the generic config-option values to apply at
+// the start of this turn (issue #746).
+//
+// Priority: the session's own stored pick > the per-model pick remembered on
+// the agent (the "default" the settings page edits). The session value wins so a
+// pick made in THIS conversation is not overwritten by a default configured
+// later; the per-model memory is what makes a NEW session start with the last
+// choice instead of the agent's own default.
+func resolveConfigOptionPicks(sessionID, agentID, modelID string) map[string]string {
+	picks := GetSessionConfigOptionPicks(sessionID)
+	if len(picks) == 0 {
+		a := model.GetAgent(agentID)
+		if a == nil {
+			return nil
+		}
+		picks = a.ConfigOptionsForModel(modelID)
+	}
+	// A pick can outlive the model it was made under: the session keeps its
+	// stored value when the model changes. Drop ids the model now running does
+	// not advertise, so a stale one is neither replayed nor kept as a phantom
+	// "current" value. An unknown list (nil) means the model has never reported
+	// and the value is sent as-is.
+	if picks == nil {
+		return nil
+	}
+	if offered := ai.GetAgentCapabilityRegistry().GetExtraConfigOptions(agentID, modelID); offered != nil {
+		filtered := make(map[string]string, len(picks))
+		live := make(map[string]bool, len(offered))
+		for _, opt := range offered {
+			live[opt.ConfigID] = true
+		}
+		for id, value := range picks {
+			if live[id] {
+				filtered[id] = value
+			}
+		}
+		return filtered
+	}
+	return picks
 }
 
 // resolveAgentConfig looks up the agent and derives the prompt, model, command,
