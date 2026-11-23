@@ -295,6 +295,37 @@ describe('computeMenuStyle', () => {
     })
   })
 
+  // A classic scrollbar takes its width out of the box, so right-aligned content
+  // sat flush against the bar and looked cramped (reported on the context-usage
+  // popup). The lane must be reserved ONLY while the menu actually scrolls —
+  // reserving it unconditionally would leave an 8-10px dead strip on every
+  // short menu, which is the thing the user explicitly did not want.
+  describe('scrollbar gutter: reserved only when scrolling', () => {
+    it('asks the browser for an auto gutter above and below', () => {
+      const above = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
+        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+      })
+      const below = computeMenuStyle(mockRect({ top: 5, bottom: 40, left: 100, right: 140 }), {
+        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+      })
+      // `auto` = reserve only once overflowing; never `stable`/`always`.
+      expect(above.scrollbarGutter).toBe('auto')
+      expect(below.scrollbarGutter).toBe('auto')
+    })
+
+    it('does not claim a gutter for menus that never scroll themselves', () => {
+      // appSurface menus pin a header/footer and scroll an inner region, so the
+      // root has no scrollbar of its own to make room for.
+      const style = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
+        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220, scrollable: false,
+      })
+      expect(style.overflowY).toBeUndefined()
+      // The gutter declaration is harmless there (no scrollbar → no lane), but
+      // pin it down so a future change to reserve space eagerly is caught.
+      expect(style.scrollbarGutter).toBe('auto')
+    })
+  })
+
   describe('style invariants', () => {
     it('always includes position, maxWidth, maxHeight, overflowY (scrollable default)', () => {
       const rects = [

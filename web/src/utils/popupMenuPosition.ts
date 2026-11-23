@@ -156,6 +156,16 @@ export function computeMenuStyle(
   // content must adapt instead of scrolling sideways; `clip` also stops an
   // over-wide child from painting outside the rounded box.
   const overflow = { overflowX: 'clip' as const }
+  // A classic (non-overlay) vertical scrollbar takes its width out of the
+  // padding box, so the right-edge content (this popup's right-aligned numbers,
+  // sliders, value columns) ends up flush against the bar and reads as cramped.
+  // `scrollbar-gutter` reserves that lane ONLY while the box actually scrolls,
+  // which is exactly the wanted behaviour: full width when there is nothing to
+  // scroll (no dead strip), and the content pulled back off the bar when there
+  // is. Measured on the context-usage popup at a non-1.0 UI scale. It is a
+  // no-op on overlay-scrollbar platforms, where the bar covers no layout space
+  // and nothing was crowded in the first place.
+  const gutter = { scrollbarGutter: 'auto' as const }
 
   if (goBelow) {
     // Menu appears BELOW the anchor
@@ -166,6 +176,7 @@ export function computeMenuStyle(
       top: `${top}px`,
       ...horizontal,
       ...overflow,
+      ...gutter,
       maxWidth: `${effectiveMaxWidth}px`,
       maxHeight: `min(${maxHeight}px, ${availableBelow / (containingBlock?.scaleY || 1)}px)`,
     }
@@ -184,6 +195,7 @@ export function computeMenuStyle(
     bottom: `${bottom}px`,
     ...horizontal,
     ...overflow,
+    ...gutter,
     maxWidth: `${effectiveMaxWidth}px`,
     maxHeight: `min(${maxHeight}px, ${availableAbove / (containingBlock?.scaleY || 1)}px)`,
   }
