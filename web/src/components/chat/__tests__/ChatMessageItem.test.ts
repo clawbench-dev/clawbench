@@ -346,6 +346,26 @@ describe('ChatMessageItem', () => {
     expect(speakBtn.attributes('title')).toBe('朗读')
   })
 
+  it('hides the read-aloud button while the reply is streaming', () => {
+    // Reading a growing reply aloud cuts it off mid-sentence, so the button only
+    // appears once the turn has settled.
+    const wrapper = createWrapper({
+      msg: { id: 'sp-stream', role: 'assistant', content: 'partial', blocks: [{ type: 'text', text: 'partial' }], streaming: true },
+    })
+    expect(wrapper.find('.chat-speak-btn').exists()).toBe(false)
+  })
+
+  it('shows the read-aloud button again once streaming ends', async () => {
+    const wrapper = createWrapper({
+      msg: { id: 'sp-settled', role: 'assistant', content: 'done', blocks: [{ type: 'text', text: 'done' }], streaming: true },
+    })
+    expect(wrapper.find('.chat-speak-btn').exists()).toBe(false)
+    await wrapper.setProps({
+      msg: { id: 'sp-settled', role: 'assistant', content: 'done', blocks: [{ type: 'text', text: 'done' }], streaming: false },
+    })
+    expect(wrapper.find('.chat-speak-btn').exists()).toBe(true)
+  })
+
   it('speaks summary text when clicking read-aloud in summary view with empty blocks', async () => {
     const wrapper = createWrapper({
       msg: { id: 's3', role: 'assistant', content: '', blocks: [], summary: 'Speak me', streaming: false },
