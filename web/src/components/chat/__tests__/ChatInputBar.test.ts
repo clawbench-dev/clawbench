@@ -14,6 +14,7 @@ import ChatInputBar from '../ChatInputBar.vue'
 import ChatStopMenu from '../ChatStopMenu.vue'
 import { apiGet } from '@/utils/api'
 import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { localConfig } from '@/composables/useSettingsConfig'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
@@ -4784,5 +4785,114 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.showRecommendationChip).toBe(true)
 
     wrapper.unmount()
+  })
+
+  describe('mobile Enter newline behavior (#8)', () => {
+    afterEach(() => {
+      _resetPlatformForTest()
+      ;(localConfig as Record<string, unknown>).mobileEnterToSend = false
+    })
+
+    it('does not hijack plain Enter on touch devices by default, sets enterkeyhint="enter", and allows Ctrl/Meta+Enter to send', async () => {
+      _setPlatformForTest({ isTouchPrimary: true })
+      ;(localConfig as Record<string, unknown>).mobileEnterToSend = false
+
+      const wrapper = mountBar({ loading: false, currentSessionId: 's-mobile-1' })
+      const textarea = wrapper.find('textarea.chat-textarea')
+      expect(textarea.attributes('enterkeyhint')).toBe('enter')
+
+      await textarea.setValue('line 1')
+      const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      const preventSpy = vi.spyOn(enterEvent, 'preventDefault')
+      textarea.element.dispatchEvent(enterEvent)
+      await nextTick()
+
+      expect(preventSpy).not.toHaveBeenCalled()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      // Ctrl+Enter still sends for external keyboards
+      const ctrlEnter = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true })
+      textarea.element.dispatchEvent(ctrlEnter)
+      await nextTick()
+      expect(wrapper.emitted('send')).toEqual([['line 1']])
+
+      // Meta+Enter also sends
+      await textarea.setValue('line 2')
+      const metaEnter = new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, cancelable: true })
+      textarea.element.dispatchEvent(metaEnter)
+      await nextTick()
+      expect(wrapper.emitted('send')).toEqual([['line 1'], ['line 2']])
+
+      wrapper.unmount()
+    })
+
+    it('sends on plain Enter on touch devices when mobileEnterToSend is enabled', async () => {
+      _setPlatformForTest({ isTouchPrimary: true })
+      ;(localConfig as Record<string, unknown>).mobileEnterToSend = true
+
+      const wrapper = mountBar({ loading: false, currentSessionId: 's-mobile-2' })
+      const textarea = wrapper.find('textarea.chat-textarea')
+      expect(textarea.attributes('enterkeyhint')).toBe('send')
+
+      await textarea.setValue('send me')
+      const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      const preventSpy = vi.spyOn(enterEvent, 'preventDefault')
+      textarea.element.dispatchEvent(enterEvent)
+      await nextTick()
+
+      expect(preventSpy).toHaveBeenCalled()
+      expect(wrapper.emitted('send')).toEqual([['send me']])
+
+      wrapper.unmount()
+    })
+
+    it('keeps plain Enter sending on desktop even when mobileEnterToSend is off', async () => {
+      _setPlatformForTest({ isTouchPrimary: false })
+      ;(localConfig as Record<string, unknown>).mobileEnterToSend = false
+
+      const wrapper = mountBar({ loading: false, currentSessionId: 's-desktop-1' })
+      const textarea = wrapper.find('textarea.chat-textarea')
+      expect(textarea.attributes('enterkeyhint')).toBe('send')
+
+      await textarea.setValue('desktop msg')
+      const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+      textarea.element.dispatchEvent(enterEvent)
+      await nextTick()
+
+      expect(wrapper.emitted('send')).toEqual([['desktop msg']])
+
+      wrapper.unmount()
+    })
+
+    it('does not emit an empty send for Ctrl+Enter in newline mode, and leaves Ctrl+Shift+Enter to the browser', async () => {
+      _setPlatformForTest({ isTouchPrimary: true })
+      ;(localConfig as Record<string, unknown>).mobileEnterToSend = false
+
+      const wrapper = mountBar({ loading: false, currentSessionId: 's-mobile-3' })
+      const textarea = wrapper.find('textarea.chat-textarea')
+
+      // Empty composer: Ctrl+Enter must not emit 'send' (handleSendClick's rule).
+      const emptyCtrlEnter = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true })
+      textarea.element.dispatchEvent(emptyCtrlEnter)
+      await nextTick()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      // Whitespace-only counts as empty too.
+      await textarea.setValue('   ')
+      textarea.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true }))
+      await nextTick()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      // Ctrl+Shift+Enter stays a newline: no send, and the default is not cancelled.
+      await textarea.setValue('keep me')
+      const shiftCtrlEnter = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, shiftKey: true, cancelable: true })
+      const preventSpy = vi.spyOn(shiftCtrlEnter, 'preventDefault')
+      textarea.element.dispatchEvent(shiftCtrlEnter)
+      await nextTick()
+      expect(preventSpy).not.toHaveBeenCalled()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      wrapper.unmount()
+    })
   })
 })

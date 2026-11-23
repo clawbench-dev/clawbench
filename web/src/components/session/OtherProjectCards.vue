@@ -22,6 +22,7 @@
              top bar name the same thing, so they read with the same glyph. -->
         <Projector :size="12" class="pcard-icon" aria-hidden="true" />
         <span class="pcard-name">{{ group.displayName }}</span>
+        <span v-if="group.dirMissing" class="pcard-missing-tag">{{ t('session.dirMissing') }}</span>
         <!-- Active card: the count. Idle card: when it was last touched, in
              the same slot, so the header keeps one rhythm either way. -->
         <span v-if="group.sessions.length > 0" class="pcard-count">{{ cardCount(group) }}</span>
@@ -39,6 +40,18 @@
         <ChevronDown v-else :size="14" class="pcard-chev" />
       </button>
 
+      <div v-if="group.dirMissing && group.projectId" class="pcard-missing-bar">
+        <button
+          type="button"
+          class="pcard-cleanup-btn"
+          :disabled="cleaningProjectId === group.projectId"
+          @click.stop="handleCleanupProject(group)"
+        >
+          <Trash2 :size="12" aria-hidden="true" />
+          <span>{{ t('session.cleanupMissingProject') }}</span>
+        </button>
+      </div>
+
       <!-- An idle card has no rows to show until it is opened, and its
            session list is the only thing that ever appears — so nothing
            renders below the header while collapsed. -->
@@ -52,7 +65,7 @@
         :key="group.name + '/' + session.id"
         class="pcard-row"
         :data-session-id="session.id"
-        @click="emit('select', session, group.name)"
+        @click="handleRowClick(session, group)"
       >
         <!-- One fixed slot for every state, so the titles of a running,
              blocked and unread row all start on the same x. Pending still
@@ -87,6 +100,16 @@
           />
         </span>
         <span class="pcard-row-title">{{ session.title }}</span>
+        <button
+          type="button"
+          class="pcard-row-delete"
+          :title="t('session.destroyCrossSession')"
+          :aria-label="t('session.destroyCrossSession')"
+          :disabled="destroyingSessionId === session.id"
+          @click.stop="handleDestroyRow(session, group)"
+        >
+          <Trash2 :size="13" aria-hidden="true" />
+        </button>
       </div>
     </div>
   </div>
@@ -95,8 +118,11 @@
 <script setup>
 import { ref, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronUp, Projector, ShieldAlert } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Projector, ShieldAlert, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { useDialog } from '@/composables/useDialog'
+import { useToast } from '@/composables/useToast'
+import { refresh as refreshCrossSessions } from '@/composables/useCrossProjectSessions'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { projectTintStyle } from '@/utils/projectTint'
 import { rowStatus, statusLabelKey } from '@/utils/sessionRowStatus'
@@ -111,7 +137,73 @@ defineProps({
 const emit = defineEmits(['select'])
 
 const { t } = useI18n()
+const dialog = useDialog()
+const toast = useToast()
 const rootRef = ref(null)
+const destroyingSessionId = ref('')
+const cleaningProjectId = ref(0)
+
+function handleRowClick(session, group) {
+  if (group.dirMissing) {
+    toast.show(t('session.dirMissingCannotOpen'), { icon: 'warning', type: 'warning', duration: 3000 })
+    return
+  }
+  emit('select', session, group.name)
+}
+
+async function handleDestroyRow(session, group) {
+  if (!session?.id || destroyingSessionId.value) return
+  const title = session.title || t('session.unnamed')
+  const confirmed = await dialog.confirm(
+    t(session.running ? 'session.confirmDestroyRunning' : 'session.confirmDestroy', { title }),
+    { confirmText: t('common.remove'), title: t('common.remove'), dangerous: true },
+  )
+  if (!confirmed) return
+  destroyingSessionId.value = session.id
+  try {
+    const resp = await fetch(`/api/ai/session/destroy?session_id=${encodeURIComponent(session.id)}`, {
+      method: 'DELETE',
+    })
+    if (!resp.ok) throw new Error(`destroy HTTP ${resp.status}`)
+    if (expandedProject.value === group.name) {
+      expandedSessions.value = expandedSessions.value.filter(s => s.id !== session.id)
+    }
+    await refreshCrossSessions()
+  } catch (err) {
+    appLog.e('OtherProjectCards', 'failed to destroy cross-project session', err)
+    toast.show(t('session.removeFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  } finally {
+    destroyingSessionId.value = ''
+  }
+}
+
+async function handleCleanupProject(group) {
+  if (!group?.projectId || cleaningProjectId.value) return
+  const confirmed = await dialog.confirm(
+    t('settings.items.projectDeleteConfirmPromptMissing', { name: group.displayName }),
+    {
+      title: t('settings.items.projectDeleteConfirmTitle'),
+      confirmText: t('settings.items.projectDelete'),
+      dangerous: true,
+    },
+  )
+  if (!confirmed) return
+  cleaningProjectId.value = group.projectId
+  try {
+    const resp = await fetch(`/api/projects/detail?id=${encodeURIComponent(String(group.projectId))}`, {
+      method: 'DELETE',
+    })
+    if (!resp.ok) throw new Error(`delete project HTTP ${resp.status}`)
+    if (expandedProject.value === group.name) collapseProject()
+    toast.show(t('session.cleanupProjectSuccess'), { icon: 'success', type: 'success', duration: 2500 })
+    await refreshCrossSessions()
+  } catch (err) {
+    appLog.e('OtherProjectCards', 'failed to clean up missing project', err)
+    toast.show(t('session.cleanupProjectFailed'), { icon: 'warning', type: 'error', duration: 3000 })
+  } finally {
+    cleaningProjectId.value = 0
+  }
+}
 
 /** Tooltip for a card row's status slot. */
 function statusLabel(session) {
@@ -499,5 +591,77 @@ watch(() => store.state.projectRoot, () => collapseProject())
   padding: var(--space-5) var(--space-4);
   color: var(--text-hint, #8c959f);
   font-size: var(--font-size-2xs);
+}
+
+.pcard-missing-tag {
+  flex: 0 0 auto;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--color-red, #cf222e) 12%, transparent);
+  color: var(--color-red, #cf222e);
+  font-size: var(--font-size-2xs);
+  white-space: nowrap;
+}
+
+.pcard-missing-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-4);
+  background: color-mix(in srgb, var(--color-red, #cf222e) 6%, var(--bg-primary, #fff));
+  border-bottom: 1px solid color-mix(in srgb, var(--pc, var(--border-color)) 20%, transparent);
+}
+
+.pcard-cleanup-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--color-red, #cf222e) 35%, transparent);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-red, #cf222e);
+  font-size: var(--font-size-2xs);
+  cursor: pointer;
+}
+
+.pcard-cleanup-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pcard-row-delete {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(24 * var(--dp));
+  height: calc(24 * var(--dp));
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-hint, #8c959f);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: color var(--duration-base), background var(--duration-base), opacity var(--duration-base);
+}
+
+@media (hover: hover) {
+  .pcard-row-delete {
+    opacity: 0;
+  }
+  .pcard-row:hover .pcard-row-delete,
+  .pcard-row-delete:focus-visible {
+    opacity: 1;
+  }
+  .pcard-row-delete:hover {
+    color: var(--color-red, #cf222e);
+    background: color-mix(in srgb, var(--color-red, #cf222e) 10%, transparent);
+  }
+}
+
+.pcard-row-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 </style>

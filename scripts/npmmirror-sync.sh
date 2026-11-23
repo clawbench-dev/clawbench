@@ -13,18 +13,28 @@
 # 做法：对每个包提交一次同步任务，然后轮询镜像的版本元数据，直到能查到该版本；
 # 最后再探一次 tarball 能否下载 —— 元数据先到、文件后到，只查元数据会误判成功。
 #
-# 退出码：0 = 全部可安装；1 = 有包在等待窗口内没同步好
+# v0.146.0 实测：一轮「提交 + 等 10 分钟」不够。主包（小）同步好了，6 个平台包
+# 全停在上一版，从镜像装的人装不上。所以现在等超时后不是直接判死，而是**重新
+# 提交一次同步任务再等一轮**（镜像那边常是一次任务被吃掉、排在后面没跑），
+# 最多 NPMMIRROR_ATTEMPTS 轮。全部轮完仍缺才失败。
+#
+# 包的处理顺序也有讲究：先催小的，大的（linux/darwin/win32 平台包，几十 MB）
+# 放最后。小包先就绪，失败时缺的就更集中在大包上，报错也更好定位。
+#
+# 退出码：0 = 全部可安装；1 = 所有轮次用完仍有包没同步好
 #
 # 环境变量（测试用，正常不用改）：
 #   NPMMIRROR_REGISTRY        默认 https://registry.npmmirror.com
-#   NPMMIRROR_WAIT_SECONDS    每个包最多等多久，默认 600
+#   NPMMIRROR_WAIT_SECONDS    每轮最多等多久，默认 600
 #   NPMMIRROR_INTERVAL_SECONDS 轮询间隔，默认 15
+#   NPMMIRROR_ATTEMPTS        最多几轮「提交 + 等待」，默认 3
 
 set -euo pipefail
 
 REGISTRY="${NPMMIRROR_REGISTRY:-https://registry.npmmirror.com}"
 WAIT_SECONDS="${NPMMIRROR_WAIT_SECONDS:-600}"
 INTERVAL="${NPMMIRROR_INTERVAL_SECONDS:-15}"
+ATTEMPTS="${NPMMIRROR_ATTEMPTS:-3}"
 
 if [ $# -lt 2 ]; then
   echo "usage: $0 <version> <package> [package...]" >&2
@@ -40,6 +50,7 @@ encode_name() {
 }
 
 MAX_ATTEMPTS=$(awk -v w="$WAIT_SECONDS" -v i="$INTERVAL" 'BEGIN { n = (i > 0) ? w / i : 0; printf "%d", (n < 1 ? 1 : n) }')
+ROUNDS=$(awk -v a="$ATTEMPTS" 'BEGIN { printf "%d", (a < 1 ? 1 : a) }')
 
 failed=()
 total=0
@@ -67,8 +78,8 @@ tarball_reachable() {
 
 # 先全部提交同步任务，再统一等：镜像的任务是并行的，逐个等会把最坏情况变成
 # 「包数 × 等待窗口」。这里总共只等 WAIT_SECONDS。
-for name in "$@"; do
-  total=$((total + 1))
+queue_sync() {
+  local name="$1"
   echo "→ $name@$VERSION"
   # 提交失败不直接判死：可能已经有一个任务在跑，后面的轮询才是判据。
   if curl -fsS --max-time 30 -X PUT "$REGISTRY/-/package/$(encode_name "$name")/syncs" \
@@ -77,28 +88,67 @@ for name in "$@"; do
   else
     echo "::warning::could not queue a sync for $name; waiting anyway" >&2
   fi
+}
+
+for name in "$@"; do
+  total=$((total + 1))
 done
 
-pending=("$@")
-attempt=0
-while [ ${#pending[@]} -gt 0 ] && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
-  still=()
-  for name in "${pending[@]}"; do
-    if version_visible "$name"; then
-      echo "  ✓ $name@$VERSION 元数据已同步"
-    else
-      still+=("$name")
+# 大包排最后：小包先就绪，剩下没好的就更集中在大包上。
+ordered=()
+for name in "$@"; do
+  case "$name" in
+    *-linux-*|*-darwin-*|*-win32-*) ;;
+    *) ordered+=("$name") ;;
+  esac
+done
+for name in "$@"; do
+  case "$name" in
+    *-linux-*|*-darwin-*|*-win32-*) ordered+=("$name") ;;
+  esac
+done
+
+pending=()
+for name in "${ordered[@]}"; do
+  queue_sync "$name"
+  pending+=("$name")
+done
+
+# 每一轮都重新提交一次同步任务再等。镜像有时会把一个任务排丢（v0.146.0 就是
+# 小包好了、6 个平台包没动），只等不重提的话等再久也不会自己好。
+round=0
+while [ ${#pending[@]} -gt 0 ] && [ "$round" -lt "$ROUNDS" ]; do
+  round=$((round + 1))
+  if [ "$round" -gt 1 ]; then
+    echo "第 $round 轮：重新提交 ${#pending[@]} 个包的同步任务"
+    for name in "${pending[@]}"; do
+      queue_sync "$name"
+    done
+  fi
+
+  attempt=0
+  while [ ${#pending[@]} -gt 0 ] && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; do
+    still=()
+    for name in "${pending[@]}"; do
+      if version_visible "$name"; then
+        echo "  ✓ $name@$VERSION 元数据已同步"
+      else
+        still+=("$name")
+      fi
+    done
+    pending=(${still[@]+"${still[@]}"})
+    if [ ${#pending[@]} -gt 0 ]; then
+      attempt=$((attempt + 1))
+      sleep "$INTERVAL"
     fi
   done
-  pending=(${still[@]+"${still[@]}"})
-  if [ ${#pending[@]} -gt 0 ]; then
-    attempt=$((attempt + 1))
-    sleep "$INTERVAL"
-  fi
 done
 
 for name in ${pending[@]+"${pending[@]}"}; do
-  echo "  ✗ $name：${WAIT_SECONDS}s 内版本没有出现" >&2
+  # 不要在这里做 $((ROUNDS * WAIT_SECONDS))：WAIT_SECONDS 允许是小数（测试用
+  # 0.3），bash 算术只认整数，展开失败会让这行 echo 被静默跳过，真正失败的包
+  # 反而在 stderr 里没有名字。
+  echo "  ✗ $name：$ROUNDS 轮（每轮最多 ${WAIT_SECONDS}s）内版本没有出现" >&2
   failed+=("$name")
 done
 

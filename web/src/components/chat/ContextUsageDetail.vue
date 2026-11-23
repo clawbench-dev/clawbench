@@ -39,6 +39,10 @@
       <span class="usage-popup-label">{{ t('chat.sessionInfo.tokenRate') }}</span>
       <span class="usage-popup-value" :title="rateHint">{{ rateText }}</span>
     </div>
+    <div v-if="hitRate !== null" class="usage-popup-row">
+      <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheHitRate') }}</span>
+      <span class="usage-popup-value">{{ hitRate.toFixed(1) }}%</span>
+    </div>
     <div v-if="n('totalTokens') > 0" class="usage-popup-row">
       <span class="usage-popup-label">{{ t('chat.sessionInfo.totalTokens') }}</span>
       <span class="usage-popup-value">{{ n('totalTokens').toLocaleString() }}</span>
@@ -50,10 +54,6 @@
     <div v-if="n('cacheHitTokens') > 0" class="usage-popup-row">
       <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheHitTokens') }}</span>
       <span class="usage-popup-value">{{ n('cacheHitTokens').toLocaleString() }}</span>
-    </div>
-    <div v-if="hitRate !== null" class="usage-popup-row">
-      <span class="usage-popup-label">{{ t('chat.sessionInfo.cacheHitRate') }}</span>
-      <span class="usage-popup-value">{{ hitRate.toFixed(1) }}%</span>
     </div>
     <div v-if="n('cachedWriteTokens') > 0" class="usage-popup-row">
       <span class="usage-popup-label">{{ t('chat.sessionInfo.cachedWriteTokens') }}</span>

@@ -2162,9 +2162,14 @@ paths:
       responses:
         "200":
           description: |
-            各项目会话概览（`{projects: [{name, sessions, lastActiveAt?}], total}`）。
+            各项目会话概览（`{projects: [{name, projectId?, dirMissing?, sessions, lastActiveAt?}], total}`）。
             每行携带 `agentTakeoverFrom`（旧智能体显示名；省略 = 从未被接管）。
             `total` 仍是**活跃会话**总数，不含仅最近活跃的项目。
+
+            分组上的两个可选字段用于「其他项目」卡片清理失效项目：
+            - `projectId`：项目注册表 id；省略 = 该路径未在注册表中（无法直接清理）。
+            - `dirMissing`：项目目录在磁盘上已不存在；客户端据此显示「目录不存在」
+              并允许直接删除项目，避免先切到该路径。
 
   /api/ai/sessions/by-project:
     get:
@@ -2627,6 +2632,10 @@ paths:
     delete:
       tags: [Sessions]
       summary: 归档会话
+      description: |
+        归档后会话从列表中消失。归档成功（含「空会话直接硬删」分支）会向所有
+        已连接的客户端广播 `session_removed` 事件，让其他设备收起仍打开着的该
+        会话并刷新列表；发起方从本响应得知结果，不依赖该事件。
       operationId: sessionArchive
       parameters:
         - name: session_id
@@ -2646,6 +2655,21 @@ paths:
     delete:
       tags: [Sessions]
       summary: 销毁会话（不可逆）
+      description: |
+        物理删除会话及其全部数据（chat_history、tool_calls、raw_responses、
+        task_executions、会话记录），正在运行的会话会先被取消。
+
+        **不校验项目 cookie，也不做归属校验**：任意已认证调用方可以销毁任意
+        `session_id`。这是为「其他项目」卡片清理会话（包括项目目录已从磁盘
+        移除、无法先切过去的会话）而刻意放弃的项目作用域检查，与本产品
+        「认证即拥有全部项目」的模型一致。
+
+        返回值里的 `sessionCount` 仍是**调用方当前项目**的会话数；调用方没有
+        项目 cookie 时按全局作用域（`project_id=0`）计数。
+
+        销毁成功会向所有已连接的客户端广播 `session_removed` 事件，`project_path`
+        取被销毁会话自身所属项目（删除前读取），因此无 cookie 的跨项目销毁也能
+        让对应项目的客户端收起该会话。
       operationId: sessionDestroy
       parameters:
         - name: session_id

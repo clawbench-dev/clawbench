@@ -64,8 +64,13 @@ func TestCreateTerminal_ArgsAreExecuted(t *testing.T) {
 	client.cwd = cwd
 
 	marker := filepath.Join(cwd, "args-marker.txt")
+	shell, err := exec.LookPath("bash")
+	if err != nil {
+		shell, err = exec.LookPath("sh")
+	}
+	require.NoError(t, err)
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-		Command: "/bin/bash",
+		Command: shell,
 		Args:    []string{"-c", "touch " + marker},
 	})
 	require.NoError(t, err)
@@ -87,8 +92,10 @@ func TestCreateTerminal_ArgsOutputCaptured(t *testing.T) {
 	cwd := t.TempDir()
 	client.cwd = cwd
 
+	echoPath, err := exec.LookPath("echo")
+	require.NoError(t, err)
 	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
-		Command: "/bin/echo",
+		Command: echoPath,
 		Args:    []string{"hello", "from", "args"},
 	})
 	require.NoError(t, err)

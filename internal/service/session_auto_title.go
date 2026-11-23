@@ -297,3 +297,29 @@ func BroadcastSessionTitleUpdate(sessionID, title string) {
 		},
 	})
 }
+
+// BroadcastSessionRemoved tells connected clients that a session left the
+// visible session list — archived or permanently destroyed — from a device that
+// is not them. The archiving client learns this from its own HTTP response; this
+// event exists for the OTHER devices, which would otherwise keep an open chat
+// panel pointing at a session id that no longer resolves.
+//
+// projectPath is captured by the CALLER while the row still exists: every
+// service-level cleanup below (archive → hard delete, destroy) removes the row,
+// and GetSessionProjectPath filters archived=0, so looking it up here would
+// return "" for exactly the sessions this event matters most for.
+func BroadcastSessionRemoved(sessionID, projectPath string) {
+	mgr := ws.GetManager()
+	if mgr == nil {
+		return
+	}
+	mgr.BroadcastEvent(ws.ServerMessage{
+		Type:  ws.MessageTypeEvent,
+		ID:    ws.GenerateEventID(),
+		Event: "session_removed",
+		Data: ws.SessionRemovedData{
+			SessionID:   sessionID,
+			ProjectPath: projectPath,
+		},
+	})
+}

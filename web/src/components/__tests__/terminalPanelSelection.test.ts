@@ -56,12 +56,31 @@ describe('TerminalPanel xterm selection defaults', () => {
     // The Android WebView blurs the textarea before touchstart (uncancellable),
     // so the fix restores focus on blur instead of trying to preventDefault.
     expect(source).toContain("textareaEl.addEventListener('blur'")
-    expect(source).toContain('shouldAutoRefocusTerminal(!!props.active, next)')
+    expect(source).toContain('shouldAutoRefocusTerminal(!!props.active, next, refocusCtx())')
+    // Browse mode defers focus to stationary touchend on mobile, toolbar/tab bars
+    // prevent focus loss on mobile mousedown, and buttons never pop the keyboard.
+    expect(source).toContain('if (isTouchPrimary.value && !hasOverlayOpen()) focusTerminal()')
+    expect(source).toContain('<div class="terminal-toolbar" v-show="isTouchPrimary" @mousedown="onBarMouseDown">')
+    expect(source).toContain('<div class="terminal-tab-bar" @mousedown="onBarMouseDown">')
+    expect(source).toContain('function focusTerminalOnDesktop()')
+    expect(source).toContain('tabManager.switchTab(tabId, { focus: !isTouchPrimary.value })')
+    expect(source).not.toContain("document.addEventListener('pointerdown'")
+    expect(source).not.toContain("document.addEventListener('touchstart'")
     // Only restores when focus fell to body/document (tap on the surface), and
     // defers focus() out of the blur dispatch via a microtask so the keyboard
     // never visibly collapses.
     expect(source).toContain('queueMicrotask(() => {')
     expect(source).toContain('ta.focus()')
+  })
+
+  it('does not focus the terminal input when cycling interaction modes', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+    const modeCycleStart = source.indexOf('function handleModeCycle()')
+    const modeCycleEnd = source.indexOf('function getWsUrl', modeCycleStart)
+    const modeCycleFn = source.slice(modeCycleStart, modeCycleEnd)
+
+    expect(modeCycleFn).toContain('gestures.cycleMode()')
+    expect(modeCycleFn).not.toMatch(/\bfocusTerminal\s*\(/)
   })
 
   it('provides a theme switcher button in the tab bar', () => {

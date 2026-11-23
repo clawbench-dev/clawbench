@@ -135,6 +135,132 @@ describe('useNotificationSound', () => {
     }
   })
 
+  // ── hidden page ──
+  //
+  // #728: reply finalisation and the reconnect replay of the same completion
+  // both used to hit a backgrounded page. Hidden means no speaker (the OS
+  // notification is the alert there), but the chime is deferred rather than
+  // dropped — one sound on return, covering a whole background burst.
+
+  it('defers the chime while hidden and plays one on return', async () => {
+    mockLocalConfig.notificationSound = true
+    const chimes = stubAudioContext()
+    const { playNotificationSound, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+
+    const vis = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    try {
+      // Live finalisation + the replay of the same completion + another one.
+      playNotificationSound()
+      playNotificationSound()
+      playNotificationSound()
+      expect(chimes()).toBe(0)
+
+      vis.mockReturnValue('visible')
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(chimes()).toBe(1)
+
+      // Consumed: a second visibilitychange with nothing new must stay silent.
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(chimes()).toBe(1)
+    } finally {
+      vis.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('treats the native background signal as hidden even when visibilityState stays visible', async () => {
+    // Android's WebView does not reliably flip document.visibilityState on
+    // onPause. Reading visibility alone therefore played the chime in the
+    // user's pocket — the #728 symptom this deferral exists to remove.
+    mockLocalConfig.notificationSound = true
+    const chimes = stubAudioContext()
+    const { playNotificationSound, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+    const { useAppForeground } = await import('@/composables/useAppForeground')
+    useAppForeground()
+    const w = window as unknown as {
+      __setAppForeground?: (fg: boolean) => void
+      __clawbenchAppResume?: () => void
+    }
+
+    w.__setAppForeground?.(false)
+    // Android can leave visibilityState at 'hidden' even after the app is back
+    // in front; the native resume hook must still flush the queued chime.
+    const vis = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    // Push past the resume-dedupe window other cases may have opened.
+    const base = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => base + 5000)
+    try {
+      playNotificationSound()
+      expect(chimes()).toBe(0)
+
+      w.__clawbenchAppResume?.()
+      expect(chimes()).toBe(1)
+    } finally {
+      nowSpy.mockRestore()
+      vis.mockRestore()
+      w.__setAppForeground?.(true)
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('chimes immediately when nothing was queued while visible', async () => {
+    mockLocalConfig.notificationSound = true
+    const chimes = stubAudioContext()
+    const { playNotificationSound, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+
+    playNotificationSound()
+    expect(chimes()).toBe(1)
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(chimes()).toBe(1)
+    vi.unstubAllGlobals()
+  })
+
+  it('plays immediately while hidden when the caller asks for it', async () => {
+    // Meeting control requests are the reason this exists: they are meant for
+    // a host who is NOT on the meeting page, so deferring them to the next
+    // return would be the opposite of the alert.
+    mockLocalConfig.notificationSound = true
+    const chimes = stubAudioContext()
+    const { playImmediateNotificationSound, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+
+    const vis = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    try {
+      playImmediateNotificationSound()
+      expect(chimes()).toBe(1)
+    } finally {
+      vis.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not play the deferred chime if the sound was muted meanwhile', async () => {
+    mockLocalConfig.notificationSound = true
+    const chimes = stubAudioContext()
+    const { playNotificationSound, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+
+    const vis = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    try {
+      playNotificationSound()
+      mockLocalConfig.notificationSound = false
+      vis.mockReturnValue('visible')
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(chimes()).toBe(0)
+    } finally {
+      vis.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
   // ── continuous-conversation cues ──
   //
   // "sent" and "closed" are part of the voice mode, not completion alerts, so

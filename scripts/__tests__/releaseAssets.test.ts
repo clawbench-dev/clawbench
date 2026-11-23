@@ -210,40 +210,29 @@ describe('desktop asset names match the Go download URLs', () => {
   })
 })
 
-describe('all-in-one (integrated) package name matches the Go download URLs', () => {
-  it('release.yml assembles every basename the server advertises', () => {
+describe('integrated package names match the Go download URLs', () => {
+  it('release.yml assembles every basename the server builds', () => {
     // An integrated install upgrades by downloading this exact asset; a drift
-    // here makes every in-app upgrade 404 while the URL still looks well-formed.
-    // Every desktop platform publishes one, so the server must advertise
-    // exactly the set release.yml builds — neither a missing entry (an install
-    // that can never upgrade) nor an extra one (a dead URL).
-    const src = readFileSync(repoPath('.github/workflows/release.yml'), 'utf8')
-
+    // here makes every in-app upgrade 404 while the URL still looks
+    // well-formed. Every desktop platform publishes one, so every basename the
+    // server advertises must be assembled by the workflow — and nothing else.
     const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
-    const block =
-      /desktopIntegratedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
-    expect(block).not.toBe('')
-
-    const platforms = [
-      'platformWindowsAMD64',
-      'platformLinuxAMD64',
-      'platformLinuxARM64',
-      'platformDarwinAMD64',
-      'platformDarwinARM64',
-    ]
-    const bases = [
-      'clawbench-desktop-windows-x64-local',
+    const block = /desktopIntegratedAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
+    const bases = [...block.matchAll(/"([a-z0-9-]+-local)"/g)].map((m) => m[1])
+    expect(bases).toEqual([
       'clawbench-desktop-linux-x64-local',
       'clawbench-desktop-linux-arm64-local',
       'clawbench-desktop-darwin-x64-local',
       'clawbench-desktop-darwin-arm64-local',
-    ]
-    platforms.forEach((platform, i) => {
-      expect(block, `${platform} must be advertised`).toContain(platform)
-      // The Go map and the workflow must name the same file.
-      expect(block).toContain(bases[i])
-      expect(src, `${bases[i]} must be assembled by release.yml`).toContain(bases[i])
-    })
+      'clawbench-desktop-windows-x64-local',
+    ])
+
+    const src = readFileSync(repoPath('.github/workflows/release.yml'), 'utf8')
+    for (const base of bases) {
+      // The thin name (`<base without -local>-<tag>.zip`) is a prefix of this
+      // one, so the `-` is what makes the assertion about the integrated zip.
+      expect(src, `${base} is advertised but never assembled`).toContain(`${base}-`)
+    }
   })
 })
 

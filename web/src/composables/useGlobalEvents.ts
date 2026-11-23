@@ -4,7 +4,7 @@ import { useForgeUnread } from './useForgeUnread'
 import { useAppMode } from './useAppMode'
 import { useAppForeground, onAppResume } from './useAppForeground'
 import { showBrowserNotification } from './useNotification'
-import { playNotificationSound } from './useNotificationSound'
+import { playNotificationSound, playImmediateNotificationSound } from './useNotificationSound'
 import { useToast, type ToastIconKey, type ToastType } from './useToast'
 import { shouldNotifyMeeting } from '@/utils/meetingVisibility'
 import { gt } from './useLocale'
@@ -15,6 +15,7 @@ import type { ForgeTarget } from '@/composables/useForgeNavigation'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 import { localizedToolName } from '@/utils/toolNames'
+import { storageGet, storageSet } from '@/utils/safeStorage'
 
 // Event types from server
 export interface ServerEvent {
@@ -213,7 +214,7 @@ let pendingProbe: { timer: ReturnType<typeof setTimeout>; onDead: () => void } |
 // Client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
 const CLIENT_ID_KEY = 'clawbench_client_id'
-let clientId = localStorage.getItem(CLIENT_ID_KEY)
+let clientId = storageGet(CLIENT_ID_KEY)
 if (!clientId) {
     // crypto.randomUUID() requires a secure context (HTTPS or localhost);
     // fallback to crypto.getRandomValues() for plain HTTP external access.
@@ -224,7 +225,7 @@ if (!clientId) {
         const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
         return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
     })()
-    localStorage.setItem(CLIENT_ID_KEY, clientId)
+    storageSet(CLIENT_ID_KEY, clientId)
 }
 
 // Last-seen event cursor — tracks the newest terminal event already seen.
@@ -562,6 +563,16 @@ function connect(opts?: { resumed?: boolean }) {
                     window.dispatchEvent(new CustomEvent('clawbench-session-title-update', { detail: msg.data }))
                 }
 
+                // A session left the visible list (archived or destroyed) on
+                // ANOTHER device. Replayed events are included on purpose: a
+                // client that was offline when the session was removed still has
+                // it open, and the replay buffer is the only notification it will
+                // ever get. App.vue drops the row and, when the session it has
+                // open is the one that vanished, leaves it.
+                if (msg.event === 'session_removed') {
+                    window.dispatchEvent(new CustomEvent('clawbench-session-removed', { detail: msg.data }))
+                }
+
                 // Forge (GitHub/GitLab) change events: re-derive the unread
                 // badge on LIVE events only. Replayed events are caught-up
                 // history, so they must not inflate the badge after a reconnect.
@@ -849,7 +860,10 @@ function handleMeetingEvent(data: ServerEvent['data']): void {
         duration: 6000,
         onClick: open,
     })
-    if (presentation.sound) playNotificationSound()
+    // Immediate, not deferred: this alert exists precisely because the host is
+    // not looking at the meeting page (other tab / backgrounded app), so the
+    // completion chime's "wait until visible" rule (#728) must not apply here.
+    if (presentation.sound) playImmediateNotificationSound()
 
     showBrowserNotification(title, {
         body,
@@ -895,8 +909,12 @@ function handleMeetingEvent(data: ServerEvent['data']): void {
 function showEventBrowserNotification(event: string, data: ServerEvent['data'], skipReplay = false) {
     if (!data) return
 
-    // A replay-phase event is caught-up history, not a live completion — never
-    // notify for it, even if the page is in the background right now.
+    // A replay-phase event is caught-up history, not a live completion. Both
+    // call sites pass skipReplay=true; whether THIS frame is a replay is
+    // decided by the flag, which is set for the pending-event batch
+    // (fetchPendingEvents) and for frames the server tags `replayed` (WS buffer
+    // after a reconnect). A live frame arrives with the flag cleared, so it
+    // still notifies.
     if (skipReplay && isReplayingEvents.value) return
 
     // Only show notification when page is not focused

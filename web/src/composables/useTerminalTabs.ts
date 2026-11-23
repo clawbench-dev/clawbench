@@ -314,7 +314,7 @@ export function useTerminalTabs(
     return { switchToId: tabs.value.length > 0 ? activeTabId.value : null }
   }
 
-  function switchTab(id: string) {
+  function switchTab(id: string, options?: { focus?: boolean }) {
     const tab = tabs.value.find((t) => t.id === id)
     if (!tab) return
 
@@ -332,8 +332,10 @@ export function useTerminalTabs(
       })
     }
 
-    // Focus the terminal
-    tab.xterm?.focus()
+    // Focus the terminal unless the caller opted out (e.g. mobile tab switch).
+    if (options?.focus !== false) {
+      tab.xterm?.focus()
+    }
   }
 
   /** Update tab CWD and title (called when session status reports new cwd). */

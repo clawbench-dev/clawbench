@@ -83,6 +83,73 @@ describe('cacheHitRate', () => {
   it('is 0 when only misses are reported', () => {
     expect(cacheHitRate({ cacheMissTokens: 10 })).toBe(0)
   })
+
+  it('derives hit rate from cachedReadTokens / inputTokens when explicit hit/miss are absent (inclusive prompt)', () => {
+    // Antigravity PromptResponse.Usage: inputTokens already includes cachedReadTokens.
+    expect(cacheHitRate({
+      inputTokens: 238591,
+      outputTokens: 2152,
+      totalTokens: 240743,
+      cachedReadTokens: 235640,
+      thoughtTokens: 1096,
+    })).toBeCloseTo(98.76, 1)
+  })
+
+  it('handles uncached-exclusive inputTokens when totalTokens proves the split', () => {
+    // Exclusive prompt: input=200 (uncached), cachedRead=600, cachedWrite=200, output=100, total=1100.
+    expect(cacheHitRate({
+      inputTokens: 200,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      cachedWriteTokens: 200,
+      totalTokens: 1100,
+    })).toBeCloseTo(60, 5)
+  })
+
+  it('returns 0 when only cachedWriteTokens and inputTokens are reported', () => {
+    expect(cacheHitRate({ inputTokens: 1000, cachedWriteTokens: 1000 })).toBe(0)
+  })
+
+  it('returns null when cachedReadTokens cannot safely divide by inputTokens', () => {
+    // Missing inputTokens or inconsistent snapshot (cachedRead > input without exclusive total proof).
+    expect(cacheHitRate({ cachedReadTokens: 5000 })).toBeNull()
+    expect(cacheHitRate({ cachedReadTokens: 5000, inputTokens: 1000 })).toBeNull()
+  })
+
+  it('tolerates small extra counters in totalTokens when detecting an exclusive prompt', () => {
+    // Same split as above, but total carries two extra tokens (e.g. a counter we
+    // do not model). A strict equality would fall back to the inclusive reading
+    // and shrink the denominator to input=200 → hidden/understated.
+    expect(cacheHitRate({
+      inputTokens: 200,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      cachedWriteTokens: 200,
+      totalTokens: 1102,
+    })).toBeCloseTo(60, 5)
+  })
+
+  it('does not treat an inclusive prompt as exclusive when the difference is the cache size', () => {
+    // input=1000 already includes cachedRead=600; total = input + output.
+    expect(cacheHitRate({
+      inputTokens: 1000,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      totalTokens: 1100,
+    })).toBeCloseTo(60, 5)
+  })
+
+  it('treats a missing totalTokens as an inclusive prompt (conservative)', () => {
+    // Without totalTokens the split cannot be proven, so the denominator stays
+    // inputTokens; cachedRead > input therefore hides the row instead of
+    // reporting a fabricated 100%.
+    expect(cacheHitRate({
+      inputTokens: 200,
+      outputTokens: 100,
+      cachedReadTokens: 600,
+      cachedWriteTokens: 200,
+    })).toBeNull()
+  })
 })
 
 describe('hasTokenDetail', () => {

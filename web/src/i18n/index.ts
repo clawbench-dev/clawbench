@@ -2,6 +2,7 @@ import { createI18n } from 'vue-i18n'
 import zh from './locales/zh'
 import en from './locales/en'
 import { mergePluginMessages } from './pluginMessages'
+import { storageGet } from '@/utils/safeStorage'
 
 const STORAGE_KEY = 'clawbench-locale'
 const BASE_COOKIE_KEY = 'clawbench-locale'
@@ -15,7 +16,7 @@ function scopedCookieKey(): string {
 }
 
 function detectLocale(): string {
-  const saved = localStorage.getItem(STORAGE_KEY)
+  const saved = storageGet(STORAGE_KEY)
   if (saved && ['zh', 'en'].includes(saved)) return saved
   const nav = navigator.language || ''
   return nav.startsWith('zh') ? 'zh' : 'en'

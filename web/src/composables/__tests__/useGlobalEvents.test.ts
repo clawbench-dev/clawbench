@@ -7,8 +7,10 @@ vi.mock('@/composables/useNotification', () => ({
 }))
 
 const mockPlayNotificationSound = vi.fn()
+const mockPlayImmediateNotificationSound = vi.fn()
 vi.mock('@/composables/useNotificationSound', () => ({
     playNotificationSound: () => mockPlayNotificationSound(),
+    playImmediateNotificationSound: () => mockPlayImmediateNotificationSound(),
 }))
 
 // The in-app surface for meeting events. Mocked rather than driven through the
@@ -175,6 +177,7 @@ describe('useGlobalEvents', () => {
         mockWsInstances = []
         mockShowBrowserNotification.mockReset()
         mockPlayNotificationSound.mockReset()
+        mockPlayImmediateNotificationSound.mockReset()
         mockUpdateLastSeenEventId.mockReset()
         mockDismissEventNotification.mockReset()
         mockToastShow.mockReset()
@@ -1178,6 +1181,54 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    describe('session_removed event dispatch', () => {
+        // A session archived/destroyed on ANOTHER device ends up here. App.vue
+        // relies on this dispatch to leave the session it has open, so if the
+        // event is dropped the PC keeps rendering a ghost session.
+        it('dispatches clawbench-session-removed with the session id and project', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_removed',
+                data: { session_id: 's1', project_path: '/p' },
+            })
+
+            const evt = dispatchSpy.mock.calls
+                .map((call: any[]) => call[0])
+                .find((e: any) => e?.type === 'clawbench-session-removed')
+            expect(evt).toBeDefined()
+            expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's1', project_path: '/p' })
+            dispatchSpy.mockRestore()
+        })
+
+        // Replayed events are caught-up history, and this is the ONLY case where
+        // they must still be acted on: a client that was offline when its open
+        // session was removed never got the live event, and must not be left
+        // showing it after reconnecting.
+        it('dispatches clawbench-session-removed for replayed events too', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_removed',
+                replayed: true,
+                data: { session_id: 's2', project_path: '/p' },
+            })
+
+            const evt = dispatchSpy.mock.calls
+                .map((call: any[]) => call[0])
+                .find((e: any) => e?.type === 'clawbench-session-removed')
+            expect(evt).toBeDefined()
+            expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's2' })
+            dispatchSpy.mockRestore()
+        })
+    })
+
     describe('reconnect state refresh event', () => {
         it('does NOT dispatch clawbench-reconnect on the first connect (startup already loads state)', () => {
             const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
@@ -1821,6 +1872,55 @@ describe('useGlobalEvents', () => {
 
             expect(mockShowBrowserNotification).not.toHaveBeenCalled()
         })
+
+        // #728: the replay-buffer branch passes skipReplay=true, but the flag it
+        // compares against was never set for these frames, so every reconnect
+        // replay reached the notification path — one chime per buffered
+        // completion on each return to the foreground.
+        it('does not notify or chime for any replayed event (session_update)', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                replayed: true,
+                data: { session_id: 's1', status: 'completed', response_preview: 'Done!' },
+            })
+
+            expect(mockShowBrowserNotification).not.toHaveBeenCalled()
+            expect(mockPlayNotificationSound).not.toHaveBeenCalled()
+        })
+
+        // The mirror case: a LIVE frame is still announced. Recorded while the
+        // page is hidden (that is when the OS notification is wanted).
+        it('still notifies for a live event that follows a replayed one in the same socket', () => {
+            vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+            vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+
+            const ws = connectAndGetWs()
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                replayed: true,
+                data: { session_id: 's1', status: 'completed' },
+            })
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_update',
+                data: { session_id: 's2', status: 'completed' },
+            })
+
+            expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
+            expect(mockShowBrowserNotification).toHaveBeenCalledWith(
+                'chat.push.sessionCompleted',
+                expect.objectContaining({ tag: expect.stringContaining('s2') })
+            )
+        })
     })
 
     // ── push_mode is not a gate ──
@@ -2347,7 +2447,11 @@ describe('useGlobalEvents', () => {
             // id, so without it the tap opens the app and stops.
             const opts = mockShowBrowserNotification.mock.calls[0][1] as { nav?: { meetingToken?: string } }
             expect(opts.nav?.meetingToken).toBe('tok-1')
-            expect(mockPlayNotificationSound).toHaveBeenCalledTimes(1)
+            // Immediate, not deferred: a control request exists because the
+            // host is NOT on the meeting page, so it must not wait for a return
+            // to the foreground (#728 defers completion chimes only).
+            expect(mockPlayImmediateNotificationSound).toHaveBeenCalledTimes(1)
+            expect(mockPlayNotificationSound).not.toHaveBeenCalled()
         })
 
         it('stays silent while the host is looking at the meeting page', () => {
@@ -2393,6 +2497,7 @@ describe('useGlobalEvents', () => {
             expect(mockToastShow).toHaveBeenCalledTimes(1)
             expect(mockShowBrowserNotification).toHaveBeenCalledTimes(1)
             expect(mockPlayNotificationSound).not.toHaveBeenCalled()
+            expect(mockPlayImmediateNotificationSound).not.toHaveBeenCalled()
         })
 
         it('ignores a payload without a token or body', () => {

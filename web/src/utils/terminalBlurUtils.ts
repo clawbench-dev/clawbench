@@ -1,3 +1,58 @@
+export interface TerminalAutoRefocusContext {
+  /** True while the user is actively dragging to scroll terminal output. */
+  isScrolling?: boolean
+  /** True while an upper-layer terminal drawer, popup menu, or modal is open. */
+  hasOverlayOpen?: boolean
+}
+
+/**
+ * Overlay / interactive selectors inside or above the terminal container that
+ * represent upper-layer UI rather than the terminal canvas itself.
+ */
+const UPPER_LAYER_SELECTOR = [
+  'button',
+  'a',
+  'input',
+  'textarea:not(.xterm-helper-textarea)',
+  'select',
+  '[role="button"]',
+  '[role="dialog"]',
+  '[role="menu"]',
+  '.terminal-rebuild-overlay',
+  '.terminal-error-overlay',
+  '.gesture-hint',
+  '.drop-overlay',
+  '.bottom-sheet-overlay',
+  '.bottom-sheet',
+  '.popup-menu',
+  '.context-menu',
+  '.modal-overlay',
+].join(', ')
+
+/**
+ * Decide whether an event target belongs to the interactive terminal surface
+ * itself (inside `container` and not an upper-layer overlay/control element).
+ *
+ * Pressing an upper-layer page element (floating button, drawer, modal, error
+ * overlay, toolbar, etc.) must return false so it never triggers terminal
+ * textarea focus or blur-refocus recovery.
+ */
+export function isTerminalSurfaceTarget(
+  target: EventTarget | null,
+  container: HTMLElement | null,
+): boolean {
+  if (!container || !target) return false
+  // Handle Element (and Text nodes inside an element).
+  const el = target instanceof Element
+    ? target
+    : (target instanceof Node ? target.parentElement : null)
+  if (!el || !container.contains(el)) return false
+  if (typeof el.closest === 'function' && el.closest(UPPER_LAYER_SELECTOR)) {
+    return false
+  }
+  return true
+}
+
 /**
  * Decide whether the terminal should re-focus its xterm textarea after it blurs.
  *
@@ -8,16 +63,20 @@
  * `preventDefault` because it happens before the touch event. Instead we restore
  * focus as soon as the textarea blurs.
  *
- * We only auto-refocus when the terminal panel is still active AND the focus did
- * not move to a real control (a toolbar/dock button, an input, etc.). Tapping a
- * control should keep the control focused; only body/document (i.e. a tap on the
- * terminal surface) is restored.
+ * We only auto-refocus when:
+ * - the terminal panel is still active,
+ * - focus did not move to a real control (button/input/textarea),
+ * - the user is NOT actively scrolling terminal output, AND
+ * - no upper-layer terminal drawer, popup menu, or modal is open.
  */
 export function shouldAutoRefocusTerminal(
   terminalActive: boolean,
   nextActive: Element | null,
+  context?: TerminalAutoRefocusContext,
 ): boolean {
   if (!terminalActive) return false
+  if (context?.isScrolling) return false
+  if (context?.hasOverlayOpen) return false
   if (!nextActive) return true
   return nextActive.tagName === 'BODY'
 }

@@ -1333,6 +1333,11 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		// http/sse are optional and MUST gate what we send — codex-acp throws
 		// invalidRequest for an sse server it does not support, which fails the
 		// whole session/new rather than degrading.
+		//
+		// Record the ADVERTISED value only. The BackendSpec override for
+		// backends that support HTTP without advertising it is applied on read
+		// (GetMCPCapabilities), so there is exactly one place that decides what
+		// we send — see its doc comment for why.
 		mcpHTTP := initResp.AgentCapabilities.McpCapabilities.Http
 		mcpSSE := initResp.AgentCapabilities.McpCapabilities.Sse
 		reg.UpdateListSessions(c.agent.ID, listSessions)

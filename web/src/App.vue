@@ -705,6 +705,7 @@ import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { installDragClickGuard } from './utils/dragClickGuard'
 import { installInertPathClick } from './utils/inertPathClick'
+import { useLocalhostUrlClickHandler } from './composables/useLocalhostAnnotation'
 import { installExternalLinkClick } from './utils/externalLinkClick'
 import { closeInertPathPicker } from './composables/useInertPathPicker'
 import { openFilePath } from './composables/useFilePathAnnotation'
@@ -801,6 +802,7 @@ import {
   shouldLeaveUnavailableDockTab,
 } from './composables/dockPluginRuntime'
 import { useBadgePop } from './composables/useBadgePop'
+import { planRemoteRemoval } from './composables/useRemoteSessionRemoval'
 import type {
   DockPanelHost as DockPanelHostContext,
   DockPanelHostExtras as DockPanelHostExtrasContext,
@@ -1475,7 +1477,60 @@ function handleSessionTitleUpdate(e: Event) {
   store.state.sessionListVersion++
 }
 
-/** Handle clawbench-open-session event from Android push notification tap */
+/**
+ * Handle clawbench-session-removed: a session was archived or destroyed on
+ * another device. Two jobs, and the order matters:
+ *
+ *  1. If it is the session this client has OPEN, leave it. Otherwise the chat
+ *     panel keeps rendering a conversation whose rows are gone — and the only
+ *     thing that used to notice was the next send failing with 404, so the user
+ *     stared at a ghost session (and a possible "send failed" toast) until they
+ *     happened to type something.
+ *  2. Refresh the list either way, so the row disappears without waiting for an
+ *     unrelated event to trigger a reload.
+ *
+ * The replacement is picked exactly like a LOCAL archive picks it (see
+ * useChatSession.archiveSession): first remaining session, else a fresh one.
+ * Sharing the rule keeps "I archived it" and "another device archived it"
+ * indistinguishable to the user.
+ */
+function handleSessionRemoved(e: Event) {
+  const detail = (e as CustomEvent<{ session_id?: string; project_path?: string }>).detail
+  const removedId = detail?.session_id
+  if (!removedId) return
+
+  // Always reload the list — a removed row must not linger, whatever project it
+  // belonged to.
+  store.state.sessionListVersion++
+
+  if (removedId !== sessionIdentity.currentSessionId.value) return
+
+  // The broadcast reaches every client, so this can also fire for a session in
+  // another project — but the id matched the session this client has OPEN, so it
+  // is unambiguously the one on screen.
+  appLog.i(TAG, `session ${removedId} removed remotely, leaving it`)
+
+  void (async () => {
+    try {
+      const resp = await fetch('/api/ai/sessions')
+      const data = await resp.json()
+      const sessions: Array<{ id: string }> = data?.sessions || []
+      // The switch is asynchronous and the user is not blocked while it runs, so
+      // they may have opened another session by now. planRemoteRemoval returns
+      // `none` in that case instead of dragging them off the session they chose.
+      const outcome = planRemoteRemoval(removedId, sessionIdentity.currentSessionId.value, sessions)
+      if (outcome.action === 'switch') {
+        await sessionIdentity.switchSession(outcome.sessionId)
+      } else if (outcome.action === 'create') {
+        // Nothing left — the same thing a local archive of the last session does.
+        await sessionIdentity.createSession('')
+      }
+    } catch (err) {
+      appLog.w(TAG, 'failed to leave remotely removed session:', err)
+    }
+  })()
+}
+
 function handleOpenSession(e: Event) {
   const detail = (e as CustomEvent<OpenSessionDetail>).detail
   if (!detail?.sessionId) {
@@ -2765,6 +2820,7 @@ function registerAppEventListeners() {
     currentProject: () => store.state.projectRoot,
   })
   window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
+  window.addEventListener('clawbench-session-removed', handleSessionRemoved)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', handleAppThemeChange)
   window.addEventListener('clawbench-font-change', handleAppFontChange)
@@ -2835,6 +2891,7 @@ function unregisterAppEventListeners() {
   uninstallPluginDeeplinks?.()
   uninstallPluginDeeplinks = null
   window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
+  window.removeEventListener('clawbench-session-removed', handleSessionRemoved)
   document.removeEventListener('click', handleOverflowOutsideClick)
   window.removeEventListener('clawbench-theme-change', handleAppThemeChange)
   window.removeEventListener('clawbench-font-change', handleAppFontChange)
@@ -4716,7 +4773,7 @@ function handleCtrlG(e: KeyboardEvent) {
      // has to be handled here. Independent of the two layers above — it keys on
      // a class, not on preventDefault — but registered after them so a drag
      // selection is already suppressed by the time it runs.
-     stopExternalLinkClick = installExternalLinkClick()
+     stopExternalLinkClick = installExternalLinkClick(useLocalhostUrlClickHandler().handleLocalhostUrlClick)
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')

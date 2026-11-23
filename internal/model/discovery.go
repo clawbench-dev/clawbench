@@ -21,6 +21,17 @@ type BackendSpec struct {
 	ThinkingEffortLevels []string // supported thinking effort levels, e.g. ["low","medium","high"]; nil = not supported
 	AcpCommand           string   // ACP spawn command for acp-stdio transport, e.g. "kimi --acp"; empty = no ACP support
 	ACPLoadSession       bool     // whether the ACP agent truly supports LoadSession (overrides ACP Initialize report)
+	// ACPMCPHTTPUnadvertised marks a backend that accepts HTTP MCP servers in
+	// session/new, session/load and session/resume but does NOT advertise
+	// mcpCapabilities.http in its InitializeResponse (e.g. agy acp 1.5.x).
+	//
+	// This SUPPLEMENTS the handshake, it does not override it: the effective
+	// value is "advertised || this bit" (see ai.GetMCPCapabilities). That is
+	// deliberately unlike ACPLoadSession above, which replaces the report —
+	// flipping an http MCP server onto a backend that truly lacks support fails
+	// the whole session/new, so a false advertisement must stay authoritative
+	// for every backend not named here.
+	ACPMCPHTTPUnadvertised bool
 	// ACPResumeIsProcessLocal marks an agent whose session/resume only resolves
 	// ids created by the CURRENT process — after the process dies the same id
 	// must be recovered with session/load instead.

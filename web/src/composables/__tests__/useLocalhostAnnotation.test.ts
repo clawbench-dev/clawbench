@@ -115,10 +115,23 @@ describe('useLocalhostAnnotation', () => {
       expect(result?.fullUrl).toBe('http://localhost:3000')
     })
 
-    it('stops path at query string', () => {
-      const result = parseLocalhostUrl('http://localhost:3000/api?key=val')
-      expect(result?.path).toBe('/api')
-      expect(result?.fullUrl).toBe('http://localhost:3000/api')
+    it('preserves query strings and fragments for forwarded pages', () => {
+      const result = parseLocalhostUrl('http://localhost:3000/api?key=val&lang=zh#log')
+      expect(result?.path).toBe('/api?key=val&lang=zh#log')
+      expect(result?.fullUrl).toBe('http://localhost:3000/api?key=val&lang=zh#log')
+      expect(parseLocalhostUrl('http://localhost:3000?x=1')?.path).toBe('/?x=1')
+    })
+
+    it('refuses a path containing a backslash', () => {
+      // The path is pasted onto `protocol://localhost:port` by the native
+      // shell; a backslash there is read as a path separator by some URL
+      // parsers, so such a URL must not be forwarded.
+      expect(parseLocalhostUrl('http://localhost:3000/a\\b')).toBeNull()
+    })
+
+    it('rejects an out-of-range port', () => {
+      expect(parseLocalhostUrl('http://localhost:0/x')).toBeNull()
+      expect(parseLocalhostUrl('http://localhost:65536/x')).toBeNull()
     })
 
     it('returns null for non-localhost URL', () => {

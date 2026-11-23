@@ -69,6 +69,20 @@ type SessionTitleUpdateData struct {
 	ProjectPath string `json:"project_path,omitempty"`
 }
 
+// SessionRemovedData is the data payload for "session_removed" events.
+//
+// Emitted when a session leaves the visible list — archived or destroyed — so
+// that clients which did NOT initiate the change drop the row and, if they have
+// that session open, leave it. The archiving/destroying client does not need it
+// (its own response carries the outcome); it exists for every other device.
+type SessionRemovedData struct {
+	SessionID string `json:"session_id"`
+	// ProjectPath is the owning project ("", when the row was already gone).
+	// Receivers use it to distinguish "my open session is gone" from "some other
+	// project lost a row", since the event is broadcast to every client.
+	ProjectPath string `json:"project_path,omitempty"`
+}
+
 // TaskUpdateData is the data payload for "task_update" events.
 type TaskUpdateData struct {
 	TaskID               string `json:"task_id"`

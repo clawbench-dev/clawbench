@@ -1498,7 +1498,13 @@ func (c *ACPConn) startStallWatchdog(ctx context.Context, onStall func()) func()
 				return
 			case <-ticker.C:
 				if c.isStalled(timeout) {
-					slog.Warn("acp: prompt stalled (no progress for "+timeout.String()+"), terminating connection",
+					// The watchdog only JUDGES; what happens next is the
+					// callback's decision (a user turn kills the process to
+					// unblock its Prompt RPC, an adopted turn just ends its
+					// stream). Naming a kill here was misleading: it read as
+					// "the process is being terminated" even on paths that
+					// deliberately leave the shared agent alive.
+					slog.Warn("acp: no model progress for "+timeout.String()+", firing stall handler",
 						"clawbench_sid", c.clawbenchSID)
 					once.Do(onStall)
 					return

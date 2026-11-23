@@ -631,6 +631,47 @@ func TestBroadcastSessionTitleUpdate_EmitsEvent(t *testing.T) {
 	assert.True(t, found, "expected session_title_update carrying the new title, got %v", evts)
 }
 
+// BroadcastSessionRemoved must not panic before the WS manager is wired up.
+func TestBroadcastSessionRemoved_NoManagerIsNoop(t *testing.T) {
+	ws.SetManagerForTest(nil)
+	assert.NotPanics(t, func() {
+		BroadcastSessionRemoved("sess-x", "/proj")
+	})
+}
+
+// A removal broadcast must carry both the session id AND the project the caller
+// captured: receivers use the id to recognize their own open session and the
+// project to tell a same-named session in another project apart.
+func TestBroadcastSessionRemoved_EmitsEventWithProject(t *testing.T) {
+	sub, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	BroadcastSessionRemoved("sess-removed", "/tmp/proj-removed")
+
+	evts := sub.GetBufferedEvents()
+	require.NotEmpty(t, evts, "expected a session_removed event")
+	var payload ws.SessionRemovedData
+	found := false
+	for _, raw := range evts {
+		b, err := json.Marshal(raw)
+		require.NoError(t, err)
+		if !strings.Contains(string(b), "session_removed") {
+			continue
+		}
+		var msg ws.ServerMessage
+		require.NoError(t, json.Unmarshal(b, &msg))
+		found = true
+		if data, ok := msg.Data.(map[string]any); ok {
+			payload.SessionID, _ = data["session_id"].(string)
+			payload.ProjectPath, _ = data["project_path"].(string)
+		}
+		break
+	}
+	require.True(t, found, "expected a session_removed event, got %v", evts)
+	assert.Equal(t, "sess-removed", payload.SessionID)
+	assert.Equal(t, "/tmp/proj-removed", payload.ProjectPath)
+}
+
 // A quote with only one of the two parts still contributes what it has: the
 // titler should never see an empty "[Quote]" stub.
 func TestUserMessageTitleText_QuoteWithOnlyOnePart(t *testing.T) {

@@ -861,6 +861,49 @@ func TestDestroySession_BadMethod(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
+func TestDestroySession_WithoutProjectCookieAndMissingDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	missingDir := filepath.Join(env.WatchDir, "deleted-project-dir")
+	sessionID, err := service.CreateSession(missingDir, "claude", "orphan-session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	// No project cookie at all, and the session's project directory does not exist on disk.
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/destroy?session_id="+sessionID, nil)
+	w := callHandler(DestroySession, req)
+	assertOK(t, w)
+
+	var nSessions int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sessionID).Scan(&nSessions))
+	assert.Zero(t, nSessions, "session belonging to a missing directory must be hard-deleted")
+}
+
+// TestDestroySession_NoCookieDestroysSessionInAnotherExistingProject pins the
+// contract that dropping requireProject introduced: destroy no longer scopes
+// the target to the caller's current project. The caller is authenticated but
+// carries no project cookie, and the session lives in a DIFFERENT project that
+// still exists on disk — it must still be deleted. If a future change re-adds
+// an ownership check, this test is what tells the author they changed the
+// security model, not just the implementation.
+func TestDestroySession_NoCookieDestroysSessionInAnotherExistingProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	otherDir := filepath.Join(env.WatchDir, "another-project")
+	require.NoError(t, os.MkdirAll(otherDir, 0o755))
+	sessionID, err := service.CreateSession(otherDir, "claude", "foreign-session", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/destroy?session_id="+sessionID, nil)
+	w := callHandler(DestroySession, req)
+	assertOK(t, w)
+
+	var nSessions int
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sessionID).Scan(&nSessions))
+	assert.Zero(t, nSessions, "destroy is intentionally not scoped to the caller's project")
+}
+
 func TestServeAISessionUpdate_ThinkingEffort_UsesAdvertisedWireID(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

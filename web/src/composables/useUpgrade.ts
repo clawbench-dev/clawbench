@@ -128,7 +128,7 @@ const showProgressDialog = ref(false)
  * All-in-one package URLs for the latest release, keyed by platform. Only
  * populated for an integrated install (a server managed by its desktop embedder),
  * where the only valid upgrade unit is the whole package — see
- * `installFusedUpdate`.
+ * `installFusedUpdate` (the bridge member keeps its original name on purpose).
  */
 const fusedDownloads = ref<Record<string, string[]>>({})
 
@@ -357,12 +357,12 @@ export function useUpgrade() {
         // shell predates the bridge, there is nothing to offer.
         fusedDownloads.value = data.fused_downloads ?? {}
         fusedChecksums.value = data.fused_checksums ?? {}
-        // The map only carries platforms that PUBLISH an integrated package
-        // (Windows today), so a non-empty map means one exists for some
-        // platform. Which key applies is the shell's call — it knows its own
-        // OS/arch and reports "no package for this platform" if the map lacks
-        // it. Requiring the bridge too keeps an older shell (which has no way
-        // to install a package) from being offered an upgrade it cannot do.
+        // The map carries every desktop platform that publishes an integrated
+        // package, so a non-empty map means one exists for some platform. Which
+        // key applies is the shell's call — it knows its own OS/arch and reports
+        // "no package for this platform" if the map lacks it. Requiring the
+        // bridge too keeps an older shell (which has no way to install a
+        // package) from being offered an upgrade it cannot do.
         hasUpgrade.value =
           data.has_upgrade &&
           Object.keys(fusedDownloads.value).length > 0 &&
