@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -128,12 +130,11 @@ func TestDestroySession_BroadcastsSessionRemoved(t *testing.T) {
 	assert.Equal(t, env.ProjectDir, data["project_path"])
 }
 
-// The project path must be read BEFORE the row disappears. DestroySession is
-// reachable WITHOUT a project cookie (the cross-project overview uses it), so if
-// the handler fell back to the cookie instead of the session's own project, the
-// payload would carry "" and every receiver watching another project would
-// mistake the removal for one of its own rows.
-func TestDestroySession_BroadcastsOwningProjectWithoutCookie(t *testing.T) {
+// The project path must be read BEFORE the row disappears. The caller's cookie
+// may name a different project than the session's owner, so the payload must
+// carry the session's own project — receivers watching another project would
+// otherwise mistake the removal for one of their own rows.
+func TestDestroySession_BroadcastsOwningProjectNotCallerProject(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -142,14 +143,19 @@ func TestDestroySession_BroadcastsOwningProjectWithoutCookie(t *testing.T) {
 	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "cross-project-destroy", "codebuddy", "", "default", "chat")
 	require.NoError(t, err)
 
+	// A valid cookie for a DIFFERENT project: the handler only requires that a
+	// project is selected, not that it owns the session.
+	callerDir := filepath.Join(env.WatchDir, "caller-project")
+	require.NoError(t, os.MkdirAll(callerDir, 0o755))
+
 	req := newRequest(t, http.MethodDelete, "/api/ai/session/destroy?session_id="+sessionID, nil)
-	// Deliberately no project cookie — this is the cross-project destroy shape.
+	withProjectCookie(req, callerDir)
 	w := callHandler(DestroySession, req)
 	assertOK(t, w)
 
 	data := findSessionRemoved(t, sub)
-	require.NotNil(t, data, "a cookie-less destroy must still broadcast session_removed")
+	require.NotNil(t, data, "destroying a session must broadcast session_removed")
 	assert.Equal(t, sessionID, data["session_id"])
 	assert.Equal(t, env.ProjectDir, data["project_path"],
-		"the payload must carry the session's own project, not the (absent) caller cookie")
+		"the payload must carry the session's own project, not the caller's cookie")
 }

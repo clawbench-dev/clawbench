@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -55,6 +56,7 @@ func TestServeSessionsOverview_includesRecentlyActiveProjects(t *testing.T) {
 	setCardCap(t, 10)
 
 	quiet := canonPath(filepath.Join(env.WatchDir, "project-quiet"))
+	require.NoError(t, os.MkdirAll(quiet, 0o755))
 	_, err := service.CreateSession(quiet, "codebuddy", "read already", "", "", "default", "chat")
 	require.NoError(t, err)
 
@@ -75,6 +77,7 @@ func TestServeSessionsOverview_doesNotDuplicateActiveProjects(t *testing.T) {
 	setCardCap(t, 10)
 
 	busy := canonPath(filepath.Join(env.WatchDir, "project-busy"))
+	require.NoError(t, os.MkdirAll(busy, 0o755))
 	sessionID, err := service.CreateSession(busy, "codebuddy", "running now", "", "", "default", "chat")
 	require.NoError(t, err)
 	service.SetSessionRunning(sessionID, true)
@@ -112,6 +115,7 @@ func TestServeSessionsOverview_capsCards(t *testing.T) {
 	// One active project plus three idle ones. With a cap of 2 the response must
 	// hold exactly two entries, and the active one must be among them.
 	busy := canonPath(filepath.Join(env.WatchDir, "project-busy"))
+	require.NoError(t, os.MkdirAll(busy, 0o755))
 	sessionID, err := service.CreateSession(busy, "codebuddy", "running", "", "", "default", "chat")
 	require.NoError(t, err)
 	service.SetSessionRunning(sessionID, true)
@@ -119,6 +123,7 @@ func TestServeSessionsOverview_capsCards(t *testing.T) {
 
 	for _, name := range []string{"idle-1", "idle-2", "idle-3"} {
 		p := canonPath(filepath.Join(env.WatchDir, name))
+		require.NoError(t, os.MkdirAll(p, 0o755))
 		_, cerr := service.CreateSession(p, "codebuddy", name, "", "", "default", "chat")
 		require.NoError(t, cerr)
 	}
@@ -160,6 +165,7 @@ func TestServeSessionsOverview_zeroCapFallsBackToTen(t *testing.T) {
 
 	for i := range 12 {
 		p := canonPath(filepath.Join(env.WatchDir, fmt.Sprintf("idle-%02d", i)))
+		require.NoError(t, os.MkdirAll(p, 0o755))
 		_, err := service.CreateSession(p, "codebuddy", fmt.Sprintf("idle %d", i), "", "", "default", "chat")
 		require.NoError(t, err)
 	}

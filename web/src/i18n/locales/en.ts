@@ -1788,12 +1788,6 @@ export default {
     forkGenerationTitle: 'Forked {n} generation(s) from the session above',
     takeoverBadge: 'Taken over',
     takeoverBadgeTip: 'Was served by "{name}", which has been deleted; the default agent now continues this session',
-    dirMissing: 'Directory missing',
-    cleanupMissingProject: 'Clean up missing project',
-    dirMissingCannotOpen: 'This project directory no longer exists. Remove sessions or clean up the project directly.',
-    cleanupProjectSuccess: 'Missing project cleaned up',
-    cleanupProjectFailed: 'Failed to clean up missing project',
-    destroyCrossSession: 'Remove session',
   },
   sessionTags: {
     title: 'Set tags',

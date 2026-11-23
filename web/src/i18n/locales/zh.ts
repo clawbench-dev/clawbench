@@ -1797,12 +1797,6 @@ export default {
     forkGenerationTitle: '自上一级会话分叉出的第 {n} 代',
     takeoverBadge: '已接管',
     takeoverBadgeTip: '原由「{name}」提供，该智能体已删除；本会话现由默认智能体继续',
-    dirMissing: '目录不存在',
-    cleanupMissingProject: '清理失效项目',
-    dirMissingCannotOpen: '该项目目录已不存在，可直接移除会话或清理失效项目',
-    cleanupProjectSuccess: '已清理失效项目',
-    cleanupProjectFailed: '清理失效项目失败',
-    destroyCrossSession: '移除此会话',
   },
   sessionTags: {
     title: '设置标签',

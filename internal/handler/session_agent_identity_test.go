@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -53,6 +54,7 @@ func TestServeSessionsOverview_carriesAgentIdentityForScopedAgents(t *testing.T)
 
 	// The session lives in project B and runs an agent scoped to project B.
 	projectB := canonPath(filepath.Join(env.WatchDir, "project-b"))
+	require.NoError(t, os.MkdirAll(projectB, 0o755))
 	projectBID := store.ProjectIDForTest(t, projectB)
 	setScopedTestAgent(t, "scoped-b", "视觉制作", "codebuddy", "<svg>avatar-b</svg>", projectBID)
 

@@ -42,10 +42,8 @@ type overviewSession struct {
 // or (via LastActiveAt) a project that was merely touched inside the recency
 // window and therefore renders collapsed.
 type overviewProjectGroup struct {
-	Name       string            `json:"name"`
-	ProjectID  int64             `json:"projectId,omitempty"`
-	DirMissing bool              `json:"dirMissing,omitempty"`
-	Sessions   []overviewSession `json:"sessions"`
+	Name     string            `json:"name"`
+	Sessions []overviewSession `json:"sessions"`
 	// LastActiveAt is set ONLY on groups that have no active session (they
 	// exist because the project was touched inside the recency window). It
 	// is what the collapsed card shows instead of a session count.
@@ -81,28 +79,37 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	callerProject := middleware.GetProjectFromCookie(r)
 	groups, groupIDs, total := buildOverviewGroups(sessions, runningSet,
 		ai.GetACPConnManager().GetPendingApprovalSessionIDs(), callerProject)
+	// A project whose directory is gone cannot be opened, so it has no place in
+	// this list: its sessions would be dead rows the user can only stare at.
+	// Dropping the card keeps the overview to projects that actually exist —
+	// the same rule the recent-project cards below follow.
+	groups, total = dropMissingProjectDirs(groups, total)
 	attachOverviewGroupMembers(groups, groupIDs)
 	groups = appendRecentProjectCards(groups, callerProject)
-	annotateOverviewProjectGroups(groups)
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
 }
 
-// annotateOverviewProjectGroups attaches each group's registry ProjectID and
-// checks whether its directory still exists on disk so the client can flag
-// stale projects and offer direct cleanup without switching into a missing path.
-func annotateOverviewProjectGroups(groups []*overviewProjectGroup) {
+// dropMissingProjectDirs removes groups whose project directory no longer
+// exists and adjusts the session total to match what is actually returned.
+func dropMissingProjectDirs(groups []*overviewProjectGroup, total int) ([]*overviewProjectGroup, int) {
+	kept := make([]*overviewProjectGroup, 0, len(groups))
 	for _, g := range groups {
-		if g.Name == "" {
+		if !projectDirExists(g.Name) {
+			total -= len(g.Sessions)
 			continue
 		}
-		if id, ok, err := store.ProjectIDByPath(g.Name); err == nil && ok {
-			g.ProjectID = id
-		}
-		fi, err := os.Stat(g.Name)
-		if err != nil || !fi.IsDir() {
-			g.DirMissing = true
-		}
+		kept = append(kept, g)
 	}
+	return kept, total
+}
+
+// projectDirExists reports whether path is a directory that still exists.
+func projectDirExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // buildOverviewGroups keeps only rows worth showing (running, pending approval
@@ -191,6 +198,12 @@ func appendRecentProjectCards(groups []*overviewProjectGroup, callerProject stri
 	}
 	for _, rp := range recent {
 		if activePaths[rp.Path] {
+			continue
+		}
+		// A recent project can be a leftover whose directory was deleted (or a
+		// drive that is not mounted): its card could never be opened, so it must
+		// not consume a slot either.
+		if !projectDirExists(rp.Path) {
 			continue
 		}
 		if len(groups) >= limit {
@@ -613,6 +626,11 @@ func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID
 // from the database — chat_history, tool_calls, raw_responses, task_executions, and
 // the session record itself.
 func DestroySession(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
 	if !requireMethod(w, r, http.MethodDelete) {
 		return
 	}
@@ -622,27 +640,12 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No project cookie is required: callers also destroy sessions from the
-	// cross-project overview, including sessions whose project directory was
-	// removed from disk (where POST /api/project would 400).
-	//
-	// This deliberately gives up the project-scope check that requireProject
-	// used to perform, so any authenticated caller may destroy any session id,
-	// not just one in its current project. That matches the rest of the product
-	// (authentication already grants full access to every project) and
-	// HardDeleteSession performs no ownership check either. The cookie is still
-	// read for the returned sessionCount, which is scoped to the caller's
-	// project when one is set.
-	callerProject := middleware.GetProjectFromCookie(r)
-
 	// Capture the owning project before the row is deleted (see ArchiveSession).
-	// Unlike the sessionCount below this must come from the session itself: the
-	// cross-project overview destroys sessions belonging to projects other than
-	// the caller's cookie, so the cookie cannot be used as a fallback for the
-	// broadcast — receivers would then be told about the wrong project.
+	// The cookie is only a fallback: the session's own project is what receivers
+	// must be told about.
 	removedProject := service.GetSessionProjectPathIncludeArchived(sessionID)
 	if removedProject == "" {
-		removedProject = callerProject
+		removedProject = projectPath
 	}
 
 	// Cancel the running session before destroying to kill the CLI process.
@@ -684,10 +687,7 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 	// Tell other devices the session is gone (see ArchiveSession).
 	service.BroadcastSessionRemoved(sessionID, removedProject)
 
-	sessionCount := 0
-	if callerProject != "" {
-		sessionCount, _ = service.GetSessionCount(callerProject)
-	}
+	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
 }
 
