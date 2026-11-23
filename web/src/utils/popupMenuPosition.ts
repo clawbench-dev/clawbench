@@ -146,6 +146,17 @@ export function computeMenuStyle(
     ? computeRight(rect, effectiveMaxWidth, edgeMargin, cssViewportWidth, toCssRight)
     : computeLeft(rect, effectiveMaxWidth, edgeMargin, toCssX, cssViewportWidth)
 
+  // --- Overflow: vertical only ---
+  // The menu is a scroll container (overflowY below), so its `overflow-x`
+  // computes to `auto` as well. Anything wider than the clamp — a wide word in
+  // a label, a `min-width` written in unscaled design px, an inline row that
+  // refuses to wrap — then paints a HORIZONTAL scrollbar under the menu even
+  // though the box is already as wide as it may be. Measured: the context-usage
+  // popup showed one at a non-1.0 UI scale. Max width is the ceiling, so the
+  // content must adapt instead of scrolling sideways; `clip` also stops an
+  // over-wide child from painting outside the rounded box.
+  const overflow = { overflowX: 'clip' as const }
+
   if (goBelow) {
     // Menu appears BELOW the anchor
     const top = toCssY(rect.bottom + gap)
@@ -154,6 +165,7 @@ export function computeMenuStyle(
       position: 'fixed',
       top: `${top}px`,
       ...horizontal,
+      ...overflow,
       maxWidth: `${effectiveMaxWidth}px`,
       maxHeight: `min(${maxHeight}px, ${availableBelow / (containingBlock?.scaleY || 1)}px)`,
     }
@@ -171,6 +183,7 @@ export function computeMenuStyle(
     position: 'fixed',
     bottom: `${bottom}px`,
     ...horizontal,
+    ...overflow,
     maxWidth: `${effectiveMaxWidth}px`,
     maxHeight: `min(${maxHeight}px, ${availableAbove / (containingBlock?.scaleY || 1)}px)`,
   }

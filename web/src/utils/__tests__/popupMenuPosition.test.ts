@@ -275,6 +275,26 @@ describe('computeMenuStyle', () => {
     })
   })
 
+  // The menu is an overflow container (overflowY: auto), so its horizontal axis
+  // would otherwise compute to `auto` too and paint a scrollbar whenever a child
+  // is wider than the (already maximum) box. Reported on the context-usage popup
+  // at a non-1.0 UI scale.
+  describe('horizontal overflow: clipped, never scrolled', () => {
+    it('clips the horizontal axis whether the menu opens above or below', () => {
+      const above = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
+        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+      })
+      const below = computeMenuStyle(mockRect({ top: 5, bottom: 40, left: 100, right: 140 }), {
+        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+      })
+      expect(above.overflowX).toBe('clip')
+      expect(below.overflowX).toBe('clip')
+      // Vertical scrolling is untouched — a long menu still scrolls.
+      expect(above.overflowY).toBe('auto')
+      expect(below.overflowY).toBe('auto')
+    })
+  })
+
   describe('style invariants', () => {
     it('always includes position, maxWidth, maxHeight, overflowY (scrollable default)', () => {
       const rects = [
