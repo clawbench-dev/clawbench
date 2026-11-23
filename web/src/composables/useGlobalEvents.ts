@@ -562,6 +562,16 @@ function connect(opts?: { resumed?: boolean }) {
                     window.dispatchEvent(new CustomEvent('clawbench-session-title-update', { detail: msg.data }))
                 }
 
+                // A session left the visible list (archived or destroyed) on
+                // ANOTHER device. Replayed events are included on purpose: a
+                // client that was offline when the session was removed still has
+                // it open, and the replay buffer is the only notification it will
+                // ever get. App.vue drops the row and, when the session it has
+                // open is the one that vanished, leaves it.
+                if (msg.event === 'session_removed') {
+                    window.dispatchEvent(new CustomEvent('clawbench-session-removed', { detail: msg.data }))
+                }
+
                 // Forge (GitHub/GitLab) change events: re-derive the unread
                 // badge on LIVE events only. Replayed events are caught-up
                 // history, so they must not inflate the badge after a reconnect.

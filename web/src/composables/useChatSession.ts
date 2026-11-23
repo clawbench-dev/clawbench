@@ -811,7 +811,18 @@ export function useChatSession(options: UseChatSessionOptions) {
           loadHistoryDeferred = null
           const next = pendingReload || { forceScrollBottom, showOverlay, skipIfUnchanged, immediate }
           pendingReload = null
-          setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate), 0)
+          // A manual refresh (handleManualRefresh → reopenCurrentSession) must
+          // land on a REAL session, not on an empty panel. Clearing the id and
+          // re-triggering loadHistory recovers "the latest session" only when
+          // the project still has one; when it does not, the retry bails and
+          // the user is left staring at nothing. Create the replacement here.
+          setTimeout(() => {
+            if (!currentSessionId.value) {
+              createSession('').catch(e => appLog.w(TAG, 'recover after 404 createSession failed:', e))
+              return
+            }
+            loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate)
+          }, 0)
           return
         }
         // Attach the HTTP status so the catch below can tell this apart from a
