@@ -4643,6 +4643,30 @@ describe('compact tool calls', () => {
     expect(readDetail().text()).toBe('搜索胶囊相关组件')
   })
 
+  it('shows the description from the arguments when the tool summary never arrives', async () => {
+    // The builtin agent's real shape: `summary` is never sent for a running
+    // tool, only the arguments are. The unfolded pill renders those arguments
+    // (which is why it showed the description all along); this row must read
+    // them too instead of waiting for the tool to end.
+    //
+    // `toolCallSummary` mirrors the component's real wiring: it reads `summary`
+    // and does NOT fall back to the arguments, so only `inputSummary` can save
+    // this row.
+    const running = reactive(tool('Bash', 't2', { done: false, status: '', summary: '', input: {} }))
+    const wrapper = mountBlocks({
+      toolCallSummary: (b: any) => b?.summary || '',
+      blocks: [tool('Read', 't1', { summary: 'run.go' }), running],
+    })
+    await nextTick()
+    const readDetail = () => wrapper.find('.chat-tool-group-strip .tool-summary')
+    expect(readDetail().exists()).toBe(false)
+
+    // The tool_args frame writes `input`; `summary` stays untouched.
+    running.input = { command: 'ls -la', description: '查找本地数据库' }
+    await nextTick()
+    expect(readDetail().text()).toBe('查找本地数据库')
+  })
+
   it('never folds an interactive card or an Agent card with a sub-agent group', async () => {
     const ask = {
       type: 'tool_use', name: 'AskUserQuestion', id: 'ask1', done: true,

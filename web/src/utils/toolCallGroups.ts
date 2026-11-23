@@ -102,6 +102,17 @@ export interface ToolCallGroupOptions {
   displayName?: (block: any) => string
   /** One-line summary of an arbitrary tool block (the row's own summariser). */
   summarize?: (block: any) => string
+  /**
+   * Last-resort summary derived straight from the tool's arguments, used for the
+   * RUNNING step when `summarize` yields nothing.
+   *
+   * Some backends (the builtin agent) announce a tool by name and send its
+   * arguments in a later frame. That frame fills in `input` — so the unfolded
+   * pill, which renders the arguments, shows the description — but it never
+   * fills in `summary`, so a row reading only the pre-extracted summary stayed
+   * blank for the whole execution and filled in only once the tool ended.
+   */
+  inputSummary?: (block: any) => string
 }
 
 export interface ToolCallGroups {
@@ -163,8 +174,18 @@ export function buildToolCallGroups(blocks: any[], opts: ToolCallGroupOptions): 
     // Read the running step's summary off the block at CALL time, not now: see
     // `runningDetail`. No name prefix — the live row already prints the tool's
     // own name beside it.
-    const runningDetail = (): string =>
-      runningBlock && opts.summarize ? opts.summarize(runningBlock) : ''
+    //
+    // `inputSummary` is the fallback that fixes the builtin agent. It announces
+    // a tool by name first and sends the arguments afterwards; those arguments
+    // reach `block.input` (the unfolded pill renders them) but never refresh
+    // `summary`, so this row read a permanently empty label while the pill right
+    // under it showed the description. Derive it from the arguments instead.
+    const runningDetail = (): string => {
+      if (!runningBlock) return ''
+      const summary = (opts.summarize ? opts.summarize(runningBlock) : '')
+        || (opts.inputSummary ? opts.inputSummary(runningBlock) : '')
+      return summary || ''
+    }
     let lastStepDetail = ''
     for (let idx = end; idx >= start; idx--) {
       const block = list[idx]

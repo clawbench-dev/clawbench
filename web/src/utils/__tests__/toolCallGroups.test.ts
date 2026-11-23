@@ -207,5 +207,39 @@ describe('buildToolCallGroups', () => {
       const { groups } = buildToolCallGroups([tool('a', { summary: 'x' }), tool('b', { summary: 'y' })], withSummary)
       expect(groups[0].runningDetail()).toBe('')
     })
+
+    // The shape the builtin agent actually produces: `summary` never lands, the
+    // arguments do. Without `inputSummary` the row was blank for the whole run
+    // even though the unfolded pill showed the description.
+    const withInputSummary = {
+      ...withSummary,
+      inputSummary: (b: any) => b.input?.description ?? '',
+    }
+
+    it('falls back to the arguments when the summary never arrives', () => {
+      const running = tool('b', { done: false })
+      const { groups } = buildToolCallGroups([tool('a'), running], withInputSummary)
+      expect(groups[0].runningDetail()).toBe('')
+
+      // The arguments land in `input` (as `ws_tool_use` writes them); `summary`
+      // stays unset, exactly as the builtin agent leaves it.
+      running.input = { command: 'ls -la', description: '查找本地数据库' }
+      expect(groups[0].runningDetail()).toBe('查找本地数据库')
+    })
+
+    it('prefers the pre-extracted summary over the arguments', () => {
+      const running = tool('b', { done: false })
+      const { groups } = buildToolCallGroups([tool('a'), running], withInputSummary)
+      running.summary = '总结'
+      running.input = { description: '来自参数' }
+      expect(groups[0].runningDetail()).toBe('总结')
+    })
+
+    it('stays empty while the arguments have no description either', () => {
+      const running = tool('b', { done: false })
+      const { groups } = buildToolCallGroups([tool('a'), running], withInputSummary)
+      running.input = {}
+      expect(groups[0].runningDetail()).toBe('')
+    })
   })
 })

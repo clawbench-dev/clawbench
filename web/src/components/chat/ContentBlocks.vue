@@ -2020,6 +2020,16 @@ const toolGroups = computed(() => {
     // instead of in the row on every streamed frame.
     displayName: (block) => toolDisplayName(block.name, block.input, block.display_name),
     summarize: (block) => cardSummary(block),
+    // Running step only: derive from the arguments when `summary` is still empty.
+    // The builtin agent fills in `input` in a later frame without refreshing
+    // `summary`, so without this the row stayed blank until the tool ended.
+    // Reads `description` directly (the field the builtin agent's bash tool
+    // documents as "what the tool card shows") rather than going through
+    // `toolCallSummary`, which would just re-read the same empty `summary`.
+    inputSummary: (block) => {
+      const desc = block?.input?.description
+      return typeof desc === 'string' ? desc : ''
+    },
   })
 })
 
