@@ -563,5 +563,21 @@ describe('AcpSessionDrawer', () => {
       expect(wrapper.findAll('.acp-session-item')).toHaveLength(1)
       expect(wrapper.text()).toContain('Named')
     })
+
+    it('offers no untitled toggle when the backend already drops untitled rows', async () => {
+      // Same capability bit drives both the chip's visibility and the filter,
+      // so they cannot drift: a backend that lists placeholders already has
+      // them removed upstream and the toggle would be a no-op.
+      mockAgentBackend.value = 'placeholder-listing-agent'
+      mockAgentRecord.value = { listSessionsOmitsEmptyTitle: true }
+      mockSessions.value = [
+        { sessionId: 's1', title: 'Named', cwd: '/project', createdAt: '', updatedAt: '' },
+        { sessionId: 's2', title: '', cwd: '/project', createdAt: '', updatedAt: '' },
+      ]
+      const wrapper = mountDrawer()
+      await nextTick()
+
+      expect(wrapper.find('.acp-session-filter-chip').exists()).toBe(false)
+    })
   })
 })

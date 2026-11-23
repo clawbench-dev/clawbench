@@ -611,9 +611,17 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Do not require a valid on-disk project cookie here: callers also destroy
-	// sessions from the cross-project overview, including sessions whose project
-	// directory was removed from disk (where POST /api/project would 400).
+	// No project cookie is required: callers also destroy sessions from the
+	// cross-project overview, including sessions whose project directory was
+	// removed from disk (where POST /api/project would 400).
+	//
+	// This deliberately gives up the project-scope check that requireProject
+	// used to perform, so any authenticated caller may destroy any session id,
+	// not just one in its current project. That matches the rest of the product
+	// (authentication already grants full access to every project) and
+	// HardDeleteSession performs no ownership check either. The cookie is still
+	// read for the returned sessionCount, which is scoped to the caller's
+	// project when one is set.
 	callerProject := middleware.GetProjectFromCookie(r)
 
 	// Cancel the running session before destroying to kill the CLI process.

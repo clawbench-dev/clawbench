@@ -513,7 +513,10 @@ func writeTakeoverNotices(notices []takeoverNotice, oldName, newName string, reu
 
 // sessionHasRealMessages reports whether sessionID contains at least one
 // user or assistant turn in chat_history. Best-effort: on query error it logs
-// a warning and returns false so notice writing never fails a committed deletion.
+// a warning and reports true, so the takeover notice is still written. The
+// deletion already committed, and silently dropping the "changed hands" notice
+// would leave the user with a session that switched agents and no explanation;
+// an extra notice is the cheaper failure.
 func sessionHasRealMessages(sessionID string) bool {
 	var exists bool
 	err := store.ReadDB().QueryRow(
@@ -521,8 +524,8 @@ func sessionHasRealMessages(sessionID string) bool {
 		sessionID,
 	).Scan(&exists)
 	if err != nil {
-		slog.Warn("agent takeover: checking session messages failed", "session", sessionID, "err", err)
-		return false
+		slog.Warn("agent takeover: checking session messages failed, writing notice anyway", "session", sessionID, "err", err)
+		return true
 	}
 	return exists
 }

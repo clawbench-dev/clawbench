@@ -245,8 +245,12 @@ const sessionsInCurrentProject = computed(() => {
   return displayableSessions.value.filter((s) => normalizeProjectPath(s.cwd || '') === root)
 })
 
+const hidesEmptyTitlesByDefault = computed(
+  () => getAgent(props.agentId)?.listSessionsOmitsEmptyTitle === true,
+)
+
 const hasUntitledNonCodex = computed(() =>
-  getAgent(props.agentId)?.listSessionsOmitsEmptyTitle !== true &&
+  !hidesEmptyTitlesByDefault.value &&
   sessionsInCurrentProject.value.some((s) => s.title.trim() === ''),
 )
 
@@ -260,7 +264,10 @@ const hiddenLocalCount = computed(() =>
 
 const filteredSessions = computed(() => {
   let base = sessionsInCurrentProject.value
-  if (hideUntitled.value && backendId.value !== 'codex') {
+  // Capability-driven, not backend-name-driven: a backend that already drops
+  // untitled rows server-side has nothing for this toggle to do, and any future
+  // backend declaring the same capability gets the same treatment.
+  if (hideUntitled.value && !hidesEmptyTitlesByDefault.value) {
     base = base.filter((s) => s.title.trim() !== '')
   }
   if (!showHidden.value) {
