@@ -53,6 +53,11 @@ const (
 	// messages. A long-lived server writes far more than a one-shot probe, so
 	// this is a tail buffer rather than an unbounded bytes.Buffer.
 	stderrTailBytes = 8 * 1024
+	// stderrDrainWait bounds how long closedError waits for the stderr copy
+	// goroutine to catch up. The child can exit (stdout EOF) a moment before its
+	// stderr reaches the tail buffer, which made the diagnostic empty on a
+	// slower runner.
+	stderrDrainWait = 500 * time.Millisecond
 )
 
 // errSessionExpired is returned when the HTTP transport learns the server
@@ -538,12 +543,34 @@ func readMessage(r *bufio.Reader, limit int) ([]byte, error) {
 }
 
 // closedError explains a dropped connection with whatever the server printed.
+//
+// stderr is copied by os/exec's own goroutine, independent of the stdout reader:
+// a child can exit (stdout EOF) a moment before its last stderr write has been
+// copied into the tail buffer. Formatting immediately produced an error without
+// the only explanation the server gave, which flaked
+// TestSession_StdioServerExitExplains on macOS. Wait briefly for the copy — but
+// never indefinitely, because a server may close stdout and stay alive.
 func (t *stdioTransport) closedError(err error) error {
 	msg := fmt.Errorf("server closed the connection: %w", err)
-	if s := strings.TrimSpace(t.stderr.String()); s != "" {
+	if s := t.stderrWithin(stderrDrainWait); s != "" {
 		msg = fmt.Errorf("%w — server stderr: %s", msg, snippet([]byte(s)))
 	}
 	return msg
+}
+
+// stderrWithin returns the accumulated stderr, waiting up to d for the first
+// bytes to arrive. Returns "" if the server never wrote anything.
+func (t *stdioTransport) stderrWithin(d time.Duration) string {
+	deadline := time.Now().Add(d)
+	for {
+		if s := strings.TrimSpace(t.stderr.String()); s != "" {
+			return s
+		}
+		if time.Now().After(deadline) {
+			return ""
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // parseResponseLine returns a JSON-RPC reply, or nil for notifications,
