@@ -1741,14 +1741,17 @@ jobs:
     # 主包和 android 包已是 0.132.0，但 linux-x64 / linux-arm64 / darwin-* /
     # win32-x64 五个平台包全停在 0.131.0。主包的 optionalDependencies 指向
     # 新版本，从镜像装的人直接拉不到对应平台包——装不上，且没有任何提示。
+    # v0.146.0 又来了一次，6 个平台包全停在 0.145.0，而脚本当时只提交一次同步
+    # 任务、等 10 分钟就判死，镜像把任务排丢之后没有第二次机会。
     #
     # 所以发布完要主动催一次同步，并等到「元数据 + tarball 都可用」才算完。
+    # 脚本现在会在超时后重新提交再等，最多 3 轮（见 NPMMIRROR_ATTEMPTS）。
     # 单独成 job：失败只让流水线变红，已经发出去的包不受影响，重跑这一个
     # job 就能补齐（脚本本身幂等）。
     needs: [publish-npm]
     runs-on: ubuntu-latest
-    # 脚本内部有统一的等待窗口（默认 10 分钟），加上每个包一次 tarball 探测，
-    # 这里再兜一层防止卡死。
+    # 3 轮 × 5 分钟 = 15 分钟的等待，加上每轮 7 个包的 tarball 探测余量，
+    # 这里留 30 分钟兜底防止卡死。
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -1762,6 +1765,12 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Trigger and wait for mirror sync
+        # 脚本自己会在超时后重新提交并再等一轮（默认 3 轮），这里把每轮窗口
+        # 定成 5 分钟而不是默认的 10 分钟：3 轮一共 15 分钟仍有富余，而单轮
+        # 短一点意味着「任务被排丢」时能更快重提，不会一直干等同一个坏任务。
+        env:
+          NPMMIRROR_WAIT_SECONDS: '300'
+          NPMMIRROR_ATTEMPTS: '3'
         run: |
           ./scripts/npmmirror-sync.sh "${{ steps.version.outputs.VERSION }}" \
             @xulongzhe/clawbench \
