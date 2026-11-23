@@ -12,6 +12,7 @@ import { setLayoutScopeMode } from '@/utils/panelState'
 import { setDefaultBlockWrap } from '@/utils/blockWrapPref'
 import { applyServerLimits } from '@/stores/app.ts'
 import { SETTINGS_KEY_PREFIX } from '@/utils/settingsStorage'
+import { storageGet, storageSet } from '@/utils/safeStorage'
 import { refreshServerFeatures, syncFeatureConfig } from '@/composables/useFeatureFlags'
 import { useTerminalStatus } from '@/composables/useTerminalStatus'
 
@@ -87,21 +88,21 @@ function migrateLegacyKeys() {
   }
   for (const [settingsKey, legacy] of Object.entries(migrations)) {
     const newKey = LOCAL_PREFIX + settingsKey
-    // Only migrate if new key doesn't exist yet but legacy key does
-    if (localStorage.getItem(newKey) !== null) continue
-    const value = localStorage.getItem(legacy.key)
+    // Only migrate if new key doesn't exist yet but legacy key does.
+    // storageGet returns null when localStorage is missing/blocked, which also
+    // skips the migration — the module loads fine and nothing is copied.
+    if (storageGet(newKey) !== null) continue
+    const value = storageGet(legacy.key)
     if (value === null) continue
-    try {
-      if (legacy.format === 'json') {
-        localStorage.setItem(newKey, value) // already JSON
-      } else {
-        // Convert raw string to JSON for consistency
-        const bool = value === 'true' || value === 'false'
-        const num = Number(value)
-        const parsed = bool ? value === 'true' : (!isNaN(num) && value !== '' ? num : value)
-        localStorage.setItem(newKey, JSON.stringify(parsed))
-      }
-    } catch { /* ignore */ }
+    if (legacy.format === 'json') {
+      storageSet(newKey, value) // already JSON
+    } else {
+      // Convert raw string to JSON for consistency
+      const bool = value === 'true' || value === 'false'
+      const num = Number(value)
+      const parsed = bool ? value === 'true' : (!isNaN(num) && value !== '' ? num : value)
+      storageSet(newKey, JSON.stringify(parsed))
+    }
   }
 }
 // Run migration on module load

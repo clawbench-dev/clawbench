@@ -15,6 +15,7 @@ import type { ForgeTarget } from '@/composables/useForgeNavigation'
 import { getNative } from '@/utils/clawbenchNative'
 import { appLog } from '@/utils/appLog'
 import { localizedToolName } from '@/utils/toolNames'
+import { storageGet, storageSet } from '@/utils/safeStorage'
 
 // Event types from server
 export interface ServerEvent {
@@ -213,7 +214,7 @@ let pendingProbe: { timer: ReturnType<typeof setTimeout>; onDead: () => void } |
 // Client ID — identifies this browser/device across sessions.
 // Stored in localStorage so the server can track multiple tabs/devices independently.
 const CLIENT_ID_KEY = 'clawbench_client_id'
-let clientId = localStorage.getItem(CLIENT_ID_KEY)
+let clientId = storageGet(CLIENT_ID_KEY)
 if (!clientId) {
     // crypto.randomUUID() requires a secure context (HTTPS or localhost);
     // fallback to crypto.getRandomValues() for plain HTTP external access.
@@ -224,7 +225,7 @@ if (!clientId) {
         const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
         return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
     })()
-    localStorage.setItem(CLIENT_ID_KEY, clientId)
+    storageSet(CLIENT_ID_KEY, clientId)
 }
 
 // Last-seen event cursor — tracks the newest terminal event already seen.

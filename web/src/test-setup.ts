@@ -9,6 +9,31 @@
 
 import { createUnhandledRejectionHandler } from '@/utils/unhandledRejectionGuard'
 
+// ── localStorage guard for Node 25+/26 ──
+// Node 25+/26 expose `globalThis.localStorage` even without `--localstorage-file`,
+// but it is an incomplete object whose `getItem` is undefined. Modules that read
+// it at import time (i18n, useSettingsConfig, useGlobalEvents) would crash before
+// a single test runs. Replace it with an in-memory Storage so the test
+// environment is deterministic. Browsers and Electron always have a real one, so
+// this branch never runs there.
+if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localStorage.getItem !== 'function') {
+  const store = new Map<string, string>()
+  const shim: Storage = {
+    get length() { return store.size },
+    key: (i: number) => Array.from(store.keys())[i] ?? null,
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => { store.set(k, String(v)) },
+    removeItem: (k: string) => { store.delete(k) },
+    clear: () => { store.clear() },
+  }
+  Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: true, writable: true })
+  // In vitest's jsdom environment `window === globalThis`; only touch window
+  // separately when it is a distinct object.
+  if (typeof window !== 'undefined' && window !== globalThis) {
+    Object.defineProperty(window, 'localStorage', { value: shim, configurable: true, writable: true })
+  }
+}
+
 // ── ResizeObserver polyfill for jsdom ──
 // jsdom does not implement ResizeObserver, but components like FileHeader and
 // ActionBar create one on mount.
