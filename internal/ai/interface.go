@@ -66,6 +66,20 @@ type ChatRequest struct {
 	// instead of re-summarizing the same history every turn. Only the built-in
 	// backend reads it: an external CLI manages its own compaction.
 	PriorSummary string
+
+	// ClawbenchSessionID is this conversation's id in OUR database. Unlike
+	// SessionID it is always set, including on a resumed turn of a self-hosted
+	// backend (which replays our history instead of resuming an external one).
+	//
+	// SessionID is the id the BACKEND should work with: our own id for an ACP
+	// backend, the id handed to --resume for a CLI one — and that one is
+	// deliberately blanked when the external id is unknown (see
+	// resolveResumeSessionID), so a CLI is never told to resume an id it has
+	// never seen. Anything keyed by the conversation the USER sees must use this
+	// field instead. Mid-turn injection is addressed by it: registering the
+	// mailbox under SessionID left the registry empty from the second turn on,
+	// and every insertion declined as "idle".
+	ClawbenchSessionID string
 }
 
 // HistoryMessage is one prior turn handed to a self-hosted backend.

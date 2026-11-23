@@ -2,6 +2,9 @@ package builtin
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"clawbench/internal/agentcore"
@@ -55,6 +58,53 @@ func TestInjectInProcess_RoutesToRunningTurn(t *testing.T) {
 	if !ok || pending.ClientUserMessageID != "q-1" || pending.Text != "also check b.txt" {
 		t.Fatalf("the message did not reach the mailbox: %+v ok=%v", pending, ok)
 	}
+}
+
+// TestExecuteStream_RegistersMailboxUnderClawbenchSessionID pins the wiring the
+// policy tests cannot see.
+//
+// On a resumed turn the service blanks ChatRequest.SessionID (a self-hosted
+// backend has no external id to resume) while the conversation keeps its own id.
+// Registering the mailbox under SessionID therefore left the registry empty from
+// the second turn on, and every insertion declined as "idle" — the reported
+// "cannot insert while the reply is still being written".
+func TestExecuteStream_RegistersMailboxUnderClawbenchSessionID(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Hold the turn open until the test has injected, so the assertion
+		// observes a turn that is genuinely running.
+		<-release
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":"ok"}}]}`+"\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	agentID := withProvider(t, srv.URL)
+	ch, err := NewForTest().ExecuteStream(context.Background(), ai.ChatRequest{
+		AgentID: agentID, Prompt: "hi", WorkDir: t.TempDir(),
+		// Exactly the resumed-turn shape: no resume id, real conversation id.
+		ClawbenchSessionID: "sess-resumed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Registration is synchronous, before the turn's goroutine starts.
+	if injectionBoxFor("sess-resumed") == nil {
+		t.Fatal("the running turn must be registered under the ClawBench session id")
+	}
+	res, err := midTurn{}.InjectInProcess(context.Background(), ai.MidTurnInjectRequest{
+		SessionID: "sess-resumed", Content: "also check b.txt", ClientUserMessageID: "q-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Injected {
+		t.Fatalf("a running turn must accept the message, got %+v", res)
+	}
+
+	close(release)
+	collectStream(t, ch)
 }
 
 // TestInjectInProcess_NoRunningTurn reports a benign decline so the caller

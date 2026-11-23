@@ -227,11 +227,17 @@ func (b *Backend) ExecuteStream(ctx context.Context, req ai.ChatRequest) (<-chan
 	// the previous turn was still running can be inserted the moment this one is
 	// alive. The mailbox is sealed by the engine on its way out; cleanup here
 	// only removes the registry entry.
+	//
+	// Keyed by the ClawBench session id, NOT req.SessionID: on a resumed turn of
+	// a self-hosted backend SessionID is blanked (there is no external id to
+	// resume), while the inject endpoint addresses the turn by the id the user's
+	// conversation actually has. Registering under SessionID left the registry
+	// empty from the second turn on, so every insertion declined as "idle".
 	var releaseInjections func()
-	if req.SessionID != "" {
+	if req.ClawbenchSessionID != "" {
 		box := agentcore.NewInjectionMailbox()
 		spec.Injections = box
-		releaseInjections = registerInjectionBox(req.SessionID, box)
+		releaseInjections = registerInjectionBox(req.ClawbenchSessionID, box)
 	}
 
 	ch := make(chan ai.StreamEvent, 64)

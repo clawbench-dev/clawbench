@@ -299,6 +299,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	req := ai.ChatRequest{
 		Prompt:                 prompt,
 		SessionID:              effectiveSessionID,
+		ClawbenchSessionID:     sessionID,
 		WorkDir:                fileDir,
 		SystemPrompt:           systemPrompt,
 		Model:                  agentModel,
