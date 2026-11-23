@@ -257,11 +257,115 @@ function onRendered() {
       lastFitWidth = -1
       scheduleRefit()
     })
+  } else if (isWord.value) {
+    // `.docx` sections are laid out at the Word page width (21cm for A4) —
+    // always wider than a phone viewport — and the library also re-renders
+    // them asynchronously (fonts, numbering images), which can overwrite our
+    // fit afterwards. Re-apply once the render has settled.
+    nextTick(() => {
+      fitDocxSections()
+      // The library keeps re-rendering (fonts, numbering images) after the
+      // `rendered` event and can replace the page's geometry.
+      pagesFitSettledTimer = setTimeout(fitDocxSections, 300)
+    })
+  }
+}
+
+// --- Docx: fit the page to the container width ---
+// The docx viewer lays every `section.docx` out at the Word page width from
+// the document properties (21cm for A4), which is wider than a phone viewport —
+// the reader has to scroll sideways through half a page. Fit it to the pane
+// instead, the way the pptx viewer fits its slides, but without a transform:
+// the width is taken over by the stylesheet and the text is re-laid out by the
+// browser, so it stays sharp and selectable.
+//
+// The page's own padding (Word page margins) and font size scale with it. They
+// are written as custom properties and multiplied into the real declarations
+// by the stylesheet, so what this script writes is only ever off or on —
+// restoring the original means REMOVING them, which hands width/padding/font
+// back to the library's stylesheet (its own 10px page padding under 800px
+// included) instead of pinning an inline value forever.
+//
+// The stylesheet uses `width: 100%` rather than a pixel width: the wrapper is
+// a flex column with `align-items: center`, and a pixel width would let the
+// wrapper shrink to the widest page — a landscape section would then shrink
+// every page under it.
+//
+// Only the two custom properties need clearing on reset: they are what turns
+// the rules on, and the inline pixel width the library left is stripped when
+// the figure is first written.
+const DOCX_FIT_PROPS = ['--docx-fit-ratio', '--docx-fit-font-size']
+let docxNativeWidth = 0
+let docxBaseFont = 0
+let pagesFitTimer = 0
+let pagesFitSettledTimer = 0
+
+function docxPages() {
+  const body = bodyRef.value
+  if (!body) return []
+  return Array.from(body.querySelectorAll('.docx-wrapper > section.docx'))
+}
+
+/**
+ * The page width before any fit. The library writes it inline in pixels (a
+ * `cm` figure would need pixels per cm, which depends on the page's own
+ * font-size); the laid-out box covers a page that was fitted before we saw it.
+ * 0 means "not measurable yet" — the caller retries on the next pass.
+ */
+function nativePageWidth(page) {
+  if (page.style.getPropertyValue('--docx-fit-ratio')) return 0 // already fitted
+  const inline = /^[\d.]+px$/.test(page.style.width.trim()) ? parseFloat(page.style.width) : 0
+  return Math.max(inline, page.offsetWidth)
+}
+
+function resetDocxFit() {
+  for (const page of docxPages()) {
+    page.style.removeProperty('width')
+    for (const prop of DOCX_FIT_PROPS) page.style.removeProperty(prop)
+  }
+  docxNativeWidth = 0
+  docxBaseFont = 0
+}
+
+function fitDocxSections() {
+  if (!isWord.value) return
+  const body = bodyRef.value
+  const pages = docxPages()
+  if (!body || !pages.length) return
+  const avail = body.clientWidth
+  if (!avail) return // hidden (inactive tab): keep the current fit
+  // A percentage width resolves against the wrapper's content box — the same
+  // box `clientWidth` measures (the wrapper's own padding is 0, see the
+  // stylesheet).
+  if (!docxNativeWidth) docxNativeWidth = Math.max(0, ...pages.map(nativePageWidth))
+  if (!docxNativeWidth) return
+
+  // The author's page fits: drop the fit and let the library's own
+  // width/padding apply. Outside the fitted state the page box is the page
+  // width, so `clientWidth` (scrollbar excluded) is the right measure here.
+  if (avail >= docxNativeWidth) {
+    resetDocxFit()
+    return
+  }
+  // Measured against the inner width — the box the page is laid out in.
+  const scale = (avail - 2) / docxNativeWidth
+  if (!docxBaseFont) docxBaseFont = parseFloat(getComputedStyle(pages[0]).fontSize) || 16
+
+  // `--docx-fit-ratio` switches the page to the fitted width in the
+  // stylesheet (100% of the wrapper, `box-sizing: border-box` so the scaled
+  // padding sits inside it). The library's inline pixel width would win over
+  // that rule, so it goes first.
+  for (const page of pages) {
+    page.style.removeProperty('width')
+    page.style.setProperty('--docx-fit-ratio', String(scale))
+    // Pixels, not rem: `getComputedStyle` already reflects the UI scale (it
+    // is a root font-size change), and a rem would apply the scale twice.
+    page.style.setProperty('--docx-fit-font-size', `${docxBaseFont * scale}px`)
   }
 }
 
 // --- Container resize: re-fit the viewer to the available width ---
-// Both viewers size themselves once and never re-measure on a layout-only
+// The viewers size themselves once and never re-measure on a layout-only
 // change (dragging the splitter, toggling a dock panel) — which produces no
 // window `resize` event:
 //   * @vue-office/pptx freezes the width/height it measured at mount and bakes
@@ -269,8 +373,9 @@ function onRendered() {
 //     mounted in.
 //   * @vue-office/excel re-measures only from the window `resize` listener it
 //     registers internally.
-// Watching the body element catches both, including a file mounted while hidden
-// (0-width → the viewers fall back to 960 / 1200).
+//   * @vue-office/docx bakes the page width from the document properties.
+// Watching the body element catches all of them, including a file mounted while
+// hidden (0-width → the viewers fall back to 960 / 1200).
 let resizeObserver = null
 let refitRaf = 0
 let refitTimer = 0
@@ -328,6 +433,11 @@ function scheduleRefit() {
     // excel re-measure redraws the whole sheet.
     clearTimeout(refitTimer)
     refitTimer = setTimeout(refitExcel, 120)
+  } else if (isWord.value) {
+    // Same trailing debounce as excel: every pass measures the pages and
+    // re-lays the text out.
+    clearTimeout(pagesFitTimer)
+    pagesFitTimer = setTimeout(fitDocxSections, 120)
   }
 }
 
@@ -358,6 +468,7 @@ watch(() => props.file?.path, (newPath, oldPath) => {
     mediaTimestamp.value = Date.now()
     // New document, new mount-time geometry.
     lastFitWidth = -1
+    resetDocxFit()
     // 新文件回到默认的表格视图。
     if (canShowExcelTable.value) excelView.value = 'table'
     sheetNames.value = []
@@ -381,6 +492,8 @@ onUnmounted(() => {
     refitRaf = 0
   }
   clearTimeout(refitTimer)
+  clearTimeout(pagesFitTimer)
+  clearTimeout(pagesFitSettledTimer)
 })
 
 defineExpose({
@@ -491,17 +604,34 @@ defineExpose({
   touch-action: pan-x pan-y;
 }
 
-/* Word overrides: remove all padding/margin, full-width, match bg */
+/* Word overrides: remove all padding/margin, match bg */
 .office-preview-body :deep(.docx-wrapper) {
   padding: 0 !important;
   max-width: 100% !important;
   background: var(--bg-primary) !important;
 }
 
+/* The library sizes the page from the Word page width (21cm for A4), which a
+   phone viewport cannot show. The script (fitDocxSections) records the scale
+   it takes to fit the pane in `--docx-fit-ratio`; these declarations then make
+   the page follow the pane, with its own padding (Word page margins) and text
+   scaled by the same factor. At 1:1 the property is removed and the library's
+   own width/padding/font apply again. */
+.office-preview-body :deep(.docx-wrapper > section.docx[style*='--docx-fit-ratio']) {
+  box-shadow: none !important;
+  margin-bottom: 0 !important;
+  box-sizing: border-box !important;
+  width: 100% !important;
+  /* Page margins are 2.54cm each side ≈ 96px; scale them with the page but
+     never let them eat more than a fifth of it. */
+  padding-left: min(calc(var(--docx-fit-ratio) * 96px), 20%) !important;
+  padding-right: min(calc(var(--docx-fit-ratio) * 96px), 20%) !important;
+  font-size: var(--docx-fit-font-size) !important;
+}
+
 .office-preview-body :deep(.docx-wrapper > section.docx) {
   box-shadow: none !important;
   margin-bottom: 0 !important;
-  width: 100% !important;
 }
 
 .office-preview-body :deep(.docx img) {

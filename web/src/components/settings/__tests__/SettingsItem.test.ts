@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { nextTick, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
+import type { Ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 import SettingsItem from '@/components/settings/SettingsItem.vue'
 
@@ -302,6 +303,110 @@ describe('SettingsItem', () => {
       expect(wrapper.find('.settings-item__slider-value').text()).toBe('75%')
     })
 
+    // ── Typed-in values ──
+    // The range input moves in step jumps, so typing is the only way to land on
+    // an exact number. The field opens from the readout and speaks the SAME
+    // unit as the readout (125 for 125%), never the stored factor.
+
+    it('opens a field from the readout, prefilled in the displayed unit', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 1.25, min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      expect(input.exists()).toBe(true)
+      expect((input.element as HTMLInputElement).value).toBe('125')
+      expect(wrapper.find('.settings-item__slider-value').exists()).toBe(false)
+    })
+
+    it('commits a typed percent as the stored factor', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('140')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([1.4])
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('140%')
+    })
+
+    it('accepts a raw number for non-percent sliders', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 13, min: 8, max: 24, step: 1 })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('17')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([17])
+    })
+
+    it('clamps a typed value to the slider range', async () => {
+      // Beyond max the thumb has nowhere to sit, so keeping the typed number
+      // would leave the label and the thumb disagreeing.
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 1.5, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('500')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([1.5])
+    })
+
+    it('snaps a typed value to the step grid', async () => {
+      // 0.01 grid: 1.237 must not be stored as-is or the thumb lands between
+      // steps and the readout shows a number the slider cannot represent.
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 2, step: 0.05, displayFormat: 'percent' })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('123.7')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([1.25])
+    })
+
+    it('ignores unparseable input and closes the field', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('abc')
+      await input.trigger('keydown.enter')
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.find('.settings-item__slider-input').exists()).toBe(false)
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('50')
+    })
+
+    it('Escape cancels without emitting, and claims the keypress', async () => {
+      // `preventDefault` is the contract with utils/escapeStack: without it the
+      // window listener also sees this Escape and closes the settings drawer,
+      // so backing out of the field would take the whole page with it.
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('80')
+      const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      input.element.dispatchEvent(ev)
+      await nextTick()
+      expect(ev.defaultPrevented).toBe(true)
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('50')
+    })
+
+    it('does not open the field when the row is disabled', async () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1, disabled: true })
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      expect(wrapper.find('.settings-item__slider-input').exists()).toBe(false)
+    })
+
+    it('a typed value beats a drag still waiting on its debounce', async () => {
+      // Both paths write the same setting; the older pending drag must not
+      // fire 300ms later and silently undo what was just typed.
+      vi.useFakeTimers()
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1 })
+      await wrapper.find('input[type="range"]').setValue(70)
+      await wrapper.find('.settings-item__slider-value').trigger('click')
+      const input = wrapper.find('.settings-item__slider-input')
+      await input.setValue('20')
+      await input.trigger('keydown.enter')
+      await vi.advanceTimersByTimeAsync(400)
+      const emitted = wrapper.emitted('update:modelValue')!
+      expect(emitted.map(e => e[0])).toEqual([20])
+      vi.useRealTimers()
+    })
+
     it('keeps the reset button in the layout, inert at the default value', () => {
       // The button must NOT be removed at the default: it is the disappearance
       // that shifted the slider and value label on every reset. It stays in
@@ -395,6 +500,93 @@ describe('SettingsItem', () => {
       expect(emitted).toBeTruthy()
       expect(emitted![emitted!.length - 1]).toEqual([90])
       vi.useRealTimers()
+    })
+
+    it('shows the value live while dragging, before the debounce emits', async () => {
+      // The readout used to follow `modelValue`, which only changes after the
+      // 300ms debounce — during a drag the label stayed on the old number,
+      // which is exactly why the user kept overshooting.
+      vi.useFakeTimers()
+      const wrapper = mountItem({ type: 'slider', modelValue: 1, min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      const slider = wrapper.find('input[type="range"]')
+      await slider.setValue(1.25)
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('125%')
+      expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+      await slider.setValue(1.4)
+      expect(wrapper.find('.settings-item__slider-value').text()).toBe('140%')
+      vi.useRealTimers()
+    })
+
+    /**
+     * Mount the slider under a parent that actually round-trips the value into
+     * a ref, like SettingsCategory -> localConfig -> getItemValue does. Driving
+     * `wrapper.setProps` by hand cannot reproduce that: it lets a test flip
+     * modelValue without any echo, which hides whether the echo path works.
+     */
+    const mountWithParent = (initial: number, extra: Record<string, any> = {}) => {
+      // `extra` (min/max/step/...) is static here; a spread object inside a
+      // template string is not compiled, so it cannot be used in the template.
+      // The ref is returned as a plain function: a proxied ref is unwrapped to
+      // its value on the component instance, so `vm.value.value` is NOT the ref.
+      let read = () => initial
+      let externalSet = (_: number) => {}
+      const Parent = defineComponent({
+        components: { SettingsItem },
+        setup() {
+          const value = ref(initial)
+          read = () => value.value
+          externalSet = (n: number) => { value.value = n }
+          return { value, extra }
+        },
+        template: `<SettingsItem label="x" type="slider" :model-value="value" @update:model-value="v => value = v" v-bind="extra" />`,
+      })
+      const wrapper = mount(Parent, { global: { plugins: [i18n] } })
+      return { wrapper, read, externalSet: (n: number) => externalSet(n) }
+    }
+
+    const labelOf = (wrapper: any) => wrapper.find('.settings-item__slider-value').text()
+
+    it('keeps the dragged value through the parent echo, then follows it again', async () => {
+      vi.useFakeTimers()
+      const { wrapper, read, externalSet } = mountWithParent(1, { min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('input[type="range"]').setValue(1.25)
+      expect(labelOf(wrapper)).toBe('125%')
+      // Debounce fires; the parent stores and echoes the same number.
+      await vi.advanceTimersByTimeAsync(350)
+      expect(read()).toBe(1.25)
+      expect(labelOf(wrapper)).toBe('125%')
+      // An external writer (auto-fit / another device) now changes it: the
+      // label must follow, not stay on the drag preview.
+      // Reaching into the parent's closure: mutate through a setter exposed
+      // the same way (a plain ref on the instance is unwrapped).
+      externalSet(1.5)
+      await nextTick()
+      expect(labelOf(wrapper)).toBe('150%')
+      vi.useRealTimers()
+    })
+
+    it('shows a different value the parent hands back', async () => {
+      // The parent may store something other than what was dragged (snapping,
+      // clamping); the label must show what was accepted.
+      vi.useFakeTimers()
+      const { wrapper, read, externalSet } = mountWithParent(1, { min: 0.5, max: 2, step: 0.01, displayFormat: 'percent' })
+      await wrapper.find('input[type="range"]').setValue(1.37)
+      await vi.advanceTimersByTimeAsync(350)
+      externalSet(1.35)
+      await nextTick()
+      expect(labelOf(wrapper)).toBe('135%')
+      vi.useRealTimers()
+    })
+
+    it('shows the default immediately on reset, without a flash of the old value', async () => {
+      // A parent that never echoes: the label must already read the default
+      // when the click returns. Clearing the preview to `null` instead would
+      // fall back to the old modelValue (50) for at least one frame.
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, step: 1, defaultValue: 100 })
+      await wrapper.find('input[type="range"]').setValue(70)
+      await wrapper.find('.settings-item__slider-reset').trigger('click')
+      expect(labelOf(wrapper)).toBe('100')
+      expect(wrapper.emitted('update:modelValue')!.at(-1)).toEqual([100])
     })
 
     it('cancels pending debounce on reset', async () => {

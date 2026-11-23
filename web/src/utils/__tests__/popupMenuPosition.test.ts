@@ -134,8 +134,10 @@ describe('computeMenuStyle', () => {
       const style = computeMenuStyle(rect, { anchor: 'left', viewportWidth: vw, viewportHeight: vh })
       expect(style.left).toBeDefined()
       expect(style.right).toBeUndefined()
-      // left = rect.left = 800, but 800 + 220 + 6 > 1024 → clamped to 1024 - 220 - 6 = 798
-      expect(style.left).toBe('798px')
+      // left = rect.left = 800, but 800 + 230 + 6 > 1024 → clamped to the
+      // viewport cap (1024 - 6 - 230 = 788), where 230 = the requested 220 plus
+      // the 10px scrollbar lane that the box reserves on its right edge.
+      expect(style.left).toBe('788px')
     })
 
     it('anchor="right" forces right-align even when anchor is in left half', () => {
@@ -237,10 +239,12 @@ describe('computeMenuStyle', () => {
       expect(style.right).toBe('6px')
     })
 
-    it('keeps the requested maxWidth when it fits comfortably', () => {
+    // The requested maxWidth sizes the CONTENT, so the box is that plus the
+    // scrollbar lane it reserves on the right.
+    it('keeps the requested content width, plus the scrollbar lane', () => {
       const rect = mockRect({ top: 400, bottom: 440, left: 100, right: 140 })
       const style = computeMenuStyle(rect, { viewportWidth: 1024, viewportHeight: 768, maxWidth: 380, edgeMargin: 6 })
-      expect(style.maxWidth).toBe('380px')
+      expect(style.maxWidth).toBe('390px')
     })
 
     it('never yields a negative width on an absurdly small viewport', () => {
@@ -295,34 +299,53 @@ describe('computeMenuStyle', () => {
     })
   })
 
-  // A classic scrollbar takes its width out of the box, so right-aligned content
-  // sat flush against the bar and looked cramped (reported on the context-usage
-  // popup). The lane must be reserved ONLY while the menu actually scrolls —
-  // reserving it unconditionally would leave an 8-10px dead strip on every
-  // short menu, which is the thing the user explicitly did not want.
-  describe('scrollbar gutter: reserved only when scrolling', () => {
-    it('asks the browser for an auto gutter above and below', () => {
+  // The app's scrollbar is a 10px classic bar on desktop, which paints over the
+  // last pixels of the content: right-aligned numbers in the context-usage popup
+  // had their digits cut off (screenshot). `scrollbar-gutter` was tried and
+  // rejected — it does nothing where the bar overlays content and its `stable`
+  // value reserves a dead strip even when nothing scrolls. A plain pad is the
+  // only shape that behaves the same on every engine.
+  describe('scrollbar lane: reserved as padding', () => {
+    it('reserves the 10px lane in both directions when the menu scrolls itself', () => {
       const above = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
-        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+        viewportWidth: 1024, viewportHeight: 768,
       })
       const below = computeMenuStyle(mockRect({ top: 5, bottom: 40, left: 100, right: 140 }), {
-        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+        viewportWidth: 1024, viewportHeight: 768,
       })
-      // `auto` = reserve only once overflowing; never `stable`/`always`.
-      expect(above.scrollbarGutter).toBe('auto')
-      expect(below.scrollbarGutter).toBe('auto')
+      expect(above.paddingRight).toBe('10px')
+      expect(below.paddingRight).toBe('10px')
     })
 
-    it('does not claim a gutter for menus that never scroll themselves', () => {
-      // appSurface menus pin a header/footer and scroll an inner region, so the
-      // root has no scrollbar of its own to make room for.
+    // scrollable:false means the root never scrolls (the slot pins a header and
+    // scrolls an inner region), so there is no bar here to dodge. Padding it
+    // anyway would silently widen every app-header dropdown by 10px.
+    it('omits the lane when the root does not scroll (scrollable=false)', () => {
       const style = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
-        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220, scrollable: false,
+        viewportWidth: 1024, viewportHeight: 768, scrollable: false,
       })
-      expect(style.overflowY).toBeUndefined()
-      // The gutter declaration is harmless there (no scrollbar → no lane), but
-      // pin it down so a future change to reserve space eagerly is caught.
-      expect(style.scrollbarGutter).toBe('auto')
+      expect(style.paddingRight).toBeUndefined()
+    })
+
+    // The lane is padding on a border-box, so it eats the width available to
+    // the slot. The cap therefore has to include it — otherwise a 220px menu
+    // keeps only 210px for content and right-aligned values get clipped (the
+    // bug this whole lane change was meant to fix, reported twice).
+    it('adds the lane to the max width so the content keeps its full width', () => {
+      const style = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
+        viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
+      })
+      expect(style.maxWidth).toBe('230px')
+      expect(style.paddingRight).toBe('10px')
+    })
+
+    // ...but never past the viewport: on a screen exactly as wide as the menu,
+    // the padding must not push the right edge off the glass.
+    it('still clamps the padded width to the viewport', () => {
+      const style = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
+        viewportWidth: 300, viewportHeight: 768, maxWidth: 300, edgeMargin: 6,
+      })
+      expect(style.maxWidth).toBe('288px')
     })
   })
 

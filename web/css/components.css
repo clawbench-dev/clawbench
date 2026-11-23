@@ -960,6 +960,35 @@
   text-align: right;
 }
 
+/* The readout is the editor: a hover tint says so without adding a button. */
+.settings-item__slider-value--editable {
+  cursor: text;
+  border-radius: var(--radius-xs);
+  transition: color var(--duration-fast), background var(--duration-fast);
+}
+
+.settings-item__slider-value--editable:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+/* Same footprint as the readout so opening the field does not reflow the row. */
+.settings-item__slider-input {
+  width: calc(46 * var(--dp));
+  min-width: calc(36 * var(--dp));
+  padding: 0 var(--space-2);
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  text-align: right;
+  /* Matches the readout's own line box so the row height does not change when
+     the field opens (the row is only tall enough for one line). */
+  line-height: 1.6;
+  background: var(--bg-secondary);
+  border: 1px solid var(--accent-color);
+  border-radius: var(--radius-xs);
+}
+
 .settings-item__slider {
   width: calc(100 * var(--dp));
   cursor: pointer;

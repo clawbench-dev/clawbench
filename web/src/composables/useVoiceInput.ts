@@ -692,19 +692,19 @@ export function useVoiceInput() {
       // open for the release tail below.
       state.value = 'transcribing'
       isRecording.value = false
-      // Hand over what the gate and the worklet are still holding, then tear
-      // the graph down immediately. No drain wait: the release is meant to feel
-      // instant.
-      //
-      // This deliberately accepts the known cost. The microphone chain (device
-      // buffer, echo cancellation, resampler, worklet) delays the audio, so the
-      // last fraction of a syllable is still inside the pipeline when the graph
-      // goes down. 150 ms of a missing ending turns a two-character utterance
-      // into nothing, so a short soft ending can come back empty or clipped.
-      // Revert to a drain if that shows up in real use.
-      if (pcm) pcm.flush()
+      // Keep capturing until the last syllable has come through the microphone
+      // pipeline, then hand over what the gate and the worklet are holding, and
+      // only then tear the graph down. The engine's own end window is the
+      // server's job (it pads silence after `end`); this is only the delay the
+      // device and the audio graph add. See `tailWaitMs` / `flush`.
+      if (pcm && sock.readyState === WebSocket.OPEN) {
+        const wait = pcm.tailWaitMs()
+        if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait))
+      }
       // A cancel (or a finalize triggered by the engine) may have torn this
-      // recording down.
+      // recording down while the tail was running.
+      if (ws !== sock) return
+      if (pcm) await pcm.flush()
       if (ws !== sock) return
       // Stop capture first so no frame lands after the end marker.
       stopPcmCapture()
@@ -719,11 +719,23 @@ export function useVoiceInput() {
       return
     }
     if (wavStreamer) {
-      // Capture first, then release the microphone: the last frame is already
-      // in `wavFrames`, so there is nothing left to flush.
+      const streamer = wavStreamer
+      state.value = 'transcribing'
+      isRecording.value = false
+      // Same tail as the streaming path: the last syllable is still inside the
+      // microphone pipeline when the button comes up, and a whole-file upload
+      // that ends early loses it just the same.
+      const wait = streamer.tailWaitMs()
+      if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait))
+      // A cancel may have torn this take down while the tail was running.
+      if (wavStreamer !== streamer) return
+      await streamer.flush()
+      if (wavStreamer !== streamer) return
+      // Capture first, then release the microphone: every frame is already in
+      // `wavFrames`.
       const frames = wavFrames
       wavFrames = []
-      wavStreamer.stop()
+      streamer.stop()
       wavStreamer = null
       stopMediaStream()
       // A tap that released before the worklet produced anything has no audio

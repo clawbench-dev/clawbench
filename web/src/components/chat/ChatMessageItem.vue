@@ -269,7 +269,11 @@
           <BookOpen :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+          <!-- Hidden while the reply is still streaming: the text is still
+               growing, so reading it aloud would cut the answer off mid-way
+               (and the auto-speech path needs a settled reply anyway). The
+               button appears once the turn ends. -->
+          <button v-if="speakableText && !readOnly && !msg.streaming" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Every phase carries NO text — the glyph alone says which one it
                  is, so the action row never changes width mid-speech (that
                  shove is what the removed `--wide` variant used to cause).
