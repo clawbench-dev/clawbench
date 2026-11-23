@@ -47,7 +47,7 @@ const t = (key: string) => i18n.global.t(key)
  * `stopPropagation()` keeps a host that still expects an anchor from acting on
  * the same tap (e.g. the local-link guard resolving a relative path).
  */
-export function installExternalLinkClick(): () => void {
+export function installExternalLinkClick(handleLocalhost?: (e: MouseEvent) => boolean): () => void {
     function handler(e: MouseEvent) {
         // A drag that selected text ends in a click too. dragClickGuard (installed
         // before this layer — see App.vue) suppresses those with preventDefault.
@@ -59,16 +59,10 @@ export function installExternalLinkClick(): () => void {
         const span = target?.closest?.<HTMLElement>('.md-external-link')
         if (!span) return
 
-        // Localhost URLs are NOT opened externally. In the App they point at a
-        // port on the SERVER, reachable only through the SSH/h2 tunnel; handing
-        // them to the system browser lands on the device's own localhost (a
-        // dead page). The localhost annotator marks them and the host's own
-        // bubble-phase handler opens them in the sandboxed browser — so this
-        // capture layer must let the event through untouched.
-        //
-        // Returning (not stopPropagation) is the whole point: capture runs
-        // first, so intercepting here would make the host handler unreachable.
-        if (span.hasAttribute(LOCALHOST_LINK_ATTR)) return
+        // Tool notices can linkify text after the annotation pass. Route taps
+        // by href too. Hosts that install their own handler receive marked
+        // links during the bubble phase when the delegate hasn't handled them.
+        if (handleLocalhost?.(e) || span.hasAttribute(LOCALHOST_LINK_ATTR)) return
 
         const href = span.getAttribute('data-href')
         if (!href) return
@@ -105,9 +99,6 @@ export function installExternalLinkClick(): () => void {
         // link dialog too would open two things at once.
         if (target?.closest?.('button, a[href], input, select, textarea, [contenteditable]')) return
 
-        // Same rule as the click handler: a localhost URL belongs to the
-        // tunnel, not the system browser. The host's own keydown path handles
-        // it (or nothing happens — far better than a dead page).
         if (span.hasAttribute(LOCALHOST_LINK_ATTR)) return
 
         const href = span.getAttribute('data-href')

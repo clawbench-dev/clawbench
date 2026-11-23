@@ -561,6 +561,7 @@ describe('formatToolOutput', () => {
     expect(html).toContain('chat-url-open-btn')
     // The rawUrl un-escapes &amp; back to & then escapeHtml in href/data-url re-escapes to &amp;
     expect(html).toContain('data-url="http://localhost:3000/path?a=1&amp;b=2"')
+    expect(html).toContain('data-path="/path?a=1&amp;b=2"')
     mockIsAppMode.value = false
   })
 })

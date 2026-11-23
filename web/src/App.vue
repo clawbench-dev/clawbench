@@ -705,6 +705,7 @@ import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { installDragClickGuard } from './utils/dragClickGuard'
 import { installInertPathClick } from './utils/inertPathClick'
+import { useLocalhostUrlClickHandler } from './composables/useLocalhostAnnotation'
 import { installExternalLinkClick } from './utils/externalLinkClick'
 import { closeInertPathPicker } from './composables/useInertPathPicker'
 import { openFilePath } from './composables/useFilePathAnnotation'
@@ -4772,7 +4773,7 @@ function handleCtrlG(e: KeyboardEvent) {
      // has to be handled here. Independent of the two layers above — it keys on
      // a class, not on preventDefault — but registered after them so a drag
      // selection is already suppressed by the time it runs.
-     stopExternalLinkClick = installExternalLinkClick()
+     stopExternalLinkClick = installExternalLinkClick(useLocalhostUrlClickHandler().handleLocalhostUrlClick)
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
