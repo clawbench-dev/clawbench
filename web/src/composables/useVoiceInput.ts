@@ -692,20 +692,19 @@ export function useVoiceInput() {
       // open for the release tail below.
       state.value = 'transcribing'
       isRecording.value = false
-      // Hand over what the gate and the worklet are still holding, then let the
-      // microphone pipeline drain. The microphone chain (device buffer, echo
-      // cancellation, resampler, worklet) delays the audio, so tearing the graph
-      // down on release cuts the last syllable — and 150 ms of a missing ending
-      // already turns a two-character utterance into nothing. The wait is
-      // measured from the last speech frame, not from the release, so it covers
-      // however long this device's pipeline is.
-      if (pcm) {
-        pcm.flush()
-        const wait = pcm.tailWaitMs()
-        if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait))
-      }
+      // Hand over what the gate and the worklet are still holding, then tear
+      // the graph down immediately. No drain wait: the release is meant to feel
+      // instant.
+      //
+      // This deliberately accepts the known cost. The microphone chain (device
+      // buffer, echo cancellation, resampler, worklet) delays the audio, so the
+      // last fraction of a syllable is still inside the pipeline when the graph
+      // goes down. 150 ms of a missing ending turns a two-character utterance
+      // into nothing, so a short soft ending can come back empty or clipped.
+      // Revert to a drain if that shows up in real use.
+      if (pcm) pcm.flush()
       // A cancel (or a finalize triggered by the engine) may have torn this
-      // recording down while the tail was running.
+      // recording down.
       if (ws !== sock) return
       // Stop capture first so no frame lands after the end marker.
       stopPcmCapture()
