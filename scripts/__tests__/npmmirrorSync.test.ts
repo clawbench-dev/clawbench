@@ -33,6 +33,10 @@ interface Scenario {
   neverVisible?: string[]
   /** tarball 返回的 HTTP 码，默认 200。 */
   tarballStatus?: number
+  /** 最多几轮「提交 + 等待」，默认 1（保持老测试是单轮语义）。 */
+  attempts?: number
+  /** 第几轮开始这些包才同步（从 1 开始）；不在表里的包按 visibleAfter 走。 */
+  visibleFromRound?: Record<string, number>
 }
 
 interface Run {
@@ -43,6 +47,8 @@ interface Run {
   syncs: Record<string, number>
   /** 每个包被轮询版本元数据的次数。 */
   polls: Record<string, number>
+  /** 首次提交同步任务的包名顺序。 */
+  syncOrder: string[]
 }
 
 function runScript(packages: string[], opts: Scenario = {}): Run {
@@ -99,6 +105,9 @@ fi
 if [ "$METHOD" = "PUT" ]; then
   n=$(( $(cat "$STATE/$slug.syncs" 2>/dev/null || echo 0) + 1 ))
   echo "$n" > "$STATE/$slug.syncs"
+  echo "$slug" >> "$STATE/sync_order"
+  # 轮次 = 自己第几次被提交同步任务：脚本每轮开始时会对未就绪的包重提一次。
+  echo "$n" > "$STATE/$slug.round"
   echo '{"ok":true}'
   exit 0
 fi
@@ -110,6 +119,17 @@ for never in ${neverSlugs.join(' ')}; do
     exit 22
   fi
 done
+round=$(cat "$STATE/$slug.round" 2>/dev/null || echo 1)
+from=""
+case "$slug" in
+  ${Object.entries(opts.visibleFromRound ?? {})
+    .map(([p, r]) => `${p.replace('/', '_')}) from=${r} ;;`)
+    .join('\n  ')}
+esac
+if [ -n "$from" ]; then
+  [ "$round" -ge "$from" ] && { echo "{\\"version\\":\\"${VERSION}\\",\\"dist\\":{\\"tarball\\":\\"https://cdn.example/x.tgz\\"}}"; exit 0; }
+  exit 22
+fi
 if [ "$n" -ge "${opts.visibleAfter ?? 1}" ]; then
   echo "{\\"version\\":\\"${VERSION}\\",\\"dist\\":{\\"tarball\\":\\"https://cdn.example/x.tgz\\"}}"
   exit 0
@@ -131,6 +151,7 @@ exit 22
         PATH: `${binDir}:${process.env.PATH ?? ''}`,
         NPMMIRROR_WAIT_SECONDS: '0.3',
         NPMMIRROR_INTERVAL_SECONDS: '0.05',
+        NPMMIRROR_ATTEMPTS: String(opts.attempts ?? 1),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -151,7 +172,24 @@ exit 22
     return out
   }
 
-  return { exitCode, stdout, stderr, syncs: readCounters('syncs'), polls: readCounters('polls') }
+  const orderFile = join(stateDir, 'sync_order')
+  const syncOrder = existsSync(orderFile)
+    ? readFileSync(orderFile, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        // 假 curl 记的是 %2F 还原后的 slug（斜杠→下划线），换回包名。
+        .map((slug) => slug.replace('_', '/'))
+    : []
+
+  return {
+    exitCode,
+    stdout,
+    stderr,
+    syncs: readCounters('syncs'),
+    polls: readCounters('polls'),
+    syncOrder,
+  }
 }
 
 describe('npmmirror-sync.sh', () => {
@@ -194,5 +232,57 @@ describe('npmmirror-sync.sh', () => {
       code = (err as { status?: number }).status ?? 1
     }
     expect(code).toBe(2)
+  })
+
+  // v0.146.0 的现场：小包同步好了，平台包一直没动。只提交一次同步任务、
+  // 等满窗口就判死的话，镜像把这个任务排丢之后没有任何第二次机会。
+  it('一轮没等到会重新提交同步任务，而不是一次就判死', () => {
+    const r = runScript(['@xulongzhe/clawbench-linux-x64'], {
+      attempts: 3,
+      visibleFromRound: { '@xulongzhe/clawbench-linux-x64': 2 },
+    })
+    expect(r.exitCode).toBe(0)
+    // 第 2 轮才就绪 → 至少被提交了 2 次同步任务。
+    expect(r.syncs['@xulongzhe/clawbench-linux-x64']).toBeGreaterThanOrEqual(2)
+  })
+
+  it('重提交次数受 NPMMIRROR_ATTEMPTS 限制，不会无限重试', () => {
+    const r = runScript(['@xulongzhe/clawbench-win32-x64'], {
+      attempts: 2,
+      neverVisible: ['@xulongzhe/clawbench-win32-x64'],
+    })
+    expect(r.exitCode).toBe(1)
+    // 2 轮 = 2 次提交，不能更多。
+    expect(r.syncs['@xulongzhe/clawbench-win32-x64']).toBe(2)
+  })
+
+  it('大平台包排在主包之后提交，小包先就绪', () => {
+    const pkgs = [
+      '@xulongzhe/clawbench-linux-x64',
+      '@xulongzhe/clawbench',
+      '@xulongzhe/clawbench-win32-x64',
+      '@xulongzhe/clawbench-darwin-arm64',
+    ]
+    const r = runScript(pkgs)
+    expect(r.exitCode).toBe(0)
+    expect(r.syncOrder[0]).toBe('@xulongzhe/clawbench')
+    expect(r.syncOrder.slice(1).sort()).toEqual(
+      [
+        '@xulongzhe/clawbench-darwin-arm64',
+        '@xulongzhe/clawbench-linux-x64',
+        '@xulongzhe/clawbench-win32-x64',
+      ].sort()
+    )
+  })
+
+  it('重试时只重提交还没就绪的包', () => {
+    const r = runScript(
+      ['@xulongzhe/clawbench', '@xulongzhe/clawbench-linux-x64'],
+      { attempts: 2, visibleFromRound: { '@xulongzhe/clawbench-linux-x64': 2 } }
+    )
+    expect(r.exitCode).toBe(0)
+    // 主包第 1 轮就好了，不该被再提交一次。
+    expect(r.syncs['@xulongzhe/clawbench']).toBe(1)
+    expect(r.syncs['@xulongzhe/clawbench-linux-x64']).toBe(2)
   })
 })
