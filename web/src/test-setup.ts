@@ -9,6 +9,25 @@
 
 import { createUnhandledRejectionHandler } from '@/utils/unhandledRejectionGuard'
 
+// ── localStorage guard for Node 25+/26 ──
+// Without --localstorage-file Node exposes an incomplete globalThis.localStorage
+// whose getItem is undefined, which crashes modules that read it at import time.
+if (typeof globalThis.localStorage === 'undefined' || typeof globalThis.localStorage.getItem !== 'function') {
+  const store = new Map<string, string>()
+  const shim = {
+    get length() { return store.size },
+    key: (i: number) => Array.from(store.keys())[i] ?? null,
+    getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+    setItem: (k: string, v: string) => { store.set(k, String(v)) },
+    removeItem: (k: string) => { store.delete(k) },
+    clear: () => { store.clear() },
+  } as Storage
+  Object.defineProperty(globalThis, 'localStorage', { value: shim, configurable: true, writable: true })
+  if (typeof window !== 'undefined') {
+    Object.defineProperty(window, 'localStorage', { value: shim, configurable: true, writable: true })
+  }
+}
+
 // ── ResizeObserver polyfill for jsdom ──
 // jsdom does not implement ResizeObserver, but components like FileHeader and
 // ActionBar create one on mount.

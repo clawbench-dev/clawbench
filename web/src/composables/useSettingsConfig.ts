@@ -67,6 +67,8 @@ function ensureCloseActionListener() {
 
 /** One-time migration: copy legacy localStorage keys to new prefixed keys. */
 function migrateLegacyKeys() {
+  // Node 25+/26 expose an incomplete globalThis.localStorage without --localstorage-file.
+  if (typeof localStorage === 'undefined' || typeof localStorage.getItem !== 'function') return
   const migrations: Record<string, { key: string; format: 'raw' | 'json' }> = {
     theme: { key: 'theme', format: 'raw' },
     locale: { key: LOCALE_KEY, format: 'raw' },

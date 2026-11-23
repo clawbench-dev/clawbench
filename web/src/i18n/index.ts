@@ -15,7 +15,9 @@ function scopedCookieKey(): string {
 }
 
 function detectLocale(): string {
-  const saved = localStorage.getItem(STORAGE_KEY)
+  const saved = typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function'
+    ? localStorage.getItem(STORAGE_KEY)
+    : null
   if (saved && ['zh', 'en'].includes(saved)) return saved
   const nav = navigator.language || ''
   return nav.startsWith('zh') ? 'zh' : 'en'
