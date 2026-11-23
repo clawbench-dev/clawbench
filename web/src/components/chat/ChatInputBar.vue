@@ -1747,10 +1747,14 @@ function onTextareaKeydown(e) {
   if (handleHistoryKeydown(e)) return
   // Touch devices with mobileEnterToSend off (default): let plain Enter insert
   // a newline natively; Ctrl+Enter / Cmd+Enter still submits for external keyboards.
+  // Shift stays excluded so Ctrl/Cmd+Shift+Enter keeps meaning "newline" here,
+  // matching the desktop branch below where any modifier blocks a plain send.
   if (mobileEnterInsertsNewline.value) {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault()
-      dispatchSend(inputText.value.trim())
+      // Same rule as handleSendClick: an empty composer (no text) is not a
+      // message — leave the keystroke alone instead of emitting an empty send.
+      if (inputText.value.trim()) dispatchSend(inputText.value.trim())
     }
     return
   }

@@ -4863,5 +4863,36 @@ describe('ChatInputBar', () => {
 
       wrapper.unmount()
     })
+
+    it('does not emit an empty send for Ctrl+Enter in newline mode, and leaves Ctrl+Shift+Enter to the browser', async () => {
+      _setPlatformForTest({ isTouchPrimary: true })
+      ;(localConfig as Record<string, unknown>).mobileEnterToSend = false
+
+      const wrapper = mountBar({ loading: false, currentSessionId: 's-mobile-3' })
+      const textarea = wrapper.find('textarea.chat-textarea')
+
+      // Empty composer: Ctrl+Enter must not emit 'send' (handleSendClick's rule).
+      const emptyCtrlEnter = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true })
+      textarea.element.dispatchEvent(emptyCtrlEnter)
+      await nextTick()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      // Whitespace-only counts as empty too.
+      await textarea.setValue('   ')
+      textarea.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, cancelable: true }))
+      await nextTick()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      // Ctrl+Shift+Enter stays a newline: no send, and the default is not cancelled.
+      await textarea.setValue('keep me')
+      const shiftCtrlEnter = new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, shiftKey: true, cancelable: true })
+      const preventSpy = vi.spyOn(shiftCtrlEnter, 'preventDefault')
+      textarea.element.dispatchEvent(shiftCtrlEnter)
+      await nextTick()
+      expect(preventSpy).not.toHaveBeenCalled()
+      expect(wrapper.emitted('send')).toBeFalsy()
+
+      wrapper.unmount()
+    })
   })
 })
