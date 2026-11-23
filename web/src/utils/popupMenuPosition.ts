@@ -38,6 +38,15 @@ import {
 } from '@/utils/fixedPosition'
 
 /**
+ * Width of the lane reserved for the vertical scrollbar, in CSS px.
+ *
+ * Mirrors the app's global scrollbar width (web/css/scrollbar.css, 10px on a
+ * fine pointer). Kept as a local constant rather than read from CSS because
+ * the geometry here is computed in JS, before any element exists to measure.
+ */
+const SCROLLBAR_LANE_PX = 10
+
+/**
  * Compute the CSS style object for a popup menu's fixed position.
  *
  * @param rect - The getBoundingClientRect() of the anchor element
@@ -118,7 +127,14 @@ export function computeMenuStyle(
   // two edge margins; shrink it so left/right clamping alone cannot push the
   // menu past the screen edge.
   const availableWidth = Math.max(0, cssViewportWidth - edgeMargin * 2)
-  const effectiveMaxWidth = Math.min(maxWidth, availableWidth)
+  // The reserved scrollbar lane (below) is padding on a border-box, so it eats
+  // into the width the slot has to lay content out in. Adding its width back to
+  // the cap keeps the CONTENT area exactly as wide as the caller asked for —
+  // without it, a 220px menu keeps only 210px for text and right-aligned values
+  // (the context-usage popup's "1,000,000") get their last digits clipped. The
+  // sum is clamped to the viewport again so the lane can never push the menu
+  // past the edge on a narrow screen.
+  const effectiveMaxWidth = Math.min(maxWidth + SCROLLBAR_LANE_PX, availableWidth)
   // Same border-box space as effectiveMaxWidth; 0 disables the floor.
   const effectiveMinWidth = Math.min(minWidth, effectiveMaxWidth)
 
@@ -175,7 +191,7 @@ export function computeMenuStyle(
   // `scrollable: false` the root never scrolls (the slot pins a header/footer
   // and scrolls a region of its own), so there is no bar here to dodge and an
   // unconditional pad would just make every app-header dropdown 10px wider.
-  const lane = scrollable ? { paddingRight: '10px' as const } : {}
+  const lane = scrollable ? { paddingRight: `${SCROLLBAR_LANE_PX}px` as const } : {}
 
   if (goBelow) {
     // Menu appears BELOW the anchor

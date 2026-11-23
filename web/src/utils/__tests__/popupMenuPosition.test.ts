@@ -134,8 +134,10 @@ describe('computeMenuStyle', () => {
       const style = computeMenuStyle(rect, { anchor: 'left', viewportWidth: vw, viewportHeight: vh })
       expect(style.left).toBeDefined()
       expect(style.right).toBeUndefined()
-      // left = rect.left = 800, but 800 + 220 + 6 > 1024 → clamped to 1024 - 220 - 6 = 798
-      expect(style.left).toBe('798px')
+      // left = rect.left = 800, but 800 + 230 + 6 > 1024 → clamped to the
+      // viewport cap (1024 - 6 - 230 = 788), where 230 = the requested 220 plus
+      // the 10px scrollbar lane that the box reserves on its right edge.
+      expect(style.left).toBe('788px')
     })
 
     it('anchor="right" forces right-align even when anchor is in left half', () => {
@@ -237,10 +239,12 @@ describe('computeMenuStyle', () => {
       expect(style.right).toBe('6px')
     })
 
-    it('keeps the requested maxWidth when it fits comfortably', () => {
+    // The requested maxWidth sizes the CONTENT, so the box is that plus the
+    // scrollbar lane it reserves on the right.
+    it('keeps the requested content width, plus the scrollbar lane', () => {
       const rect = mockRect({ top: 400, bottom: 440, left: 100, right: 140 })
       const style = computeMenuStyle(rect, { viewportWidth: 1024, viewportHeight: 768, maxWidth: 380, edgeMargin: 6 })
-      expect(style.maxWidth).toBe('380px')
+      expect(style.maxWidth).toBe('390px')
     })
 
     it('never yields a negative width on an absurdly small viewport', () => {
@@ -323,14 +327,25 @@ describe('computeMenuStyle', () => {
       expect(style.paddingRight).toBeUndefined()
     })
 
-    // The lane is padding inside the max width, so it must NOT inflate the box
-    // past the ceiling that computeMenuStyle already clamped to the viewport.
-    it('keeps the max width unchanged — the lane lives inside it', () => {
+    // The lane is padding on a border-box, so it eats the width available to
+    // the slot. The cap therefore has to include it — otherwise a 220px menu
+    // keeps only 210px for content and right-aligned values get clipped (the
+    // bug this whole lane change was meant to fix, reported twice).
+    it('adds the lane to the max width so the content keeps its full width', () => {
       const style = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
         viewportWidth: 1024, viewportHeight: 768, maxWidth: 220,
       })
-      expect(style.maxWidth).toBe('220px')
+      expect(style.maxWidth).toBe('230px')
       expect(style.paddingRight).toBe('10px')
+    })
+
+    // ...but never past the viewport: on a screen exactly as wide as the menu,
+    // the padding must not push the right edge off the glass.
+    it('still clamps the padded width to the viewport', () => {
+      const style = computeMenuStyle(mockRect({ top: 400, bottom: 440, left: 100, right: 140 }), {
+        viewportWidth: 300, viewportHeight: 768, maxWidth: 300, edgeMargin: 6,
+      })
+      expect(style.maxWidth).toBe('288px')
     })
   })
 
