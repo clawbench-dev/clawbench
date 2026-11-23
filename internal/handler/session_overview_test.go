@@ -143,3 +143,53 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestServeSessionsOverview_AnnotatesMissingProjectDir(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	missingDir := canonPath(filepath.Join(env.WatchDir, "gone-project"))
+	db := store.UnsafeDBForTest()
+
+	// Create an unread session in a project whose directory does not exist on disk.
+	missingProjectID := store.ProjectIDForTest(t, missingDir)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'Ghost', 'claude', 'default', '', 'chat', 0)`, "ghost-session", missingProjectID)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread', 'ghost-session', 'claude', 0)`, missingProjectID)
+	require.NoError(t, err)
+
+	// And an active session in the existing project directory.
+	existingSession, err := service.CreateSession(env.ProjectDir, "claude", "Live", "claude", "", "default", "chat")
+	require.NoError(t, err)
+	service.SetSessionRunning(existingSession, true)
+	t.Cleanup(func() { service.SetSessionRunning(existingSession, false) })
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions/overview", nil)
+	w := callHandler(ServeSessionsOverview, req)
+	assertOK(t, w)
+
+	var result struct {
+		Projects []struct {
+			Name       string `json:"name"`
+			ProjectID  int64  `json:"projectId"`
+			DirMissing bool   `json:"dirMissing"`
+		} `json:"projects"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	foundExisting, foundMissing := false, false
+	for _, p := range result.Projects {
+		switch p.Name {
+		case env.ProjectDir:
+			foundExisting = true
+			assert.False(t, p.DirMissing, "existing project directory must not be marked dirMissing")
+			assert.Greater(t, p.ProjectID, int64(0))
+		case missingDir:
+			foundMissing = true
+			assert.True(t, p.DirMissing, "missing project directory must be marked dirMissing")
+			assert.Equal(t, missingProjectID, p.ProjectID)
+		}
+	}
+	assert.True(t, foundExisting, "existing project should be in overview")
+	assert.True(t, foundMissing, "missing project should be in overview")
+}

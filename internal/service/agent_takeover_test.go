@@ -167,6 +167,10 @@ func TestDeleteAgentWithTakeover_RefusesRunningSession(t *testing.T) {
 		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type)
 		VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat')`)
 	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_history (project_id, session_id, role, content, backend)
+		VALUES (1, 's1', 'user', 'hello', 'claude')`)
+	require.NoError(t, err)
 
 	service.SetSessionRunning("s1", true, true)
 	defer service.SetSessionRunning("s1", false, true)
@@ -193,6 +197,10 @@ func TestDeleteAgentWithTakeover_WritesTimelineNotices(t *testing.T) {
 	_, err := db.Exec(`
 		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type)
 		VALUES ('s1', 1, 'claude', 'chat', 'claude', 'chat')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_history (project_id, session_id, role, content, backend)
+		VALUES (1, 's1', 'user', 'hello', 'claude')`)
 	require.NoError(t, err)
 	_, err = db.Exec(`
 		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type, context_state)
@@ -273,6 +281,10 @@ func TestDeleteAgentWithTakeover_ReusesNativeSessionForSameBackend(t *testing.T)
 		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type,
 		                           external_session_id, compacted)
 		VALUES ('s1', 1, 'codebuddy', 'chat', 'cb-old', 'chat', 'native-1', 0)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_history (project_id, session_id, role, content, backend)
+		VALUES (1, 's1', 'user', 'hello', 'codebuddy')`)
 	require.NoError(t, err)
 
 	prevLang := model.Language
@@ -853,4 +865,74 @@ func TestDeleteAgentWithTakeover_LeavesRemovedMembersAlone(t *testing.T) {
 	var g1Notices int
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'g1'").Scan(&g1Notices))
 	assert.Equal(t, 1, g1Notices)
+}
+
+// TestDeleteAgentWithTakeover_SkipsEmptyPlaceholderNotices verifies that empty
+// 1:1 placeholder sessions (no user/assistant messages) are reassigned cleanly
+// without injecting a takeover system message into chat_history, while sessions
+// with real conversation history still receive the notice.
+func TestDeleteAgentWithTakeover_SkipsEmptyPlaceholderNotices(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type)
+		VALUES ('empty-1', 1, 'claude', 'New Chat 1', 'claude', 'chat')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type)
+		VALUES ('real-1', 1, 'claude', 'Real Chat', 'claude', 'chat')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_history (project_id, session_id, role, content, backend)
+		VALUES (1, 'real-1', 'user', 'real turn', 'claude')`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+
+	// Both sessions are reassigned to the replacement agent.
+	for _, id := range []string{"empty-1", "real-1"} {
+		var agentID string
+		require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", id).Scan(&agentID))
+		assert.Equal(t, "codebuddy", agentID, id)
+	}
+
+	// Empty placeholder receives no takeover notice.
+	var emptyHistory int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'empty-1'").Scan(&emptyHistory))
+	assert.Zero(t, emptyHistory, "empty placeholder session must not get a takeover system notice")
+
+	// Real conversation still gets its takeover notice.
+	var realSystem int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'real-1' AND role = 'system'").Scan(&realSystem))
+	assert.Equal(t, 1, realSystem, "non-empty session must still get a takeover system notice")
+}
+
+// TestDeleteAgentWithTakeover_SystemOnlySessionGetsNoNotice pins the role list
+// used to decide "empty placeholder": a session whose only row is a system
+// message (e.g. left over from an earlier takeover) has no real conversation,
+// so it must not collect another notice. Only user/assistant rows count.
+func TestDeleteAgentWithTakeover_SystemOnlySessionGetsNoNotice(t *testing.T) {
+	db := setupTakeoverDB(t)
+
+	_, err := db.Exec(`
+		INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, session_type)
+		VALUES ('sys-1', 1, 'claude', 'Placeholder', 'claude', 'chat')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		INSERT INTO chat_history (project_id, session_id, role, content, backend)
+		VALUES (1, 'sys-1', 'system', 'earlier notice', 'claude')`)
+	require.NoError(t, err)
+
+	_, err = service.DeleteAgentWithTakeover(takeoverSource(), takeoverReplacement())
+	require.NoError(t, err)
+
+	// The session is still reassigned; only the extra notice is skipped.
+	var agentID string
+	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_sessions WHERE id = 'sys-1'").Scan(&agentID))
+	assert.Equal(t, "codebuddy", agentID)
+
+	var rows int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 'sys-1'").Scan(&rows))
+	assert.Equal(t, 1, rows, "system-only session keeps its original row and gains no takeover notice")
 }
