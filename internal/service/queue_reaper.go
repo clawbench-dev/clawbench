@@ -314,7 +314,7 @@ func EnsureConsumer(sessionID string) bool {
 	// the terminal event and the push contract, exactly as on the normal path.
 	if GetSessionType(sessionID) == groupSessionType {
 		go func() {
-			defer FinishSessionRun(sessionID)
+			defer FinishClaimedSessionRun(sessionID, runCtx)
 			runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, msgID, row.Content, row.Files)
 		}()
 		return true

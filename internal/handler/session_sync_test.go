@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/synctest"
 
 	"clawbench/internal/store"
 
@@ -227,4 +228,29 @@ func newSyncReplayConn(t *testing.T, agent *model.Agent, buf []acp.SessionNotifi
 		return conn, nil
 	}
 	return func() { getOrCreateConnForLoad = orig }
+}
+
+func TestHistorySyncWaitsForActiveTurn(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	synctest.Test(t, func(t *testing.T) {
+		const sid = "sync-waits"
+		run, ok := service.TryClaimSessionRun(sid)
+		require.True(t, ok)
+		acquired := make(chan func(), 1)
+		go func() {
+			_, release, err := claimHistorySync(t.Context(), sid)
+			if err == nil {
+				acquired <- release
+			}
+		}()
+		synctest.Wait()
+		require.Empty(t, acquired)
+		require.NoError(t, run.Err())
+		service.FinishSessionRun(sid)
+		release := <-acquired
+		require.True(t, service.IsSessionRunning(sid))
+		release()
+		require.False(t, service.IsSessionRunning(sid))
+	})
 }

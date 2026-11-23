@@ -354,3 +354,17 @@ func TestCancelAllSessions_CancelsEveryRunner(t *testing.T) {
 	assert.Equal(t, cancelReasonRestart, GetAndClearCancelReason("runner-shutdown-a"))
 	assert.Equal(t, cancelReasonRestart, GetAndClearCancelReason("runner-shutdown-b"))
 }
+
+func TestFinishClaimedSessionRunPreservesNewOwner(t *testing.T) {
+	const sid = "history-sync-handoff"
+	old, _ := submitRunner(sid)
+	removeRunner(sid)
+	next, ok := submitRunner(sid)
+	require.True(t, ok)
+	t.Cleanup(func() { FinishSessionRun(sid) })
+	require.False(t, FinishClaimedSessionRun(sid, old))
+	require.NoError(t, next.Err())
+	require.True(t, IsSessionRunning(sid))
+	require.True(t, FinishClaimedSessionRun(sid, next))
+	require.ErrorIs(t, next.Err(), context.Canceled)
+}
