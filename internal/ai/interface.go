@@ -229,6 +229,14 @@ type Metadata struct {
 const (
 	ReasonDisconnect    = "disconnect"     // WS client disconnected
 	ReasonTimeout       = "timeout"        // AI response timeout
+	// ReasonStalled: the turn produced no model progress for the whole stall
+	// window and was closed by the watchdog.
+	//
+	// Distinct from ReasonTimeout, which means the turn spent its full 30-minute
+	// budget. That one is a permanent failure for classification purposes —
+	// resuming would spend another full budget — whereas a stall ended early
+	// with the budget untouched, so resuming is exactly the right response.
+	ReasonStalled       = "stalled"
 	ReasonUserCancel    = "user_cancel"    // User explicitly cancelled
 	ReasonContextCancel = "context_cancel" // Context cancelled (generic interruption)
 	ReasonEmpty         = "empty"          // AI returned no content

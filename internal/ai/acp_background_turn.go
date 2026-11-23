@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"sync"
@@ -57,6 +58,18 @@ type backgroundTurn struct {
 	route chan<- StreamEvent
 	// requestID is the CLI-assigned id of the turn (from the announcement).
 	requestID string
+	// stopStallWatchdog releases the no-progress watchdog armed for this turn.
+	// Idempotent; nil before the watchdog is armed (e.g. a consumer-registered
+	// adoption that failed).
+	stopStallWatchdog func()
+}
+
+// stopWatchdog releases this turn's watchdog if one was armed. Safe on a turn
+// that never armed one.
+func (t *backgroundTurn) stopWatchdog() {
+	if t != nil && t.stopStallWatchdog != nil {
+		t.stopStallWatchdog()
+	}
 }
 
 // codeBuddyUnsolicitedTurn reports the requestId of an agent-initiated turn
@@ -121,6 +134,23 @@ func (c *ClawBenchACPClient) adoptBackgroundTurn(acpSessionID, requestID string)
 		"acp_sid", acpSessionID,
 		"request_id", requestID)
 
+	// Arm the same no-progress watchdog a user turn gets.
+	//
+	// An adopted turn is announced and then streamed with no Prompt() call in
+	// flight, so nothing else bounds it: without this an agent that announces a
+	// background drain and then goes quiet leaves the turn open until the
+	// service layer's backstop deadline (backgroundTurnTimeout, 30m) expires.
+	//
+	// The judge is unchanged (isStalled): model progress, an in-flight tool and
+	// a pending elicitation all suppress it, so a long build or a permission
+	// prompt inside a background turn is still protected. Only the timing source
+	// is new — reset here, so a stale timestamp from the previous turn cannot
+	// fire immediately.
+	conn.TouchModelProgress()
+	turn.stopStallWatchdog = conn.startStallWatchdog(context.Background(), func() {
+		c.terminateStalledBackgroundTurn(acpSessionID, turn)
+	})
+
 	// end is idempotent: the consumer calls it when it finishes, and the
 	// deferred call covers an early return (or a panic) inside it.
 	var once sync.Once
@@ -131,6 +161,38 @@ func (c *ClawBenchACPClient) adoptBackgroundTurn(acpSessionID, requestID string)
 		defer end()
 		handler(sid, turn.ch, end)
 	}()
+}
+
+// terminateStalledBackgroundTurn closes an adopted turn whose agent stopped
+// producing anything.
+//
+// It delivers the turn's terminal event instead of killing the agent process.
+// A user turn kills on stall because its own Prompt RPC would otherwise hang
+// forever; an adopted turn has no RPC to unblock, and the agent process is
+// shared with the user's session — killing it would take down a working
+// conversation to finish a bubble.
+func (c *ClawBenchACPClient) terminateStalledBackgroundTurn(acpSessionID string, turn *backgroundTurn) {
+	c.mu.Lock()
+	cur, ok := c.backgroundTurns[acpSessionID]
+	route, routed := c.sessionRoutes[acpSessionID]
+	owned := ok && routed && cur == turn && route == turn.route
+	if owned {
+		// Retire the entry so a late session_end cannot deliver a second
+		// terminal. The ROUTE stays until the consumer releases it.
+		delete(c.backgroundTurns, acpSessionID)
+		if deb, hasDeb := c.debouncers[acpSessionID]; hasDeb {
+			deb.flushAll()
+		}
+	}
+	c.mu.Unlock()
+	if !owned {
+		return
+	}
+	// The terminal needs a reason, or the service layer records this as a
+	// normal completion and the user is left with a reply that stops mid-word
+	// and no explanation. Timeout is the honest label: the turn did not end,
+	// it was ended.
+	deliverBackgroundTurnEnd(turn, ReasonStalled)
 }
 
 // beginBackgroundTurn registers the route for an adopted turn. Returns false
@@ -173,6 +235,9 @@ func (c *ClawBenchACPClient) beginBackgroundTurn(acpSessionID, requestID string)
 // turn may have replaced it (RegisterSession), and deleting that would cut the
 // user's own stream. The registry entry is cleared either way.
 func (c *ClawBenchACPClient) releaseBackgroundRoute(acpSessionID string, turn *backgroundTurn) {
+	// Stop the watchdog first: it delivers its own terminal, and one arriving
+	// after the consumer finished would land on a released route.
+	turn.stopWatchdog()
 	if c.connRef != nil {
 		c.connRef.clearAdoptedTurnRequestID(turn.requestID)
 	}
@@ -230,18 +295,25 @@ func (c *ClawBenchACPClient) closeBackgroundTurnOnSessionEnd(acpSessionID string
 	if !owned {
 		return false
 	}
-	deliverBackgroundTurnEnd(turn)
+	// The turn ended on its own — the watchdog must not also fire and deliver a
+	// second terminal.
+	turn.stopWatchdog()
+	deliverBackgroundTurnEnd(turn, "")
 	return true
 }
 
 // deliverBackgroundTurnEnd sends the adopted turn's terminal event.
 //
+// reason carries why the turn ended when it did not end on its own (a stall
+// timeout); empty means the agent reported session_end. The executor records
+// the non-empty case as a timeout, so the reply is not presented as complete.
+//
 // Never blocks: the caller runs on the SDK's shared notification goroutine,
 // where blocking can overflow the queue and kill the connection. If the channel
 // is momentarily full the send moves to its own goroutine — the channel is FIFO,
 // so `done` still lands after every frame already queued.
-func deliverBackgroundTurnEnd(turn *backgroundTurn) {
-	done := StreamEvent{Type: "done"}
+func deliverBackgroundTurnEnd(turn *backgroundTurn, reason string) {
+	done := StreamEvent{Type: "done", Reason: reason}
 	select {
 	case turn.ch <- done:
 		return

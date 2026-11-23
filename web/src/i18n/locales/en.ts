@@ -1644,6 +1644,7 @@ export default {
         disconnect: 'Connection lost, AI response interrupted',
         context_cancel: 'AI response cancelled',
         timeout: 'AI response timed out (30 min)',
+        stalled: 'AI stopped making progress, this turn was ended — the reply may be incomplete',
         empty: 'AI returned no content',
         agent_no_run: 'The agent did not run this request — reset the session',
         agent_init_timeout: 'The agent did not start in time (60s) — check whether it is installed and reachable',

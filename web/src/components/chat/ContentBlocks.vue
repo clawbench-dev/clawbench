@@ -824,7 +824,9 @@ function errorSourceLabel(block: any) { return getErrorSourceLabel(block, t) }
 // user in, and the backend excludes it from the retryable reasons for the same
 // reason. That banner gets a "copy the login command" action instead (see
 // LoginCommandButton), driven by the structured `login_cmd` field.
-const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'agent_init_timeout', 'request_failed', 'refused', 'backend_exit', 'timeout', 'parse_error', 'panic', 'disconnect'])
+// `stalled` is included: the watchdog ended the turn early with the turn budget
+// untouched, so recycling the connection and retrying is exactly the fix.
+const RESETABLE_REASONS = new Set(['empty', 'agent_no_run', 'agent_init_timeout', 'request_failed', 'refused', 'backend_exit', 'timeout', 'stalled', 'parse_error', 'panic', 'disconnect'])
 function isResetableReason(reason: string | undefined): boolean {
   return !!reason && RESETABLE_REASONS.has(reason)
 }

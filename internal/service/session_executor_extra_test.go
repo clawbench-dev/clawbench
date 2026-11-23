@@ -1591,3 +1591,69 @@ func TestAbandonTurn_DrainsMetadataInsteadOfDiscarding(t *testing.T) {
 	assert.NotContains(t, fn, "go func() {\n\t\tfor range eventCh",
 		"a bare discarding goroutine would drop the usage event this function exists to keep")
 }
+
+// --- terminal reason: a turn ended by a stall watchdog ---
+
+// buildExecutorForContentJSON sets up an executor on a live context, so the
+// "cancelled"/"deadline" branches that key off e.ctx.Err() do not fire.
+func buildExecutorForContentJSON(t *testing.T) *SessionExecutor {
+	t.Helper()
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	t.Cleanup(func() { model.Agents = nil })
+
+	sid := setupExecutorSession(t, "test-agent")
+	cfg := RunConfig{
+		Mode:        ModeInteractive,
+		ProjectPath: "/test",
+		BackendName: "test",
+		SessionID:   sid,
+		AgentID:     "test-agent",
+		ChatRequest: ai.ChatRequest{Prompt: "hello"},
+	}
+	return NewSessionExecutor(context.Background(), cfg)
+}
+
+// TestSessionExecutor_BuildContentJSON_StallTerminalExplainsTheCutoff: a turn
+// closed by the stall watchdog has content but no natural end. Without the
+// warning block it persisted as a normal completion — the user's report was
+// literally "the reply stopped mid-sentence and nothing said why".
+func TestSessionExecutor_BuildContentJSON_StallTerminalExplainsTheCutoff(t *testing.T) {
+	executor := buildExecutorForContentJSON(t)
+	executor.receivedTerminal = true
+	executor.terminalReason = ai.ReasonStalled
+
+	blocks := []model.ContentBlock{{Type: "text", Text: "找"}}
+	content, finalBlocks := executor.buildContentJSON(blocks, RunResult{ReceivedTerminal: true}, &ai.Metadata{})
+
+	require.Len(t, finalBlocks, 2, "the warning block must be appended to the partial reply")
+	warn := finalBlocks[1]
+	assert.Equal(t, blockTypeWarning, warn.Type)
+	assert.Equal(t, ai.ReasonStalled, warn.Reason)
+	assert.NotEmpty(t, warn.Text)
+
+	// ReasonStalled must classify as retryable, or the user gets a dead end
+	// instead of the "continue" affordance.
+	assert.Equal(t, ai.ReasonStalled, classifyTurnAbnormality("", true, false, finalBlocks))
+	assert.True(t, shouldRetryTurn(ai.ReasonStalled), "a stalled turn must be resumable, unlike a budget timeout")
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &parsed))
+	assert.Contains(t, parsed, "blocks")
+}
+
+// TestSessionExecutor_BuildContentJSON_CleanFinishAddsNoWarning: the reason is
+// empty on an ordinary turn, and no block may be invented for it.
+func TestSessionExecutor_BuildContentJSON_CleanFinishAddsNoWarning(t *testing.T) {
+	executor := buildExecutorForContentJSON(t)
+	executor.receivedTerminal = true
+
+	blocks := []model.ContentBlock{{Type: "text", Text: "all done"}}
+	_, finalBlocks := executor.buildContentJSON(blocks, RunResult{ReceivedTerminal: true}, &ai.Metadata{})
+
+	require.Len(t, finalBlocks, 1, "a clean finish must not gain a warning block")
+	assert.Equal(t, "text", finalBlocks[0].Type)
+	assert.Empty(t, classifyTurnAbnormality("", true, false, finalBlocks), "a clean turn is not abnormal")
+}

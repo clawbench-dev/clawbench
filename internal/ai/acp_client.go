@@ -157,7 +157,10 @@ func (c *ClawBenchACPClient) RegisterSession(acpSessionID string, ch chan<- Stre
 		if c.connRef != nil {
 			c.connRef.clearAdoptedTurnRequestID(turn.requestID)
 		}
-		deliverBackgroundTurnEnd(turn)
+		// It is being ended here, not stalling; letting the watchdog run on
+		// would fire against a route this function is about to replace.
+		turn.stopWatchdog()
+		deliverBackgroundTurnEnd(turn, "")
 	}
 	c.sessionRoutes[acpSessionID] = ch
 	c.activeSessionID = acpSessionID

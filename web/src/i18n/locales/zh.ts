@@ -1653,6 +1653,7 @@ export default {
         disconnect: '连接已断开，AI 响应中断',
         context_cancel: 'AI 响应被中断',
         timeout: 'AI 响应超时（30分钟）',
+        stalled: 'AI 长时间没有任何进展，本轮已中止，回复可能不完整',
         empty: 'AI 未返回任何内容',
         agent_no_run: 'Agent 未执行本轮请求，建议重置会话',
         agent_init_timeout: 'Agent 启动超时（60 秒）——请检查其是否已安装并可正常访问',

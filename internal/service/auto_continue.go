@@ -82,6 +82,7 @@ var retryableWarningReasons = map[string]bool{
 	ai.ReasonRequestFailed: true, // Codex turn.failed
 	ai.ReasonRefused:       true, // ACP stopReason=refusal (model unavailable / upstream error)
 	ai.ReasonAgentNoRun:    true, // agent accepted the prompt but never ran the model
+	ai.ReasonStalled:       true, // watchdog closed a turn that made no progress
 }
 
 // classifyTurnAbnormality reports whether a finished turn ended abnormally and

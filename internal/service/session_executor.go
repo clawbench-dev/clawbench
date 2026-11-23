@@ -300,6 +300,10 @@ type SessionExecutor struct {
 	blocks           []model.ContentBlock
 	responseMetadata *ai.Metadata
 	receivedTerminal bool
+	// terminalReason is why the backend ended the turn when it did not end on
+	// its own (a done event's Reason). Empty for an ordinary completion. It
+	// becomes a warning block so the reply is not presented as whole.
+	terminalReason string
 	wallStart        int64 // unix millis at execution start
 	// toolStarts tracks the start time of each tool call (by tool ID) so the
 	// wall-clock duration can be computed when the tool completes.
@@ -907,6 +911,16 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 			}
 			if event.Type == eventTypeDone || event.Type == eventTypeError {
 				e.receivedTerminal = true
+				// A terminal event may name WHY the turn ended when it did not end
+				// on its own — today only a stall watchdog closing an adopted
+				// turn (ReasonTimeout). Recorded before the metadata merge so the
+				// bubble can explain itself: without it a turn that was cut off
+				// looks identical to one that finished typing.
+				if event.Type == eventTypeDone && event.Reason != "" {
+					e.mu.Lock()
+					e.terminalReason = event.Reason
+					e.mu.Unlock()
+				}
 				// The terminal event carries the run's own accounting: the stop
 				// reason and the TOTALS across every round. Nothing else reports
 				// those — the per-round metadata events each carry one round, so
@@ -1845,6 +1859,17 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 		contentMap["cancelled"] = true
 	} else if e.ctx.Err() == context.DeadlineExceeded {
 		blocks = append(blocks, model.ContentBlock{Type: blockTypeWarning, Text: "AI response timed out (30 min)", Reason: ai.ReasonTimeout})
+	} else if e.terminalReason != "" {
+		// The turn ended without being cancelled and without the backend saying
+		// it finished: the stall watchdog closed it because the agent stopped
+		// producing anything. Say so, and label it retryable (ReasonTimeout is
+		// in retryableWarningReasons) so the user gets a "continue" instead of a
+		// reply that appears to just stop mid-sentence.
+		blocks = append(blocks, model.ContentBlock{
+			Type:   blockTypeWarning,
+			Text:   "AI response timed out (no progress), reply may be incomplete",
+			Reason: e.terminalReason,
+		})
 	}
 	contentMap[contentKeyBlocks] = blocks
 	blocksJSON, _ := json.Marshal(contentMap)
