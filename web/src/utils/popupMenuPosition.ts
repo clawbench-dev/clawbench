@@ -191,7 +191,9 @@ export function computeMenuStyle(
   // `scrollable: false` the root never scrolls (the slot pins a header/footer
   // and scrolls a region of its own), so there is no bar here to dodge and an
   // unconditional pad would just make every app-header dropdown 10px wider.
-  const lane = scrollable ? { paddingRight: `${SCROLLBAR_LANE_PX}px` as const } : {}
+  const lane: Record<string, string> = scrollable
+    ? { paddingRight: `${SCROLLBAR_LANE_PX}px` }
+    : {}
 
   if (goBelow) {
     // Menu appears BELOW the anchor

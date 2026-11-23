@@ -474,3 +474,61 @@ func TestSTTRelayEndSkipsThePadWithoutAWindow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, session.written())
 }
+
+// A relay created without an explicit sample rate still has to size its pad by
+// something; the engine's default rate is the only correct choice.
+func TestSTTRelayEndPadUsesDefaultSampleRate(t *testing.T) {
+	session := &fakeStreamSession{
+		results: make(chan stt.StreamResult, 16),
+		finish:  make(chan struct{}),
+	}
+	relay := &sttStreamRelay{
+		opts:        stt.StreamOptions{Channels: 1, Bits: 16},
+		session:     session,
+		endWindowMs: sttEndWindowPadFrameMs,
+	}
+
+	relay.padEndWindow()
+
+	writes := session.written()
+	require.Len(t, writes, 1)
+	// 100 ms of 16 kHz mono 16-bit PCM: the default rate, not a zero-length frame.
+	assert.Equal(t, make([]byte, sttDefaultSampleRate/1000*2*sttEndWindowPadFrameMs), writes[0])
+}
+
+// writeErrSession fails every Write, the way a session that the engine already
+// tore down does.
+type writeErrSession struct {
+	mu     sync.Mutex
+	writes int
+}
+
+func (s *writeErrSession) Write([]byte) error {
+	s.mu.Lock()
+	s.writes++
+	s.mu.Unlock()
+	return errors.New("stt: stream closed")
+}
+func (s *writeErrSession) Finish() error                    { return nil }
+func (s *writeErrSession) Results() <-chan stt.StreamResult { return nil }
+func (s *writeErrSession) Close()                           {}
+
+// A dead session must not turn `end` into a long stall: the first failed write
+// aborts the pad instead of sleeping through the remaining packets.
+func TestSTTRelayEndPadStopsOnWriteError(t *testing.T) {
+	session := &writeErrSession{}
+	relay := &sttStreamRelay{
+		opts:        stt.StreamOptions{SampleRate: 16000, Channels: 1, Bits: 16},
+		session:     session,
+		endWindowMs: 300,
+	}
+
+	started := time.Now()
+	relay.padEndWindow()
+
+	session.mu.Lock()
+	writes := session.writes
+	session.mu.Unlock()
+	assert.Equal(t, 1, writes, "must stop after the first failed write")
+	assert.Less(t, time.Since(started), 2*sttEndWindowPadGap)
+}

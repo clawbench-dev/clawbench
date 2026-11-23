@@ -866,7 +866,8 @@ function resetSlider() {
   // Reset is the value now in effect. Show it immediately (falling back to
   // modelValue would flash the old value when the parent does not echo) and
   // wait for the parent to confirm it like any other change.
-  liveSliderValue.value = props.defaultValue ?? null
+  liveSliderValue.value =
+    typeof props.defaultValue === 'number' ? props.defaultValue : null
   emit('update:modelValue', props.defaultValue)
 }
 
