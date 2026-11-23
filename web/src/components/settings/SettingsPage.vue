@@ -13,11 +13,13 @@
         <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
       </template>
     </header>
-    <div class="settings-page__body">
+    <!-- The body is the scroll container for every level, so it is keyed by the
+         current path: a level change rebuilds the element (default scrollTop 0)
+         and `handleBodyScroll` then applies the offset saved for that level. -->
+    <div :key="bodyKey" class="settings-page__body" @scroll="handleBodyScroll">
       <SettingsIndex v-if="navStack.length === 0" @navigate="pushNav" @open-setting="handleOpenSetting" />
       <SettingsCategory
         v-else
-        :key="currentCategory!"
         :category-id="currentCategory!"
         :search-keys="searchKeys"
         :search-empty="searchEmpty"
@@ -102,6 +104,7 @@ async function confirmDiscardIfDirty(): Promise<boolean> {
 
 async function handleBack() {
   if (!(await confirmDiscardIfDirty())) return
+  saveBodyScroll()
   popNav()
 }
 
@@ -114,6 +117,7 @@ async function handleBack() {
  */
 async function handleCategoryBack(categoryId: string) {
   if (!(await confirmDiscardIfDirty())) return
+  saveBodyScroll()
   returnToCategory(categoryId)
 }
 
@@ -123,6 +127,7 @@ async function handleCategoryBack(categoryId: string) {
  * must not be able to strand the user on a page for something that is gone.
  */
 function handleCategoryDeleted(categoryId: string) {
+  saveBodyScroll()
   returnToCategory(categoryId)
 }
 
@@ -132,6 +137,7 @@ function handleCategoryDeleted(categoryId: string) {
  */
 async function handleCrumbNavigate(depth: number) {
   if (!(await confirmDiscardIfDirty())) return
+  saveBodyScroll()
   truncateNav(depth)
 }
 
@@ -240,7 +246,69 @@ const searchQuery = ref('')
  * empty state rather than showing everything under a "filtered" banner.
  */
 const searchEmpty = ref(false)
-const BODY_SELECTOR = '.settings-page__body'
+
+// ── Scroll position per level ──
+
+/**
+ * Scroll offset of every level the user has been on, keyed by its path.
+ *
+ * Drilling into a row and coming back (breadcrumb, edge-swipe, deleted entity)
+ * must land where the user left, not at the top of a long page. All levels
+ * share one scroll container — the page body, which is keyed by the path so a
+ * level change starts it at 0 — and this map is what puts the offset back.
+ */
+const scrollOffsets = new Map<string, number>()
+
+/** Path of the level being shown: '' for the index, else the nav stack joined. */
+const levelKey = computed(() => navStack.value.join('/'))
+
+/**
+ * Ties the body element to the level it belongs to. It also changes when the
+ * search filter does: a filtered page is a different document (the scroll-to-hit
+ * lands mid-page), and both levels sit under one key otherwise.
+ */
+const bodyKey = computed(() => (searchKeys.value ? `${levelKey.value}#search` : levelKey.value))
+
+/** Remember the level's offset as it is read. */
+function handleBodyScroll(event: Event) {
+  scrollOffsets.set(levelKey.value, (event.target as HTMLElement).scrollTop)
+}
+
+/**
+ * Put the shown level back where it was left.
+ *
+ * Runs one frame after a level change, on the container that belongs to the
+ * level being shown. A level entered for the first time has no entry and keeps
+ * the fresh container's own 0. The offset is re-applied once more on the next
+ * frame: the content between the two can still be empty (a panel loading its
+ * snapshot), which clamps a scrollTop set too early back to 0.
+ */
+function restoreBodyScroll() {
+  const body = pageBodyEl()
+  const offset = scrollOffsets.get(levelKey.value) ?? 0
+  if (!body || offset <= 0) return
+  body.scrollTop = offset
+  requestAnimationFrame(() => {
+    const again = pageBodyEl()
+    if (again && again.scrollTop !== offset) again.scrollTop = offset
+  })
+}
+
+// Saved on the way out: the scroll container is rebuilt on a level change, so
+// the leaving offset has to be taken by whoever starts the navigation.
+function saveBodyScroll() {
+  const body = pageBodyEl()
+  if (body) scrollOffsets.set(levelKey.value, body.scrollTop)
+  // The filtered view is transient — its offset belongs to that hit only.
+  if (searchKeys.value) scrollOffsets.delete(bodyKey.value)
+}
+
+// Restore after the body belongs to a new level. Not gated on the search
+// filter: a filtered page deliberately shows the top (the scroll-to-hit is what
+// brings the row into view), and `bodyKey` above is what remounts it.
+watch(() => navStack.value.length, () => {
+  requestAnimationFrame(restoreBodyScroll)
+})
 
 /**
  * A settings-search hit was picked: open its category narrowed to that row.
@@ -296,7 +364,7 @@ function cssEscape(value: string): string {
 }
 
 function pageBodyEl(): HTMLElement | null {
-  return pageEl.value?.querySelector<HTMLElement>(BODY_SELECTOR) ?? null
+  return pageEl.value?.querySelector<HTMLElement>('.settings-page__body') ?? null
 }
 
 /** The page root, so the row lookup never escapes into another panel's DOM. */
@@ -319,6 +387,7 @@ async function openPendingDeepLink() {
   if (navStack.value[navStack.value.length - 1] === categoryId) return
   // Leaving a category with unsaved panel edits must confirm first (same as back).
   if (!(await confirmDiscardIfDirty())) return
+  saveBodyScroll()
   truncateNav(0)
   for (const step of routeChain(categoryId)) pushNav(step)
 }
