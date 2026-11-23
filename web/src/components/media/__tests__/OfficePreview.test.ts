@@ -69,7 +69,15 @@ vi.mock('@/utils/appLog.ts', () => ({
 
 // Mock vue-office components (they require DOM + heavy deps)
 vi.mock('@vue-office/docx', () => ({
-  default: { name: 'VueOfficeDocx', template: '<div class="mock-docx"></div>' },
+  // Mirrors the real library: the wrapper is a centred flex column and every
+  // page carries the Word page width (A4 = 21cm ≈ 794px) in its inline style.
+  default: {
+    name: 'VueOfficeDocx',
+    template: `<div class="mock-docx"><div class="docx-wrapper">
+      <section class="docx" style="width: 794px;">page one</section>
+      <section class="docx" style="width: 794px;">page two</section>
+    </div></div>`,
+  },
 }))
 vi.mock('@vue-office/excel', () => ({
   default: { name: 'VueOfficeExcel', template: '<div class="mock-excel"></div>' },
@@ -481,6 +489,148 @@ describe('OfficePreview', () => {
         vi.useRealTimers()
       }
     })
+
+  describe('docx fit to pane width', () => {
+    function docxPages(wrapper: any): HTMLElement[] {
+      return wrapper.findAll('.docx-wrapper > section.docx').map((s: any) => s.element as HTMLElement)
+    }
+
+    // jsdom has no layout: page widths and the container width are stubbed.
+    function stubLayout(wrapper: any, width: number, pageWidth = 794) {
+      stubBodyWidth(wrapper, width)
+      // jsdom has no layout, so the outer width (used to decide "wide
+      // enough") does not follow clientWidth by itself.
+      const body = wrapper.find('.office-preview-body').element as HTMLElement
+      Object.defineProperty(body, 'offsetWidth', { value: width, configurable: true })
+      for (const page of docxPages(wrapper)) {
+        Object.defineProperty(page, 'offsetWidth', { value: pageWidth, configurable: true })
+      }
+    }
+
+    it('fits the A4 page to a narrow pane instead of leaving it wider than the view', async () => {
+      const wrapper = mountOffice()
+      await nextTick()
+      stubLayout(wrapper, 360)
+      wrapper.vm.onRendered()
+      await nextTick()
+
+      const pages = docxPages(wrapper)
+      expect(pages.length).toBe(2)
+      for (const page of pages) {
+        // The library's inline pixel width must go — it would win over CSS.
+        expect(page.style.width).toBe('')
+        const ratio = parseFloat(page.style.getPropertyValue('--docx-fit-ratio'))
+        expect(ratio).toBeCloseTo(358 / 794, 5)
+        // Text scales with the page, in pixels: the computed size already
+        // carries the UI scale, so a rem here would apply it twice.
+        // (the computed size is whatever this environment reports — the size is
+        // scaled by the same ratio as the page)
+        expect(parseFloat(page.style.getPropertyValue('--docx-fit-font-size'))).toBeCloseTo(ratio * 16, 1)
+      }
+      wrapper.unmount()
+    })
+
+    it('drops the fit once the pane is wide enough for the page', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mountOffice()
+        await nextTick()
+        stubLayout(wrapper, 360)
+        wrapper.vm.onRendered()
+        await nextTick()
+        expect(docxPages(wrapper)[0].style.getPropertyValue('--docx-fit-ratio')).not.toBe('')
+        await vi.advanceTimersByTimeAsync(400)
+
+        stubLayout(wrapper, 1000)
+        triggerResize()
+        await vi.advanceTimersByTimeAsync(200)
+        for (const page of docxPages(wrapper)) {
+          expect(page.style.getPropertyValue('--docx-fit-ratio')).toBe('')
+          expect(page.style.getPropertyValue('--docx-fit-font-size')).toBe('')
+        }
+        wrapper.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('re-fits when the pane is resized (splitter drag, dock toggle)', async () => {
+      vi.useFakeTimers()
+      try {
+        const wrapper = mountOffice()
+        await nextTick()
+        stubLayout(wrapper, 800)
+        wrapper.vm.onRendered()
+        await nextTick()
+        // 800 - 2 >= 794: the page already fits, so it keeps its own width.
+        expect(docxPages(wrapper)[0].style.getPropertyValue('--docx-fit-ratio')).toBe('')
+        await vi.advanceTimersByTimeAsync(400)
+
+        stubLayout(wrapper, 400)
+        triggerResize()
+        await vi.advanceTimersByTimeAsync(200)
+        const ratio = parseFloat(docxPages(wrapper)[0].style.getPropertyValue('--docx-fit-ratio'))
+        expect(ratio).toBeCloseTo(398 / 794, 5)
+        wrapper.unmount()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('keeps the page width of the widest section so a landscape one does not shrink the rest', async () => {
+      const wrapper = mountOffice()
+      await nextTick()
+      // The stub renders both pages at 794px; a landscape section is 1123px.
+      const pages = docxPages(wrapper)
+      // jsdom does not inherit inline styles to the element's layout methods,
+      // so both the pixel width and the laid-out box are stubbed: the second
+      // page is a landscape section (1123px).
+      for (const page of pages) {
+        Object.defineProperty(page, 'offsetWidth', { value: 794, configurable: true })
+      }
+      Object.defineProperty(pages[1], 'offsetWidth', { value: 1123, configurable: true })
+      stubBodyWidth(wrapper, 500)
+      wrapper.vm.onRendered()
+      await nextTick()
+      expect(parseFloat(pages[0].style.getPropertyValue('--docx-fit-ratio'))).toBeCloseTo(498 / 1123, 5)
+      expect(parseFloat(pages[1].style.getPropertyValue('--docx-fit-ratio'))).toBeCloseTo(498 / 1123, 5)
+      // Same scale for every page — the page width comes from CSS (100%).
+      for (const page of pages) expect(page.style.width).toBe('')
+      wrapper.unmount()
+    })
+
+    it('forgets the native width when another document is opened', async () => {
+      const wrapper = mountOffice()
+      await nextTick()
+      stubLayout(wrapper, 360, 794)
+      wrapper.vm.onRendered()
+      await nextTick()
+      expect(docxPages(wrapper)[0].style.getPropertyValue('--docx-fit-ratio')).not.toBe('')
+
+      await wrapper.setProps({ file: { name: 'b.docx', path: 'other/b.docx', isOffice: true } })
+      // A fresh mount renders the new page at its own width (A4 again here);
+      // a stale 794 from the previous file would fit it to a different size.
+      stubLayout(wrapper, 360, 600)
+      wrapper.vm.onRendered()
+      await nextTick()
+      expect(parseFloat(docxPages(wrapper)[0].style.getPropertyValue('--docx-fit-ratio'))).toBeCloseTo(
+        358 / 600,
+        5,
+      )
+      wrapper.unmount()
+    })
+
+    it('does not touch pages when excel is the document on screen', async () => {
+      const wrapper = mountOffice({ file: { name: 'data.legacy.xlsx', path: 'data.legacy.xlsx', isOffice: true } })
+      await nextTick()
+      stubBodyWidth(wrapper, 300)
+      wrapper.vm.onRendered()
+      await nextTick()
+      expect(wrapper.findAll('.docx-wrapper > section.docx').length).toBe(0)
+      expect(wrapper.vm.excelView).toBe('table')
+      wrapper.unmount()
+    })
+  })
 
     it('disconnects the observer on unmount', () => {
       const wrapper = mountOffice()
