@@ -97,18 +97,28 @@ func procPPidAndState(pid int) (ppid int, state string, err error) {
 }
 
 // waitForPIDFile polls path until it contains a PID, failing the test on timeout.
+//
+// An unparsable file is NOT a failure: the writer uses os.WriteFile, which
+// truncates and then writes, so a poll can legitimately land in that window and
+// read zero bytes. Treating that as "malformed PID" made this test fail once on
+// CI (strconv.Atoi: parsing "": invalid syntax) for a file that was merely
+// mid-write. Only the deadline decides.
 func waitForPIDFile(t *testing.T, path string) int {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
+	var lastErr error
 	for {
 		data, err := os.ReadFile(path)
 		if err == nil {
-			pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
-			require.NoError(t, convErr, "invalid PID in %s", path)
-			return pid
+			if pid, convErr := strconv.Atoi(strings.TrimSpace(string(data))); convErr == nil && pid > 0 {
+				return pid
+			}
+			lastErr = fmt.Errorf("incomplete PID in %s: %q", path, data)
+		} else {
+			lastErr = err
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("PID was never written to %s: %v", path, err)
+			t.Fatalf("PID was never written to %s: %v", path, lastErr)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
