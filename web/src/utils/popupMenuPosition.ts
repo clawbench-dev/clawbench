@@ -156,16 +156,26 @@ export function computeMenuStyle(
   // content must adapt instead of scrolling sideways; `clip` also stops an
   // over-wide child from painting outside the rounded box.
   const overflow = { overflowX: 'clip' as const }
-  // A classic (non-overlay) vertical scrollbar takes its width out of the
-  // padding box, so the right-edge content (this popup's right-aligned numbers,
-  // sliders, value columns) ends up flush against the bar and reads as cramped.
-  // `scrollbar-gutter` reserves that lane ONLY while the box actually scrolls,
-  // which is exactly the wanted behaviour: full width when there is nothing to
-  // scroll (no dead strip), and the content pulled back off the bar when there
-  // is. Measured on the context-usage popup at a non-1.0 UI scale. It is a
-  // no-op on overlay-scrollbar platforms, where the bar covers no layout space
-  // and nothing was crowded in the first place.
-  const gutter = { scrollbarGutter: 'auto' as const }
+
+  // --- Reserve a lane for the vertical scrollbar ---
+  // The app's global scrollbar is 10px wide (web/css/scrollbar.css) and, on a
+  // desktop client, it is a CLASSIC bar: it takes its width out of the box and
+  // paints over the last pixels of the content — right-aligned numbers (the
+  // context-usage popup's values, 1,000,000 in the screenshot) end up with
+  // their last digits cut away.
+  //
+  // `scrollbar-gutter` cannot fix this reliably: it is a no-op where the bar
+  // overlays content (headless Chromium, macOS/iOS defaults) and, worse, its
+  // `stable` value reserves the lane even when nothing scrolls — a dead strip
+  // the user explicitly did not want. So the lane is reserved unconditionally
+  // as padding instead: predictable on every engine, and the cost is only that
+  // a short menu keeps a 10px gap on its right edge.
+  //
+  // It is applied ONLY when the menu scrolls itself (`scrollable`). With
+  // `scrollable: false` the root never scrolls (the slot pins a header/footer
+  // and scrolls a region of its own), so there is no bar here to dodge and an
+  // unconditional pad would just make every app-header dropdown 10px wider.
+  const lane = scrollable ? { paddingRight: '10px' as const } : {}
 
   if (goBelow) {
     // Menu appears BELOW the anchor
@@ -176,7 +186,7 @@ export function computeMenuStyle(
       top: `${top}px`,
       ...horizontal,
       ...overflow,
-      ...gutter,
+      ...lane,
       maxWidth: `${effectiveMaxWidth}px`,
       maxHeight: `min(${maxHeight}px, ${availableBelow / (containingBlock?.scaleY || 1)}px)`,
     }
@@ -195,7 +205,7 @@ export function computeMenuStyle(
     bottom: `${bottom}px`,
     ...horizontal,
     ...overflow,
-    ...gutter,
+    ...lane,
     maxWidth: `${effectiveMaxWidth}px`,
     maxHeight: `min(${maxHeight}px, ${availableAbove / (containingBlock?.scaleY || 1)}px)`,
   }
