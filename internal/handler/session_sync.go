@@ -396,7 +396,7 @@ func claimHistorySync(ctx context.Context, sid string) (context.Context, func(),
 				return syncCtx, func() {
 					stop()
 					cancel()
-					if service.FinishClaimedSessionRun(sid, run) {
+					if service.FinishClaimedSessionRun(run, sid) {
 						service.EmitSessionEvent(sid, "completed", true)
 					}
 					if service.GetQueuedCount(sid) > 0 {

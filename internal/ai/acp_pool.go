@@ -392,20 +392,6 @@ func (m *ACPConnManager) sweepOnce() {
 	m.killIdleConns(toClose)
 }
 
-// hasStreamRouteLocked includes retained prompts and agent-initiated turns,
-// even before their service goroutine has claimed the session.
-func (c *ACPConn) hasStreamRouteLocked() bool {
-	if c.client == nil {
-		return false
-	}
-	// Eviction can wait a sweep if a callback is changing routes.
-	if !c.client.mu.TryLock() {
-		return true
-	}
-	defer c.client.mu.Unlock()
-	return len(c.client.sessionRoutes) > 0
-}
-
 // collectIdleConns scans the pool and returns idle connection candidates
 // along with the total number of alive connections.
 func (m *ACPConnManager) collectIdleConns() (toClose []idleEntry, aliveCount int) {
@@ -1378,6 +1364,20 @@ func (c *ACPConn) TouchSessionUpdate() {
 // reason as TouchSessionUpdate.
 func (c *ACPConn) TouchModelProgress() {
 	c.lastModelProgress.Store(time.Now().UnixNano())
+}
+
+// hasStreamRouteLocked includes retained prompts and agent-initiated turns,
+// even before their service goroutine has claimed the session.
+func (c *ACPConn) hasStreamRouteLocked() bool {
+	if c.client == nil {
+		return false
+	}
+	// Eviction can wait a sweep if a callback is changing routes.
+	if !c.client.mu.TryLock() {
+		return true
+	}
+	defer c.client.mu.Unlock()
+	return len(c.client.sessionRoutes) > 0
 }
 
 // lastActivityNano returns the later of lastUsed and lastSessionUpdate as a

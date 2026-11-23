@@ -119,16 +119,9 @@ func (w *promptBackgroundWork) observe(id, kind, state, description, summary str
 	if conn != nil {
 		// Detached work can legitimately be silent for longer than the prompt
 		// watchdog. Once only the model is outstanding its watchdog applies again.
-		running := false
-		for _, kind := range w.active {
-			if kind != "turn" {
-				running = true
-				break
-			}
-		}
 		conn.TouchModelProgress()
 		conn.TouchSessionUpdate()
-		conn.backgroundTasksRunning.Store(running)
+		conn.backgroundTasksRunning.Store(w.hasDetachedTask())
 	}
 	if kind != "turn" {
 		emitStreamEvent(ch, acpNotificationSource, backgroundTaskCard(id, state, description, summary))
@@ -137,6 +130,16 @@ func (w *promptBackgroundWork) observe(id, kind, state, description, summary str
 	case w.changed <- struct{}{}:
 	default:
 	}
+}
+
+// Called with w.mu held.
+func (w *promptBackgroundWork) hasDetachedTask() bool {
+	for _, kind := range w.active {
+		if kind != "turn" {
+			return true
+		}
+	}
+	return false
 }
 
 func backgroundTaskCard(id, state, description, summary string) StreamEvent {
