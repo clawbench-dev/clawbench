@@ -74,9 +74,10 @@ func TestAsyncCommandReply(t *testing.T) {
 func TestAsyncCommandReplyCompletionBeforeWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := NewClawBenchACPClient()
-		require.Nil(t, client.trackCommandReply("ordinary"))
-		client.commandReplies = make(map[string]*asyncCommandReply)
-		r := client.trackCommandReply("native")
+		require.Nil(t, client.RegisterSession("ordinary", nil).commands)
+		client.UnregisterSession("ordinary")
+		client.trackFiniteCommands = true
+		r := client.RegisterSession("native", nil).commands
 		r.observe(commandUpdate("one", false))
 		r.observe(agentTextUpdate("waiting"))
 		r.observe(usageUpdate())
@@ -94,7 +95,7 @@ func TestAsyncCommandReplyCompletionBeforeWait(t *testing.T) {
 		require.NoError(t, result.err)
 		require.True(t, result.waited)
 		client.UnregisterSession("native")
-		require.Empty(t, client.commandReplies)
+		require.Empty(t, client.backgroundWork)
 	})
 }
 

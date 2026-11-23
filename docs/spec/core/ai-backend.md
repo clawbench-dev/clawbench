@@ -2,6 +2,14 @@
 
 ClawBench 支持多种 AI 工具，每种工具的调用方式、输出格式各不相同。AI 后端抽象层将这种差异封装为统一的 `AIBackend` 接口——handler 只需调用 `ExecuteStream()`，不关心背后是 Claude 还是 Kimi。只有一种传输模式：ACP stdio（Agent Client Protocol，通过 JSON-RPC 双向通信，提供模式切换、斜杠命令和权限管理等结构化能力）。每个会启动外部进程的后端都必须声明 `AcpCommand`；唯一的例外是内置智能体，它在本进程内实现（`BackendPlugin.Implementation`），不走任何子进程。历史上的 CLI shell-out 传输（自己解析 stdout 的 stream-json）已整体移除：支持 ACP 的智能体不再提供 CLI 通道，也不再保留对应的解析器、参数构造与前端传输切换。两个只跑通过 CLI 的后端（vecli、copilot）随之移除，升级时连同它们的智能体一起删除。每个后端在 `BackendRegistry` 中声明规格（二进制名、ACP 命令），ACP 连接由共享的 `ACPBackend` 承载；**模型发现不再属于后端规格**，而是各后端注册一个独立的 `ModelSource`（见[配置与自动发现](../infra/config-and-discovery.md)）。传输选择在 factory 层决定（有 ACP 命令就走 ACP），调用方完全透明；`Transport` 列由命令推导，仅供客户端区分「ACP 智能体」与「进程内智能体」。
 
+## ACP 后台任务与自动续答
+
+ClawBench 在初始化时声明 AIR 扩展能力 `asyncTasks`。支持该扩展的适配器通过 `session/update` 发送 `async_task_spawned`，用 `asyncTaskId` 标识每个任务。对应的 `async_task_state_update` 在 `completed`、`failed` 或 `stopped` 时结束该任务。任务可以并发，活动任务和回合共用原会话的消息通道；历史回放中的旧事件跳过生命周期处理。
+
+如果子任务结束会触发自动验收，适配器可在初始化响应的 `agentCapabilities._meta["clawbench/asyncTaskFollowup"]` 声明 `true`。Claude Agent ACP 原生提供此行为，ClawBench 按握手身份识别。自动回合通过 `taskType: "turn"` 启动，有自己的任务 ID。子任务从前台回复中分离后，ClawBench 等待自动回合结束，将期间的审批、工具调用和答复送回原会话。只报告后台任务的适配器可以在最后一个任务结束时收尾。
+
+CodeBuddy 的 `background_drain` 和 AIR 的独立自动回合复用主动续答通道。原生 Antigravity 通过有限时命令的执行状态和后续回复保留前台通道。连接池跳过仍有消息通道的连接；手动同步历史会等待当前执行结束，再回放外部记录。
+
 ## 流程图
 
 ### 后端选择与传输分流

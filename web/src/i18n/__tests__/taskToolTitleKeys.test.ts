@@ -28,7 +28,7 @@ describe('task tool titles', () => {
     // Guard against the map being emptied/renamed out from under the lookup:
     // an empty map makes every assertion below vacuously true.
     expect(entries.length).toBeGreaterThanOrEqual(6)
-    for (const tool of ['taskcreate', 'taskupdate', 'tasklist', 'taskget', 'taskstop', 'taskoutput']) {
+    for (const tool of ['backgroundtask', 'taskcreate', 'taskupdate', 'tasklist', 'taskget', 'taskstop', 'taskoutput']) {
       expect(TASK_TOOL_TITLE_KEYS[tool], `${tool} has no title key`).toBeTruthy()
     }
   })
