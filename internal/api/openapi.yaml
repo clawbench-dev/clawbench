@@ -2632,6 +2632,10 @@ paths:
     delete:
       tags: [Sessions]
       summary: 归档会话
+      description: |
+        归档后会话从列表中消失。归档成功（含「空会话直接硬删」分支）会向所有
+        已连接的客户端广播 `session_removed` 事件，让其他设备收起仍打开着的该
+        会话并刷新列表；发起方从本响应得知结果，不依赖该事件。
       operationId: sessionArchive
       parameters:
         - name: session_id
@@ -2662,6 +2666,10 @@ paths:
 
         返回值里的 `sessionCount` 仍是**调用方当前项目**的会话数；调用方没有
         项目 cookie 时按全局作用域（`project_id=0`）计数。
+
+        销毁成功会向所有已连接的客户端广播 `session_removed` 事件，`project_path`
+        取被销毁会话自身所属项目（删除前读取），因此无 cookie 的跨项目销毁也能
+        让对应项目的客户端收起该会话。
       operationId: sessionDestroy
       parameters:
         - name: session_id

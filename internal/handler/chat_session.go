@@ -526,6 +526,11 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	// preventing the HTTP response from being sent.
 	agentID := service.GetSessionAgentID(sessionID)
 
+	// Capture the owning project BEFORE the row changes: the removal event below
+	// is broadcast to every client, and receivers need to know which project lost
+	// the row to decide whether it affects their open session.
+	removedProject := service.GetSessionProjectPath(sessionID)
+
 	// Empty sessions have nothing worth preserving for RAG — hard-delete instead.
 	// Use GetFinalizedMessageCount to exclude streaming placeholder rows,
 	// so a session with only a streaming row (e.g. interrupted mid-generation)
@@ -538,6 +543,7 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 		slog.Error("archiving session: GetFinalizedMessageCount failed, falling back to soft archive", "session_id", sessionID, "err", err)
 	} else if msgCount == 0 {
 		archiveEmptySessionHardDelete(w, projectPath, sessionID, agentID)
+		service.BroadcastSessionRemoved(sessionID, removedProject)
 		return
 	}
 
@@ -552,6 +558,11 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
 	closeGroupMemberConns(sessionID)
+
+	// Tell other devices the row left the list. The caller learns this from the
+	// response below; without the broadcast, a client with the session open keeps
+	// rendering it until it happens to send a message and gets a 404.
+	service.BroadcastSessionRemoved(sessionID, removedProject)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": false, "sessionCount": sessionCount})
@@ -624,6 +635,16 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 	// project when one is set.
 	callerProject := middleware.GetProjectFromCookie(r)
 
+	// Capture the owning project before the row is deleted (see ArchiveSession).
+	// Unlike the sessionCount below this must come from the session itself: the
+	// cross-project overview destroys sessions belonging to projects other than
+	// the caller's cookie, so the cookie cannot be used as a fallback for the
+	// broadcast — receivers would then be told about the wrong project.
+	removedProject := service.GetSessionProjectPathIncludeArchived(sessionID)
+	if removedProject == "" {
+		removedProject = callerProject
+	}
+
 	// Cancel the running session before destroying to kill the CLI process.
 	if service.IsSessionRunning(sessionID) {
 		slog.Info("cancelling running session before destroy", "session_id", sessionID)
@@ -659,6 +680,9 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to destroy session")))
 		return
 	}
+
+	// Tell other devices the session is gone (see ArchiveSession).
+	service.BroadcastSessionRemoved(sessionID, removedProject)
 
 	sessionCount := 0
 	if callerProject != "" {

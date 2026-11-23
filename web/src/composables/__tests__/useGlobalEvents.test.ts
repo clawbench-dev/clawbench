@@ -1181,6 +1181,54 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    describe('session_removed event dispatch', () => {
+        // A session archived/destroyed on ANOTHER device ends up here. App.vue
+        // relies on this dispatch to leave the session it has open, so if the
+        // event is dropped the PC keeps rendering a ghost session.
+        it('dispatches clawbench-session-removed with the session id and project', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_removed',
+                data: { session_id: 's1', project_path: '/p' },
+            })
+
+            const evt = dispatchSpy.mock.calls
+                .map((call: any[]) => call[0])
+                .find((e: any) => e?.type === 'clawbench-session-removed')
+            expect(evt).toBeDefined()
+            expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's1', project_path: '/p' })
+            dispatchSpy.mockRestore()
+        })
+
+        // Replayed events are caught-up history, and this is the ONLY case where
+        // they must still be acted on: a client that was offline when its open
+        // session was removed never got the live event, and must not be left
+        // showing it after reconnecting.
+        it('dispatches clawbench-session-removed for replayed events too', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_removed',
+                replayed: true,
+                data: { session_id: 's2', project_path: '/p' },
+            })
+
+            const evt = dispatchSpy.mock.calls
+                .map((call: any[]) => call[0])
+                .find((e: any) => e?.type === 'clawbench-session-removed')
+            expect(evt).toBeDefined()
+            expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's2' })
+            dispatchSpy.mockRestore()
+        })
+    })
+
     describe('reconnect state refresh event', () => {
         it('does NOT dispatch clawbench-reconnect on the first connect (startup already loads state)', () => {
             const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
