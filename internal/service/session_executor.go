@@ -304,7 +304,7 @@ type SessionExecutor struct {
 	// its own (a done event's Reason). Empty for an ordinary completion. It
 	// becomes a warning block so the reply is not presented as whole.
 	terminalReason string
-	wallStart        int64 // unix millis at execution start
+	wallStart      int64 // unix millis at execution start
 	// toolStarts tracks the start time of each tool call (by tool ID) so the
 	// wall-clock duration can be computed when the tool completes.
 	toolStarts map[string]time.Time
@@ -910,68 +910,7 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				return e.buildResult(false, wallStart)
 			}
 			if event.Type == eventTypeDone || event.Type == eventTypeError {
-				e.receivedTerminal = true
-				// A terminal event may name WHY the turn ended when it did not end
-				// on its own — today only a stall watchdog closing an adopted
-				// turn (ReasonStalled). Recorded before the metadata merge so the
-				// bubble can explain itself: without it a turn that was cut off
-				// looks identical to one that finished typing.
-				if event.Type == eventTypeDone && event.Reason != "" {
-					e.mu.Lock()
-					e.terminalReason = event.Reason
-					e.mu.Unlock()
-				}
-				// The terminal event carries the run's own accounting: the stop
-				// reason and the TOTALS across every round. Nothing else reports
-				// those — the per-round metadata events each carry one round, so
-				// ignoring this Meta recorded only the LAST round's token counts
-				// and left stop_reason empty in the ledger, which is why a turn
-				// that hit its budget looked identical to one that answered.
-				if event.Meta != nil {
-					e.mu.Lock()
-					if e.responseMetadata == nil {
-						e.responseMetadata = &ai.Metadata{}
-					}
-					ai.MergeMetadata(e.responseMetadata, event.Meta)
-					e.mu.Unlock()
-				}
-				// For "error" events, AccumulateBlock handles them.
-				// We process the error event but still finalize.
-				if event.Type == eventTypeError {
-					ai.AccumulateBlock(&e.blocks, event)
-					e.upsertToolCallToDB(event)
-					// Forward the failure to WS clients as a NON-TERMINAL warning.
-					//
-					// Without this the error only ever reached the DB (as the
-					// warning block AccumulateBlock just appended), so a client
-					// saw an empty reply until some unrelated loadHistory
-					// rebuilt the array — the "no assistant message until I
-					// switch away and back" defect.
-					//
-					// It must be a warning, not the raw "error" event: "error"
-					// is terminal for the frontend (it stops the stream and
-					// clears `loading`), but the RUN is not necessarily over —
-					// auto-continue retries an abnormally terminated turn and
-					// the drain loop may still have queued messages. Ending the
-					// client's stream here would desync it from a backend that
-					// keeps working. Warning also matches what every CLI
-					// backend already emits for the same failure
-					// ("AI backend exited abnormally"), and the block type the
-					// message is persisted as.
-					//
-					// Forwarded BEFORE buildResult/finalize, so it lands on the
-					// still-streaming placeholder (the terminal event that
-					// closes it is sent later by the drain loop / handler).
-					e.forwardEvent(ai.StreamEvent{
-						Type:        blockTypeWarning,
-						Content:     event.Error,
-						Reason:      event.Reason,
-						ErrorCode:   event.ErrorCode,
-						HTTPStatus:  event.HTTPStatus,
-						ErrorSource: event.ErrorSource,
-						ErrorDetail: event.ErrorDetail,
-					})
-				}
+				e.handleTerminalEvent(event)
 				return e.buildResult(true, wallStart)
 			}
 
@@ -991,6 +930,75 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 			// tool call with no output), so this costs a nil check per window.
 			e.flushCoalesced()
 		}
+	}
+}
+
+// handleTerminalEvent records the terminal state of the turn (stop reason and
+// run-level metadata) and, for "error" events, persists the failure block and
+// forwards it to WS clients as a non-terminal warning. Kept out of
+// RunWithChannel's select loop so the event loop stays readable.
+func (e *SessionExecutor) handleTerminalEvent(event ai.StreamEvent) {
+	e.receivedTerminal = true
+	// A terminal event may name WHY the turn ended when it did not end
+	// on its own — today only a stall watchdog closing an adopted
+	// turn (ReasonStalled). Recorded before the metadata merge so the
+	// bubble can explain itself: without it a turn that was cut off
+	// looks identical to one that finished typing.
+	if event.Type == eventTypeDone && event.Reason != "" {
+		e.mu.Lock()
+		e.terminalReason = event.Reason
+		e.mu.Unlock()
+	}
+	// The terminal event carries the run's own accounting: the stop
+	// reason and the TOTALS across every round. Nothing else reports
+	// those — the per-round metadata events each carry one round, so
+	// ignoring this Meta recorded only the LAST round's token counts
+	// and left stop_reason empty in the ledger, which is why a turn
+	// that hit its budget looked identical to one that answered.
+	if event.Meta != nil {
+		e.mu.Lock()
+		if e.responseMetadata == nil {
+			e.responseMetadata = &ai.Metadata{}
+		}
+		ai.MergeMetadata(e.responseMetadata, event.Meta)
+		e.mu.Unlock()
+	}
+	// For "error" events, AccumulateBlock handles them.
+	// We process the error event but still finalize.
+	if event.Type == eventTypeError {
+		ai.AccumulateBlock(&e.blocks, event)
+		e.upsertToolCallToDB(event)
+		// Forward the failure to WS clients as a NON-TERMINAL warning.
+		//
+		// Without this the error only ever reached the DB (as the
+		// warning block AccumulateBlock just appended), so a client
+		// saw an empty reply until some unrelated loadHistory
+		// rebuilt the array — the "no assistant message until I
+		// switch away and back" defect.
+		//
+		// It must be a warning, not the raw "error" event: "error"
+		// is terminal for the frontend (it stops the stream and
+		// clears `loading`), but the RUN is not necessarily over —
+		// auto-continue retries an abnormally terminated turn and
+		// the drain loop may still have queued messages. Ending the
+		// client's stream here would desync it from a backend that
+		// keeps working. Warning also matches what every CLI
+		// backend already emits for the same failure
+		// ("AI backend exited abnormally"), and the block type the
+		// message is persisted as.
+		//
+		// Forwarded BEFORE buildResult/finalize, so it lands on the
+		// still-streaming placeholder (the terminal event that
+		// closes it is sent later by the drain loop / handler).
+		e.forwardEvent(ai.StreamEvent{
+			Type:        blockTypeWarning,
+			Content:     event.Error,
+			Reason:      event.Reason,
+			ErrorCode:   event.ErrorCode,
+			HTTPStatus:  event.HTTPStatus,
+			ErrorSource: event.ErrorSource,
+			ErrorDetail: event.ErrorDetail,
+		})
 	}
 }
 

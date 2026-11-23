@@ -227,8 +227,8 @@ type Metadata struct {
 
 // Warning reason codes — used by frontend for i18n lookup and visual severity
 const (
-	ReasonDisconnect    = "disconnect"     // WS client disconnected
-	ReasonTimeout       = "timeout"        // AI response timeout
+	ReasonDisconnect = "disconnect" // WS client disconnected
+	ReasonTimeout    = "timeout"    // AI response timeout
 	// ReasonStalled: the turn produced no model progress for the whole stall
 	// window and was closed by the watchdog.
 	//

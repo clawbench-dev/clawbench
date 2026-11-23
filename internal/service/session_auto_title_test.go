@@ -640,7 +640,7 @@ func TestBroadcastSessionRemoved_NoManagerIsNoop(t *testing.T) {
 }
 
 // A removal broadcast must carry both the session id AND the project the caller
-// captured: receivers use the id to recognise their own open session and the
+// captured: receivers use the id to recognize their own open session and the
 // project to tell a same-named session in another project apart.
 func TestBroadcastSessionRemoved_EmitsEventWithProject(t *testing.T) {
 	sub, cleanup := setupRecommendTest(t)
