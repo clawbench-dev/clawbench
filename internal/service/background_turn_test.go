@@ -304,3 +304,102 @@ func TestRunBackgroundTurn_ReleasesRouteWhenSessionGone(t *testing.T) {
 		t.Fatalf("route release called %d times, want exactly once", ended)
 	}
 }
+
+// TestRunBackgroundTurn_DropsWhileShuttingDown: CancelAllSessions removes every
+// runner, so without this guard the claim SUCCEEDS for a session that was just
+// interrupted. CodeBuddy announces a background drain immediately after its
+// prompt is cancelled, the host would open a fresh placeholder row, and the
+// process exits before it produces anything — the next startup then labels that
+// orphan as a second restart interruption. One restart, two warning bubbles.
+func TestRunBackgroundTurn_DropsWhileShuttingDown(t *testing.T) {
+	setupGroupDB(t)
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	const sid = "bg-turn-shutdown"
+	insertBackgroundTurnSession(t, sid)
+
+	MarkShuttingDown()
+	t.Cleanup(func() { ResetShuttingDownForTest() })
+
+	events := make(chan ai.StreamEvent, 8)
+	events <- ai.StreamEvent{Type: "content", Content: "should be dropped"}
+	events <- ai.StreamEvent{Type: "done"}
+	close(events)
+
+	ended := 0
+	RunBackgroundTurn(sid, events, func() { ended++ })
+
+	if ended != 1 {
+		t.Fatalf("route release called %d times, want exactly once", ended)
+	}
+	if IsSessionRunning(sid) {
+		t.Fatal("session left running after a dropped turn")
+	}
+	var count int
+	if err := store.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant'`, sid,
+	).Scan(&count); err != nil {
+		t.Fatalf("count assistant rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("wrote %d assistant row(s) while the server was shutting down", count)
+	}
+}
+
+// TestRunBackgroundTurn_DropsWhenShutdownStartsWhileWaiting: the entry check is
+// not enough — the first frame can take arbitrarily long, and shutdown may begin
+// during that wait. The row must not be persisted after it.
+func TestRunBackgroundTurn_DropsWhenShutdownStartsWhileWaiting(t *testing.T) {
+	setupGroupDB(t)
+	cleanupAllSessionState()
+	t.Cleanup(cleanupAllSessionState)
+
+	const sid = "bg-turn-shutdown-midwait"
+	insertBackgroundTurnSession(t, sid)
+
+	events := make(chan ai.StreamEvent, 8)
+	done := make(chan struct{})
+	go func() {
+		RunBackgroundTurn(sid, events, nil)
+		close(done)
+	}()
+
+	// The claim happens before the wait, so once the session is running the
+	// consumer is parked on the channel.
+	deadline := time.Now().Add(3 * time.Second)
+	for !IsSessionRunning(sid) {
+		if time.Now().After(deadline) {
+			t.Fatal("background turn never claimed the session")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	MarkShuttingDown()
+	t.Cleanup(func() { ResetShuttingDownForTest() })
+
+	// Deliver the first frame AFTER shutdown started: the consumer must drop it
+	// instead of opening a placeholder.
+	events <- ai.StreamEvent{Type: "content", Content: "late frame"}
+	events <- ai.StreamEvent{Type: "done"}
+	close(events)
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("background turn did not return after shutdown")
+	}
+
+	var count int
+	if err := store.ReadDB().QueryRow(
+		`SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant'`, sid,
+	).Scan(&count); err != nil {
+		t.Fatalf("count assistant rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("wrote %d assistant row(s) after shutdown started", count)
+	}
+	if IsSessionRunning(sid) {
+		t.Fatal("session left running after a dropped turn")
+	}
+}

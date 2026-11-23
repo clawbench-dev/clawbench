@@ -44,6 +44,22 @@ func RunBackgroundTurn(sessionID string, events <-chan ai.StreamEvent, end func(
 		return
 	}
 
+	// Never adopt an agent-initiated turn once shutdown has begun.
+	//
+	// CancelAllSessions removes every runner, so the claim below would SUCCEED
+	// for a session that was just interrupted: the agent's background drain
+	// announces a turn right after its prompt was cancelled, the host opens a
+	// fresh placeholder row, and the process exits before that turn produces
+	// anything. The next startup sees a streaming=1 row and marks it as another
+	// restart-interrupted reply — so ONE restart leaves TWO warning bubbles (the
+	// real interrupted turn plus this orphan). Same guard, same reason, as the
+	// restart-resume worker (see startRestartResume).
+	if IsShuttingDown() {
+		slog.Info("background turn: dropped, server is shutting down",
+			"session", sessionID)
+		return
+	}
+
 	target, ok := resolveBackgroundTurnTarget(sessionID)
 	if !ok {
 		return
@@ -92,19 +108,19 @@ func RunBackgroundTurn(sessionID string, events <-chan ai.StreamEvent, end func(
 	if !ok {
 		return
 	}
-	if first.Type == eventTypeDone || first.Type == eventTypeError || first.Type == statusCancelled {
-		// Nothing was produced: forward the terminal frame as-is (done / error /
-		// cancelled) so the client closes the run, but create no row.
-		//
-		// A terminal carrying a reason means the turn was ended rather than
-		// finishing (a stall watchdog firing before the agent emitted a single
-		// frame). There is no bubble to explain it on, so the log line is the
-		// only record — without it this failure is invisible everywhere.
-		if first.Reason != "" {
-			slog.Warn("background turn: ended before producing content",
-				"session", sessionID, "reason", first.Reason)
-		}
-		ws.EmitToSession(timeline, first)
+	if !backgroundTurnFirstFrameUsable(sessionID, timeline, first) {
+		return
+	}
+
+	// The wait above can last arbitrarily long (a background drain is silent
+	// until its task produces output), so shutdown may have started since the
+	// entry check. Persisting a placeholder now would leave the same
+	// streaming=1 orphan for the next startup to label as a second restart
+	// interruption. Nothing has been written yet — return, and the deferred
+	// retire()/end() release the claim and the route.
+	if IsShuttingDown() {
+		slog.Info("background turn: dropped before persisting, server is shutting down",
+			"session", sessionID)
 		return
 	}
 
@@ -171,6 +187,27 @@ func awaitFirstBackgroundEvent(ctx context.Context, events <-chan ai.StreamEvent
 	case <-ctx.Done():
 		return ai.StreamEvent{}, false
 	}
+}
+
+// backgroundTurnFirstFrameUsable reports whether the first frame means the turn
+// produced something, i.e. whether a bubble should be opened for it.
+//
+// A terminal frame as the very first frame means nothing was produced: it is
+// forwarded as-is (done / error / cancelled) so the client closes the run, but no
+// row is created. A terminal carrying a reason means the turn was ended rather
+// than finishing (a stall watchdog firing before the agent emitted a single
+// frame); there is no bubble to explain that on, so the log line is the only
+// record — without it this failure is invisible everywhere.
+func backgroundTurnFirstFrameUsable(sessionID, timeline string, first ai.StreamEvent) bool {
+	if first.Type != eventTypeDone && first.Type != eventTypeError && first.Type != statusCancelled {
+		return true
+	}
+	if first.Reason != "" {
+		slog.Warn("background turn: ended before producing content",
+			"session", sessionID, "reason", first.Reason)
+	}
+	ws.EmitToSession(timeline, first)
+	return false
 }
 
 // replayFirstBackgroundEvent re-yields the already-consumed first frame, then
