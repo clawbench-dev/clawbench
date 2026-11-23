@@ -198,7 +198,7 @@ func (c *ACPConn) Prompt(ctx context.Context, prompt []acp.ContentBlock, streamC
 		err = c.awaitBackgroundReply(ctx, promptCtx, conn, background, &resp)
 	}
 	c.emitPromptTailMetadata(resp, streamCh)
-	return nil
+	return err
 }
 
 // An accepted prompt must never be retried on a follow-up disconnect.

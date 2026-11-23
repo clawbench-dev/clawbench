@@ -337,6 +337,29 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 	}
 }
 
+// touchConnActivity records a notification as connection activity.
+//
+// Keeps the connection alive for async workflows (e.g. /deep-research): the
+// idle sweep must not close a connection that is still receiving events even
+// after Prompt returns and the session is unregistered from sessionRoutes.
+// This MUST be lock-free (atomic) — it runs on the ACP notification processing
+// goroutine, and RPCs like NewSession hold conn.mu while waiting for queued
+// notifications to be processed. Taking conn.mu here would deadlock.
+//
+// Two distinct signals: every notification refreshes connection liveness
+// (idle sweep), but only model-driven ones refresh the stall watchdog's
+// progress clock. Housekeeping notifications arrive on the agent's own
+// schedule and must not mask a turn whose model has stopped producing.
+func (c *ClawBenchACPClient) touchConnActivity(u acp.SessionUpdate) {
+	if c.connRef == nil {
+		return
+	}
+	c.connRef.TouchSessionUpdate()
+	if isModelProgressUpdate(u) {
+		c.connRef.TouchModelProgress()
+	}
+}
+
 // SessionUpdate converts ACP session update notifications to StreamEvents.
 // Called by the SDK's internal goroutine from Connection.receive().
 // It routes the update to the correct StreamEvent channel based on the
@@ -369,24 +392,7 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 		c.mergeAndSyncCommands(n.Update.AvailableCommandsUpdate.AvailableCommands)
 	}
 
-	// Keep the connection alive for async workflows (e.g. /deep-research):
-	// record this SessionUpdate as activity so the idle sweep doesn't close a
-	// connection that is still receiving events even after Prompt returns and
-	// the session is unregistered from sessionRoutes. This MUST be lock-free
-	// (atomic) — this callback runs on the ACP notification processing
-	// goroutine, and RPCs like NewSession hold conn.mu while waiting for queued
-	// notifications to be processed. Taking conn.mu here would deadlock.
-	//
-	// Two distinct signals: every notification refreshes connection liveness
-	// (idle sweep), but only model-driven ones refresh the stall watchdog's
-	// progress clock. Housekeeping notifications arrive on the agent's own
-	// schedule and must not mask a turn whose model has stopped producing.
-	if c.connRef != nil {
-		c.connRef.TouchSessionUpdate()
-		if isModelProgressUpdate(n.Update) {
-			c.connRef.TouchModelProgress()
-		}
-	}
+	c.touchConnActivity(n.Update)
 
 	// During LoadSession replay, collect messages in buffer instead of
 	// routing to WS stream channels. The load handler reads them after
