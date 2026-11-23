@@ -913,7 +913,7 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 				e.receivedTerminal = true
 				// A terminal event may name WHY the turn ended when it did not end
 				// on its own — today only a stall watchdog closing an adopted
-				// turn (ReasonTimeout). Recorded before the metadata merge so the
+				// turn (ReasonStalled). Recorded before the metadata merge so the
 				// bubble can explain itself: without it a turn that was cut off
 				// looks identical to one that finished typing.
 				if event.Type == eventTypeDone && event.Reason != "" {
@@ -1862,12 +1862,12 @@ func (e *SessionExecutor) buildContentJSON(blocks []model.ContentBlock, result R
 	} else if e.terminalReason != "" {
 		// The turn ended without being cancelled and without the backend saying
 		// it finished: the stall watchdog closed it because the agent stopped
-		// producing anything. Say so, and label it retryable (ReasonTimeout is
+		// producing anything. Say so, and label it retryable (ReasonStalled is
 		// in retryableWarningReasons) so the user gets a "continue" instead of a
 		// reply that appears to just stop mid-sentence.
 		blocks = append(blocks, model.ContentBlock{
 			Type:   blockTypeWarning,
-			Text:   "AI response timed out (no progress), reply may be incomplete",
+			Text:   "AI stopped making progress, reply may be incomplete",
 			Reason: e.terminalReason,
 		})
 	}

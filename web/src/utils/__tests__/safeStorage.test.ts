@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { storageGet, storageSet } from '../safeStorage'
+import { storageGet, storageRemove, storageSet } from '../safeStorage'
 
 // The jsdom localStorage is an accessor on globalThis; replacing it with a
 // plain value (or a throwing getter) is how we reproduce the broken
@@ -26,6 +26,13 @@ describe('safeStorage', () => {
     storageSet('probe', 'value')
     expect(storageGet('probe')).toBe('value')
     expect(localStorage.getItem('probe')).toBe('value')
+  })
+
+  it('removes a key through a real Storage', () => {
+    localStorage.clear()
+    storageSet('probe', 'value')
+    storageRemove('probe')
+    expect(storageGet('probe')).toBeNull()
   })
 
   it('returns null and stays silent when getItem is missing (Node 25/26)', () => {

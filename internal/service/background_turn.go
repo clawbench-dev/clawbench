@@ -95,6 +95,15 @@ func RunBackgroundTurn(sessionID string, events <-chan ai.StreamEvent, end func(
 	if first.Type == eventTypeDone || first.Type == eventTypeError || first.Type == statusCancelled {
 		// Nothing was produced: forward the terminal frame as-is (done / error /
 		// cancelled) so the client closes the run, but create no row.
+		//
+		// A terminal carrying a reason means the turn was ended rather than
+		// finishing (a stall watchdog firing before the agent emitted a single
+		// frame). There is no bubble to explain it on, so the log line is the
+		// only record — without it this failure is invisible everywhere.
+		if first.Reason != "" {
+			slog.Warn("background turn: ended before producing content",
+				"session", sessionID, "reason", first.Reason)
+		}
 		ws.EmitToSession(timeline, first)
 		return
 	}

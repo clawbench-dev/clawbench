@@ -147,9 +147,21 @@ func (c *ClawBenchACPClient) adoptBackgroundTurn(acpSessionID, requestID string)
 	// is new — reset here, so a stale timestamp from the previous turn cannot
 	// fire immediately.
 	conn.TouchModelProgress()
-	turn.stopStallWatchdog = conn.startStallWatchdog(context.Background(), func() {
+	stopWatchdog := conn.startStallWatchdog(context.Background(), func() {
 		c.terminateStalledBackgroundTurn(acpSessionID, turn)
 	})
+	// Publish the stop handle under the same lock RegisterSession reads it with.
+	// A user turn can take the session over while this watchdog is being armed;
+	// an unsynchronised write here raced that read. If the takeover already
+	// happened, the turn is no longer registered — release the watchdog now
+	// rather than leaving it to fire against a route that is gone.
+	c.mu.Lock()
+	if cur, registered := c.backgroundTurns[acpSessionID]; registered && cur == turn {
+		turn.stopStallWatchdog = stopWatchdog
+	} else {
+		stopWatchdog()
+	}
+	c.mu.Unlock()
 
 	// end is idempotent: the consumer calls it when it finishes, and the
 	// deferred call covers an early return (or a panic) inside it.
@@ -190,8 +202,9 @@ func (c *ClawBenchACPClient) terminateStalledBackgroundTurn(acpSessionID string,
 	}
 	// The terminal needs a reason, or the service layer records this as a
 	// normal completion and the user is left with a reply that stops mid-word
-	// and no explanation. Timeout is the honest label: the turn did not end,
-	// it was ended.
+	// and no explanation. ReasonStalled is the honest label: the turn did not
+	// end, it was ended — and unlike ReasonTimeout it stays retryable, because
+	// the turn budget was never spent.
 	deliverBackgroundTurnEnd(turn, ReasonStalled)
 }
 
@@ -305,8 +318,9 @@ func (c *ClawBenchACPClient) closeBackgroundTurnOnSessionEnd(acpSessionID string
 // deliverBackgroundTurnEnd sends the adopted turn's terminal event.
 //
 // reason carries why the turn ended when it did not end on its own (a stall
-// timeout); empty means the agent reported session_end. The executor records
-// the non-empty case as a timeout, so the reply is not presented as complete.
+// watchdog firing); empty means the agent reported session_end. The executor
+// records the non-empty case as a stalled turn, so the reply is not presented
+// as complete.
 //
 // Never blocks: the caller runs on the SDK's shared notification goroutine,
 // where blocking can overflow the queue and kill the connection. If the channel

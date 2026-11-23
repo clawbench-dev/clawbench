@@ -145,7 +145,10 @@ while [ ${#pending[@]} -gt 0 ] && [ "$round" -lt "$ROUNDS" ]; do
 done
 
 for name in ${pending[@]+"${pending[@]}"}; do
-  echo "  ✗ $name：$ROUNDS 轮共 $((ROUNDS * WAIT_SECONDS))s 内版本没有出现" >&2
+  # 不要在这里做 $((ROUNDS * WAIT_SECONDS))：WAIT_SECONDS 允许是小数（测试用
+  # 0.3），bash 算术只认整数，展开失败会让这行 echo 被静默跳过，真正失败的包
+  # 反而在 stderr 里没有名字。
+  echo "  ✗ $name：$ROUNDS 轮（每轮最多 ${WAIT_SECONDS}s）内版本没有出现" >&2
   failed+=("$name")
 done
 

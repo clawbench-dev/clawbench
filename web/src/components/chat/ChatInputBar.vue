@@ -1753,7 +1753,8 @@ function onTextareaKeydown(e) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
       e.preventDefault()
       // Same rule as handleSendClick: an empty composer (no text) is not a
-      // message — leave the keystroke alone instead of emitting an empty send.
+      // message. Swallow the keystroke rather than sending — a bare Ctrl/Cmd+Enter
+      // has no native newline meaning to preserve here.
       if (inputText.value.trim()) dispatchSend(inputText.value.trim())
     }
     return

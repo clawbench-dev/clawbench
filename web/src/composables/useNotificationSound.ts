@@ -11,7 +11,7 @@
 
 import { appLog } from '@/utils/appLog'
 import { localConfig } from '@/composables/useSettingsConfig'
-import { onAppResume } from '@/composables/useAppForeground'
+import { onAppResume, useAppForeground } from '@/composables/useAppForeground'
 
 const TAG = 'NotificationSound'
 
@@ -127,13 +127,29 @@ export function playNotificationSound() {
 let pendingChime = false
 let resumeFlushArmed = false
 
+/**
+ * True while nobody is looking at the app.
+ *
+ * The native foreground state is the authoritative half: Android's WebView does
+ * not reliably flip `document.visibilityState` on onPause (see useAppForeground),
+ * so reading visibility alone would treat a backgrounded phone as visible and
+ * play the chime in the user's pocket — the exact #728 symptom. Either source
+ * saying "background" is enough; the Page Visibility API is the only source on
+ * desktop browsers and in the Electron shell.
+ */
 function isPageHidden(): boolean {
+  // Guarded like the visibility read below: this module is imported in
+  // environments without a window (unit tests under the node environment).
+  if (typeof window !== 'undefined' && !useAppForeground().appInForeground.value) return true
   return typeof document !== 'undefined' && document.visibilityState === 'hidden'
 }
 
 function playPendingChime() {
   if (!pendingChime) return
-  if (isPageHidden()) return
+  // Only the authoritative foreground state can veto here. This runs on a
+  // RESUME signal, and Android's visibilityState can still read 'hidden' right
+  // after a resume — consulting it would drop the queued chime entirely.
+  if (typeof window !== 'undefined' && !useAppForeground().appInForeground.value) return
   pendingChime = false
   playChime()
 }
@@ -142,7 +158,10 @@ function armResumeFlush() {
   if (resumeFlushArmed) return
   resumeFlushArmed = true
   if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', playPendingChime)
+    document.addEventListener('visibilitychange', () => {
+      // Only a transition TO visible is a resume; a hidden event must not flush.
+      if (document.visibilityState === 'visible') playPendingChime()
+    })
   }
   onAppResume(playPendingChime)
 }

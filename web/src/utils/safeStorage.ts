@@ -44,3 +44,12 @@ export function storageSet(key: string, value: string): void {
     // Quota exceeded / blocked — callers treat storage as best-effort.
   }
 }
+
+/** Remove a key. No-op when storage is missing, incomplete, or blocked. */
+export function storageRemove(key: string): void {
+  try {
+    usableStorage()?.removeItem(key)
+  } catch {
+    // Blocked mid-session — callers treat storage as best-effort.
+  }
+}

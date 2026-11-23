@@ -170,6 +170,43 @@ describe('useNotificationSound', () => {
     }
   })
 
+  it('treats the native background signal as hidden even when visibilityState stays visible', async () => {
+    // Android's WebView does not reliably flip document.visibilityState on
+    // onPause. Reading visibility alone therefore played the chime in the
+    // user's pocket — the #728 symptom this deferral exists to remove.
+    mockLocalConfig.notificationSound = true
+    const chimes = stubAudioContext()
+    const { playNotificationSound, _resetSoundThrottleForTesting } =
+      await import('@/composables/useNotificationSound')
+    _resetSoundThrottleForTesting()
+    const { useAppForeground } = await import('@/composables/useAppForeground')
+    useAppForeground()
+    const w = window as unknown as {
+      __setAppForeground?: (fg: boolean) => void
+      __clawbenchAppResume?: () => void
+    }
+
+    w.__setAppForeground?.(false)
+    // Android can leave visibilityState at 'hidden' even after the app is back
+    // in front; the native resume hook must still flush the queued chime.
+    const vis = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    // Push past the resume-dedupe window other cases may have opened.
+    const base = Date.now()
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => base + 5000)
+    try {
+      playNotificationSound()
+      expect(chimes()).toBe(0)
+
+      w.__clawbenchAppResume?.()
+      expect(chimes()).toBe(1)
+    } finally {
+      nowSpy.mockRestore()
+      vis.mockRestore()
+      w.__setAppForeground?.(true)
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('chimes immediately when nothing was queued while visible', async () => {
     mockLocalConfig.notificationSound = true
     const chimes = stubAudioContext()

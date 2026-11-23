@@ -117,6 +117,7 @@ import { useAcpSession, type AcpSessionInfo } from '@/composables/useAcpSession'
 import { useAgents } from '@/composables/useAgents'
 import { getBackendDisplayName } from '@/utils/backendNames'
 import { formatRelativeTime } from '@/utils/format'
+import { storageGet, storageRemove, storageSet } from '@/utils/safeStorage'
 import { store } from '@/stores/app.ts'
 
 const props = defineProps<{
@@ -167,9 +168,9 @@ function hiddenStorageKey(agentId: string): string {
 
 function readHiddenIds(agentId: string): Set<string> {
   if (!agentId) return new Set()
+  const raw = storageGet(hiddenStorageKey(agentId))
+  if (!raw) return new Set()
   try {
-    const raw = localStorage.getItem(hiddenStorageKey(agentId))
-    if (!raw) return new Set()
     const parsed = JSON.parse(raw)
     return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [])
   } catch {
@@ -179,21 +180,16 @@ function readHiddenIds(agentId: string): Set<string> {
 
 function writeHiddenIds(agentId: string, ids: Set<string>): void {
   if (!agentId) return
-  try {
-    if (ids.size === 0) {
-      localStorage.removeItem(hiddenStorageKey(agentId))
-    } else {
-      localStorage.setItem(hiddenStorageKey(agentId), JSON.stringify([...ids]))
-    }
-  } catch { /* ignore storage quota errors */ }
+  if (ids.size === 0) {
+    storageRemove(hiddenStorageKey(agentId))
+  } else {
+    storageSet(hiddenStorageKey(agentId), JSON.stringify([...ids]))
+  }
 }
 
 const hiddenSessionIds = ref<Set<string>>(readHiddenIds(props.agentId))
 const showHidden = ref(false)
-const hideUntitled = ref(false)
-try {
-  hideUntitled.value = localStorage.getItem(HIDE_UNTITLED_STORAGE_KEY) === '1'
-} catch { /* ignore */ }
+const hideUntitled = ref(storageGet(HIDE_UNTITLED_STORAGE_KEY) === '1')
 
 watch(() => props.agentId, (aid) => {
   hiddenSessionIds.value = readHiddenIds(aid)
@@ -223,9 +219,7 @@ function restoreAllHidden(): void {
 
 function toggleHideUntitled(): void {
   hideUntitled.value = !hideUntitled.value
-  try {
-    localStorage.setItem(HIDE_UNTITLED_STORAGE_KEY, hideUntitled.value ? '1' : '0')
-  } catch { /* ignore */ }
+  storageSet(HIDE_UNTITLED_STORAGE_KEY, hideUntitled.value ? '1' : '0')
 }
 
 /**

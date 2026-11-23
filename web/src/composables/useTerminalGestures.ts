@@ -437,9 +437,12 @@ export function useTerminalGestures(
 
     if (wasTracking && !wasScrolling && !wasMoved) {
       const endTouch = e.changedTouches?.[0]
+      // No end coordinate means the lift position cannot be verified (only
+      // synthetic events do this). Fail closed: treating it as a tap would open
+      // the keyboard on a press whose movement we never saw.
       const endMoved = endTouch
         ? Math.abs(endTouch.clientX - startX) > TAP_THRESHOLD || Math.abs(endTouch.clientY - startY) > TAP_THRESHOLD
-        : false
+        : true
       // startTime is always set when tracking started, so a 0 here means the
       // press was never recorded — treat that as "not a tap" rather than a hit.
       const isQuickTap = startTime > 0 && Date.now() - startTime < 400
