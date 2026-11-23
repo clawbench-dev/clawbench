@@ -2514,6 +2514,140 @@ describe('loadSessionsOnce', () => {
 // switchSession — recalculate chatUnread after switching
 // ───────────────────────────────────────────────────────────
 
+// ── 404 on the OPEN session: leave it like a local archive would ──
+//
+// Deleting/archiving a session on another device leaves this client with a
+// ghost: the next loadHistory gets 404 SessionNotFound. The recovery must not
+// land on an empty panel, and it must not silently create a new session when
+// the project still has others (that would move the user off a conversation
+// that still exists). The rule is the same one a local archive uses: first
+// remaining session, else a new one.
+
+describe('loadHistory 404 recovery (session removed elsewhere)', () => {
+  beforeEach(() => {
+    resetMockState()
+    resetChatSessionState()
+    resetAdditionalMocks()
+  })
+
+  /** Route fetch by URL so the test does not depend on call order. */
+  function routeFetch(opts: {
+    sessions: Array<{ id: string }> | 'error'
+    history?: (id: string) => Response
+    createdId?: string
+  }) {
+    const calls: Array<{ url: string; method: string }> = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url)
+      const method = (init?.method || 'GET').toUpperCase()
+      calls.push({ url: u, method })
+      if (u.startsWith('/api/ai/sessions')) {
+        if (method === 'POST') {
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ ok: true, sessionId: opts.createdId || 'new-s1' }),
+          })
+        }
+        if (opts.sessions === 'error') return Promise.reject(new Error('network down'))
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: opts.sessions, totalCount: opts.sessions.length }),
+        })
+      }
+      if (u.includes('/api/ai/chat/read')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+      }
+      if (u.includes('session_id=gone-s1')) {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          json: () => Promise.resolve({ error: '会话不存在', msgKey: 'SessionNotFound' }),
+        })
+      }
+      const m = /session_id=([^&]+)/.exec(u)
+      const id = m ? decodeURIComponent(m[1]) : ''
+      if (opts.history) return Promise.resolve(opts.history(id))
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: id, messages: [], total: 0, running: false }),
+      })
+    }) as unknown as typeof fetch
+    return calls
+  }
+
+  it('switches to the first remaining session instead of creating an empty one', async () => {
+    const calls = routeFetch({ sessions: [{ id: 'kept-s1' }, { id: 'kept-s2' }] })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'gone-s1'
+    options.currentSessionId.value = 'gone-s1'
+
+    await session.loadHistory(false, false, false, true)
+    await vi.waitFor(() => expect(session.currentSessionId.value).toBe('kept-s1'))
+
+    // It loaded the surviving session …
+    expect(calls.some(c => c.url.includes('session_id=kept-s1'))).toBe(true)
+    // … and never created a new one.
+    expect(calls.some(c => c.url.startsWith('/api/ai/sessions') && c.method === 'POST')).toBe(false)
+  })
+
+  it('creates a session when the project has none left', async () => {
+    const calls = routeFetch({ sessions: [] })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'gone-s1'
+    options.currentSessionId.value = 'gone-s1'
+
+    await session.loadHistory(false, false, false, true)
+    await vi.waitFor(() => expect(session.currentSessionId.value).toBe('new-s1'))
+
+    expect(calls.some(c => c.url.startsWith('/api/ai/sessions') && c.method === 'POST')).toBe(true)
+  })
+
+  it('never re-selects the removed session from a stale list', async () => {
+    // A cached/partial list can still contain the row the server just said is
+    // gone; switching back into it would land on a panel whose every request
+    // 404s.
+    routeFetch({ sessions: [{ id: 'gone-s1' }, { id: 'kept-s1' }] })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'gone-s1'
+    options.currentSessionId.value = 'gone-s1'
+
+    await session.loadHistory(false, false, false, true)
+    await vi.waitFor(() => expect(session.currentSessionId.value).toBe('kept-s1'))
+  })
+
+  it('leaves the session the user opened while the recovery was in flight', async () => {
+    // The replacement pick is async; if the user opened something in the
+    // meantime, that choice wins over anything we would pick.
+    const calls = routeFetch({ sessions: [{ id: 'kept-s1' }] })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'gone-s1'
+    options.currentSessionId.value = 'gone-s1'
+
+    await session.loadHistory(false, false, false, true)
+    // Runs before the 0ms recovery timer (timers are macrotasks).
+    mockState.currentSessionId = 'user-picked'
+    options.currentSessionId.value = 'user-picked'
+
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(session.currentSessionId.value).toBe('user-picked')
+    // No switch/create decision was executed against the server list.
+    expect(calls.some(c => c.url.startsWith('/api/ai/sessions') && c.method === 'GET')).toBe(false)
+  })
+
+  it('does not toast when the recovery list fetch fails', async () => {
+    routeFetch({ sessions: 'error' })
+    const { session, options } = createSessionInternal()
+    mockState.currentSessionId = 'gone-s1'
+    options.currentSessionId.value = 'gone-s1'
+
+    await session.loadHistory(false, false, false, true)
+    await new Promise((r) => setTimeout(r, 10))
+
+    expect(mockToastFn).not.toHaveBeenCalled()
+  })
+})
+
 describe('switchSession', () => {
   let originalFetch: typeof globalThis.fetch
 

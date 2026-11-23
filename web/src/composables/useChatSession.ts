@@ -26,6 +26,7 @@ import { hasChatScrollPosition, shouldRestoreChatScroll } from '@/utils/chatScro
 import { markSessionRead as markSessionReadRequest } from '@/utils/sessionRead'
 import { markVisibleSessionRead } from '@/composables/sessionReadGate'
 import { takePendingOpenSession } from '@/composables/usePendingSessionOpen'
+import { planRemoteRemoval } from '@/composables/useRemoteSessionRemoval'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -797,12 +798,16 @@ export function useChatSession(options: UseChatSessionOptions) {
         // session or create a new one).
         if (resp.status === 404 && errData.msgKey === 'SessionNotFound' && currentSessionId.value) {
           appLog.w(TAG, 'loadHistory: session not found, clearing stale sessionId and recovering')
+          // Remember WHICH session vanished before clearing the id — the
+          // replacement chooser needs it to avoid re-selecting a row that a
+          // stale list might still contain.
+          const goneId = currentSessionId.value
           // A parked "open this message" request targets this session by id and
           // is only consumed when the current session matches. The session is
           // provably gone, so the request can never be satisfied — leaving it
           // would make a LATER open of the same id jump to a stale message and
           // report it as missing.
-          discardPendingMessageNavigation(currentSessionId.value)
+          discardPendingMessageNavigation(goneId)
           currentSessionId.value = ''
           // Resolve deferred and clean up in-flight state before re-invoking
           // so the finally block doesn't double-resolve or flicker switching.
@@ -815,13 +820,16 @@ export function useChatSession(options: UseChatSessionOptions) {
           // land on a REAL session, not on an empty panel. Clearing the id and
           // re-triggering loadHistory recovers "the latest session" only when
           // the project still has one; when it does not, the retry bails and
-          // the user is left staring at nothing. Create the replacement here.
+          // the user is left staring at nothing. Pick the replacement the same
+          // way a local archive does — first remaining session, else a new one.
           setTimeout(() => {
-            if (!currentSessionId.value) {
-              createSession('').catch(e => appLog.w(TAG, 'recover after 404 createSession failed:', e))
+            if (currentSessionId.value) {
+              // The user opened another session while we were recovering —
+              // reload THAT one and never drag them off it.
+              loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate)
               return
             }
-            loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate)
+            void leaveGoneSession(goneId)
           }, 0)
           return
         }
@@ -1281,6 +1289,32 @@ export function useChatSession(options: UseChatSessionOptions) {
           appLog.w(TAG, 'Failed to reload messages after createSession error:', e)
         })
       }
+    }
+  }
+
+  /**
+   * Leave a session that no longer exists on the server (deleted or archived
+   * by another device, discovered by a 404). Behaves exactly like a LOCAL
+   * archive of the open session: switch to the first remaining session, or
+   * create a fresh one when the project has none left. Never leaves the panel
+   * empty and never re-selects the session that just vanished.
+   */
+  async function leaveGoneSession(goneId: string) {
+    try {
+      const resp = await fetch('/api/ai/sessions')
+      const data = await resp.json()
+      // The list fetch is an async gap: the user may have opened a session of
+      // their own by now, which takes precedence over anything we pick.
+      if (currentSessionId.value) return
+      const sessions: Array<{ id: string }> = Array.isArray(data?.sessions) ? data.sessions : []
+      // planRemoteRemoval is the shared rule for "which session takes over";
+      // passing goneId as the current id means "the one that just went away",
+      // which is exactly what it filters out.
+      const outcome = planRemoteRemoval(goneId, goneId, sessions)
+      if (outcome.action === 'switch') await switchSession(outcome.sessionId)
+      else if (outcome.action === 'create') await createSession('')
+    } catch (e) {
+      appLog.w(TAG, 'recover after session disappeared failed:', e)
     }
   }
 
