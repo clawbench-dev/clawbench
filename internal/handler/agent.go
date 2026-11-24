@@ -1509,7 +1509,7 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			// Keep the in-memory runtime prompt in step with the new text. The
 			// stored value is CustomSystemPrompt; this composition is derived and
 			// is redone from scratch on the next load.
-			agent.RuntimeSystemPrompt = model.ComposeSystemPrompt(agent.CustomSystemPrompt)
+			agent.RuntimeSystemPrompt = model.ComposeSystemPrompt(agent.CustomSystemPrompt, agent.BuiltinBackend)
 		}
 		if ap.SortOrder != nil {
 			agent.SortOrder = *ap.SortOrder
