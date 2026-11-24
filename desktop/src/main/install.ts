@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { inflateRawSync, gunzipSync } from 'node:zlib'
 import { app } from 'electron'
-import { normalizeVersion } from '../shared/version'
+import { compareVersions, normalizeVersion } from '../shared/version'
 import { httpGetBuffer } from './httpGet'
 
 export { httpGetBuffer } from './httpGet'
@@ -759,6 +759,14 @@ export function selectStartupVersion(
   // RAW `pointed`, because versionDir() must resolve the directory the pointer
   // actually names.
   if (normalizeVersion(pointed) === normalizeVersion(running)) return ''
+  // A pointer naming an OLDER version never takes over. The pointer is written
+  // by an in-app upgrade, so its only job is to move the user FORWARD; a stale
+  // one left behind by an old install used to hijack every later launch and
+  // silently revert the app — a hand-installed v0.147 would start the v0.132
+  // shell from ~/.clawbench-desktop/app-v0.132.0 and lose everything fixed
+  // after v0.132 (the desktop clipboard bridge among it). Starting a newer
+  // binary is an explicit choice; honour it.
+  if (compareVersions(pointed, running) < 0) return ''
   return pointed
 }
 
@@ -768,6 +776,8 @@ export function selectStartupVersion(
  *
  * Called once at startup. Guards, in order:
  *   - no pointer / same version          → nothing to do
+ *   - the pointer names an OLDER version → the stale pointer is dropped and this
+ *     process keeps running (see selectStartupVersion)
  *   - the pointed version's directory or executable is missing (a deleted or
  *     half-written upgrade) → clear the pointer and continue with THIS version,
  *     so a broken upgrade can never leave the user unable to start the app
@@ -786,7 +796,16 @@ export function selectStartupVersion(
  */
 export async function handOffToPointedVersion(runningVersion: string): Promise<boolean> {
   const pointed = readCurrentVersion()
-  if (selectStartupVersion(pointed, runningVersion) === '') return false
+  if (selectStartupVersion(pointed, runningVersion) === '') {
+    // A pointer that names an older version can never be applied again (see
+    // selectStartupVersion), so drop it rather than leave a file that looks like
+    // a pending upgrade. A pointer naming the running version is left alone:
+    // that is the normal state right after a restart.
+    if (pointed && normalizeVersion(pointed) !== normalizeVersion(runningVersion)) {
+      clearPointer()
+    }
+    return false
+  }
 
   const bin = executableIn(versionDir(pointed))
   let sameFile = false
