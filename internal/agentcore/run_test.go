@@ -262,6 +262,43 @@ func TestRun_EmptyPolicyDeclaresNoTools(t *testing.T) {
 	}
 }
 
+// TestRun_UnknownToolIsFlaggedNotFound pins the FACT half of the fix: a call to
+// a tool that does not exist carries Event.ToolNotFound, so cleanup can drop the
+// block without reading the backend's error wording. A tool that DOES exist must
+// stay unflagged, or a genuine failure would be deleted from the transcript.
+func TestRun_UnknownToolIsFlaggedNotFound(t *testing.T) {
+	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{
+		toolRound("c1", "AskUserQuestion", `{"questions":[]}`),
+		toolRound("c2", "read", `{"file_path":"a.txt"}`),
+		textRound("sorry"),
+	}}
+
+	flagged := map[string]bool{}
+	seen := map[string]bool{}
+	for ev := range Run(context.Background(), Spec{
+		Client: client, Prompt: "hi", WorkDir: t.TempDir(),
+		Policy: model.ToolPolicy{Allow: []string{model.CapFSRead}},
+	}) {
+		if ev.Kind != EventToolEnd {
+			continue
+		}
+		seen[ev.ToolName] = true
+		flagged[ev.ToolName] = ev.ToolNotFound
+	}
+
+	for _, name := range []string{"AskUserQuestion", "read"} {
+		if !seen[name] {
+			t.Fatalf("the %q call must be reported to the UI, got %v", name, seen)
+		}
+	}
+	if !flagged["AskUserQuestion"] {
+		t.Fatal("a call to a nonexistent tool must be flagged NotFound")
+	}
+	if flagged["read"] {
+		t.Fatal("a call to an existing tool must not be flagged NotFound")
+	}
+}
+
 // TestRun_ExecGrantsBash pins the capability→tool mapping from the other side.
 func TestRun_ExecGrantsBash(t *testing.T) {
 	client := &scriptedClient{rounds: []func(llm.Request) []llm.Event{textRound("ok")}}

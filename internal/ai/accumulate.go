@@ -237,6 +237,9 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 				if event.Tool.Status != "" {
 					(*blocks)[i].Status = event.Tool.Status
 				}
+				if event.Tool.NotFoundThisRun {
+					(*blocks)[i].NotFoundThisRun = true
+				}
 				found = true
 				upsertToolCallMeta(&(*blocks)[i])
 				break
@@ -253,6 +256,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 					Done:             event.Tool.Done,
 					Output:           event.Tool.Output,
 					Status:           event.Tool.Status,
+					NotFoundThisRun:  event.Tool.NotFoundThisRun,
 					DurationMs:       event.Tool.DurationMs,
 					ParentToolCallID: event.Tool.ParentToolCallID,
 					MemberName:       event.MemberName,

@@ -809,6 +809,11 @@ type ToolCall struct {
 	// Injected by SessionExecutor when the tool completes; backend parsers
 	// leave it 0 (unknown).
 	DurationMs int `json:"duration_ms,omitempty"`
+	// NotFoundThisRun reports that the call named a tool this run does not
+	// have. Set by the builtin backend from the agentcore event flag, so the
+	// rejected-call cleanup can drop the block by FACT rather than by matching
+	// backend-specific error prose. Backends that cannot know stay false.
+	NotFoundThisRun bool `json:"not_found_this_run,omitempty"`
 	// ParentToolCallID is the id of the parent Agent tool call that spawned the
 	// sub-agent which produced this tool call, or "" for top-level calls. Set
 	// by the ACP parse layer from the backend's _meta parent-link key (see

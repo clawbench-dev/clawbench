@@ -163,11 +163,17 @@ type Event struct {
 	Reasoning string
 
 	// Tool fields, set on EventToolStart / EventToolEnd.
-	ToolCallID   string
-	ToolName     string
-	ToolInput    string
-	ToolOutput   string
-	ToolIsError  bool
+	ToolCallID  string
+	ToolName    string
+	ToolInput   string
+	ToolOutput  string
+	ToolIsError bool
+	// ToolNotFound marks a call the model made to a tool this run does not
+	// have (a hallucinated name). It is a FACT known here — the tool index was
+	// consulted — not an inference from the error text, so downstream code can
+	// drop the block without pattern-matching prose that any backend may word
+	// differently.
+	ToolNotFound bool
 	ToolDuration time.Duration
 
 	Usage *llm.Usage
@@ -1356,6 +1362,7 @@ func (r *runner) executeTool(env tools.Env, c llm.ToolCall) *llm.ToolResult {
 		ToolInput:    c.Arguments,
 		ToolOutput:   res.Text,
 		ToolIsError:  res.IsError,
+		ToolNotFound: !ok,
 		ToolDuration: elapsed,
 	})
 

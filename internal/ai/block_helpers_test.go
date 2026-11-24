@@ -72,6 +72,44 @@ func TestRemoveRejectedToolBlocks_KeepsNonRejectedErrors(t *testing.T) {
 	}
 }
 
+// TestRemoveRejectedToolBlocks_RemovesByFlagWithoutReadingOutput pins the main
+// path of the fix: a backend that KNOWS the tool was missing flags the call, and
+// the block is dropped even though its message says nothing about a CLI. The
+// 78321 duplicate card came from exactly this — the builtin backend's
+// `There is no tool named "AskUserQuestion".` matched no text marker, so the
+// failed call rendered next to the real card.
+func TestRemoveRejectedToolBlocks_RemovesByFlagWithoutReadingOutput(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "text", Text: "问题在下面"},
+		{
+			Type: "tool_use", Name: "AskUserQuestion", ID: "2", Status: "error",
+			Output:          `There is no tool named "AskUserQuestion". Available tools: read, bash.`,
+			NotFoundThisRun: true,
+		},
+		{Type: "tool_use", Name: "AskUserQuestion", ID: "3", Status: "success"},
+	}
+	result := RemoveRejectedToolBlocks(blocks)
+	if len(result) != 2 {
+		t.Fatalf("expected the failed call to be dropped and the real card kept, got %+v", result)
+	}
+	if result[1].Type != "tool_use" || result[1].ID != "3" {
+		t.Fatalf("the successful card must survive, got %+v", result[1])
+	}
+}
+
+// TestRemoveRejectedToolBlocks_ErrorTextWithoutFlagIsNotEnough pins the other
+// side: an ordinary failure whose text merely mentions a missing name must NOT
+// be deleted, or the transcript would lose real tool calls.
+func TestRemoveRejectedToolBlocks_ErrorTextWithoutFlagIsNotEnough(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "tool_use", Name: "bash", ID: "4", Status: "error", Output: "cat: no such file or directory"},
+	}
+	result := RemoveRejectedToolBlocks(blocks)
+	if len(result) != 1 {
+		t.Fatalf("a genuine failure must be kept, got %+v", result)
+	}
+}
+
 // --- ConvertAskQuestionBlocks ---
 
 func TestConvertAskQuestionBlocks_XMLFormat(t *testing.T) {

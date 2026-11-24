@@ -96,6 +96,32 @@ func TestTranslate_ToolEndCarriesInputOutputAndStatus(t *testing.T) {
 	}
 }
 
+// TestTranslate_ToolEndCarriesNotFoundFlag pins that the "this tool does not
+// exist" fact survives translation. Without it the downstream cleanup has only
+// the error text to go on, which is how a hallucinated AskUserQuestion call came
+// to render as a duplicate of the real card.
+func TestTranslate_ToolEndCarriesNotFoundFlag(t *testing.T) {
+	tr := &translator{}
+	got := tr.translate(agentcore.Event{
+		Kind: agentcore.EventToolEnd, ToolCallID: "c1", ToolName: "AskUserQuestion",
+		ToolOutput: `There is no tool named "AskUserQuestion".`, ToolIsError: true, ToolNotFound: true,
+	})
+	if len(got) != 1 || got[0].Tool == nil {
+		t.Fatalf("expected one tool_use event, got %+v", got)
+	}
+	if !got[0].Tool.NotFoundThisRun {
+		t.Fatal("the not-found fact must reach the tool call")
+	}
+
+	got = tr.translate(agentcore.Event{
+		Kind: agentcore.EventToolEnd, ToolCallID: "c2", ToolName: "bash",
+		ToolOutput: "command failed", ToolIsError: true,
+	})
+	if got[0].Tool.NotFoundThisRun {
+		t.Fatal("a genuine failure must not be flagged as a missing tool")
+	}
+}
+
 // TestTranslate_ToolStartIsNotDone pins that the opening frame must not claim
 // the call finished, or the card renders as complete while it is still running.
 func TestTranslate_ToolStartIsNotDone(t *testing.T) {

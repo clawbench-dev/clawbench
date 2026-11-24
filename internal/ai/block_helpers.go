@@ -20,17 +20,36 @@ func StringsContainsAnyBlock(blocks []model.ContentBlock, substr string) bool {
 	return false
 }
 
-// RemoveRejectedToolBlocks strips tool_use blocks that were rejected by the CLI
-// (Status=="error" and output contains "not found in agent cli"). These occur when
-// the AI model hallucinates tool names (e.g. "/commit" as a slash command, or
-// "AskUserQuestion" when <clawbench-ask-question> XML tags are also emitted). The rejected
-// tool_use block and its matching warning are confusing noise for the user.
-// Also removes warning blocks containing the "Tool <name> not found in agent cli" pattern.
+// rejectedToolOutputMarkers are the only error texts RemoveRejectedToolBlocks
+// still reads. They exist for backends that report a hallucinated tool name as
+// a plain FAILED call with no structured signal — their wording is all we get.
+// Kept as narrow as possible: a false positive here silently deletes a real
+// tool call from the transcript.
+var rejectedToolOutputMarkers = []string{
+	"not found in agent cli", // ACP agents (Claude Code, CodeBuddy, ...)
+}
+
+// RemoveRejectedToolBlocks strips tool_use blocks for tools that DO NOT EXIST.
+// These occur when the model hallucinates a tool name (e.g. "/commit" as a
+// slash command, or "AskUserQuestion" when the question was meant to go through
+// the ask-question card path). The block and its matching warning are noise:
+// the user sees a fake failure, and when the invented name collides with a real
+// card name it renders as a DUPLICATE of the card that followed.
+//
+// Detection order is deliberate:
+//
+//  1. NotFoundThisRun — the backend KNEW the tool was missing (see
+//     ai.ToolCall.NotFoundThisRun). Fact, not inference; works regardless of how
+//     the backend words the message.
+//  2. rejectedToolOutputMarkers — narrow fallback for backends that can only
+//     report a failure and leave the reason in the text.
+//
+// Also removes warning blocks referencing a rejected tool name.
 func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Collect names of rejected tools from failed tool_use blocks
 	rejectedNames := make(map[string]bool)
 	for _, block := range blocks {
-		if block.Type == "tool_use" && block.Status == "error" && strings.Contains(block.Output, "not found in agent cli") {
+		if block.Type == "tool_use" && block.Status == "error" && isRejectedToolCall(block) {
 			rejectedNames[block.Name] = true
 		}
 	}
@@ -43,7 +62,7 @@ func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 		// Remove failed tool_use blocks for rejected tool names
 		if block.Type == "tool_use" && block.Status == "error" && rejectedNames[block.Name] {
 			slog.Info(
-				"removing rejected tool_use block from CLI",
+				"removing rejected tool_use block",
 				slog.String("name", block.Name),
 				slog.String("id", block.ID),
 				slog.String("output", block.Output),
@@ -70,6 +89,20 @@ func RemoveRejectedToolBlocks(blocks []model.ContentBlock) []model.ContentBlock 
 		filtered = append(filtered, block)
 	}
 	return filtered
+}
+
+// isRejectedToolCall reports whether a failed tool_use block is a call to a
+// tool that does not exist at all.
+func isRejectedToolCall(block model.ContentBlock) bool {
+	if block.NotFoundThisRun {
+		return true
+	}
+	for _, marker := range rejectedToolOutputMarkers {
+		if strings.Contains(block.Output, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // ConvertAskQuestionBlocks detects <clawbench-ask-question> tags in text ContentBlocks,
