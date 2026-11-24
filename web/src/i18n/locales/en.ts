@@ -789,6 +789,8 @@ export default {
     savedServers: 'Saved Servers',
     switchServer: 'Switch server',
     logout: 'Logout',
+    versionServer: 'Server {v}',
+    versionClient: 'Client {v}',
   },
   serverSwitch: {
     title: 'Switch server',

@@ -793,6 +793,8 @@ export default {
     savedServers: '已保存服务器',
     switchServer: '切换服务端',
     logout: '登出',
+    versionServer: '服务端 {v}',
+    versionClient: '客户端 {v}',
   },
   serverSwitch: {
     title: '切换服务端',
