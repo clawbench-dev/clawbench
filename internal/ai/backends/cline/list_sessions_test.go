@@ -117,3 +117,27 @@ func TestRunClineHistory_RealCLI(t *testing.T) {
 	// The count depends on the machine, so only the decode is asserted.
 	_ = records
 }
+
+// The history subcommand must run the CLI binary, never a wrapper's first token:
+// `npx history --json` answers an empty list without an error, which would make
+// the @resume drawer silently lose every session.
+func TestClineBinaryIgnoresWrappers(t *testing.T) {
+	cases := map[string]string{
+		"cline --acp":                "cline",
+		"env FOO=1 cline --acp":      "cline",
+		"npx -y cline --acp":         "cline",
+		"npx @cline/cli --acp":       "cline",
+		"/opt/cline/bin/cline --acp": "/opt/cline/bin/cline",
+		"my-cline-fork --acp":        "my-cline-fork",
+		"":                           "cline",
+	}
+	for command, want := range cases {
+		agent := &model.Agent{AcpCommand: command}
+		if got := clineBinary(agent); got != want {
+			t.Errorf("clineBinary(%q) = %q, want %q", command, got, want)
+		}
+	}
+	if got := clineBinary(nil); got != "cline" {
+		t.Errorf("clineBinary(nil) = %q, want cline", got)
+	}
+}

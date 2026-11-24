@@ -60,7 +60,7 @@
 
 有的后端在**会话建立之前**就要知道模型：qwen 的 openai 鉴权不给模型直接 `-32000`（且请求里用的就是这个 id），copilot 的 BYOK 不给模型拒绝启动。这类后端声明 `ProviderEnvSpec.ModelEnv`（变量名），`BuildProviderEnv` 自动填 **agent 固定的模型**（来自 provider 时），没有就填 **provider 的 DefaultModel**，两者都没有则不注入（让后端自己报「缺模型」比塞一个端点没服务的 id 更好）。
 
-它是**进程级默认值**，不是会话级切换：qwen 在 BYOK 下换模型要改 provider 的默认模型；copilot 的候选集在建会话时就固定成 `auto` + 这一个 id。
+它是**进程级默认值**，不是会话级切换：qwen 在 BYOK 下换模型要改 provider 的默认模型；copilot 的候选集在建会话时就固定成 `auto` + 这一个 id，且 `auto` 只在订阅账号下可选（BYOK 下切过去报 `-32603 Auto is unavailable`）。
 
 ## 注入实现
 

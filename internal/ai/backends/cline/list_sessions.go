@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -57,12 +59,7 @@ const clineHistoryTimeout = 30 * time.Second
 var clineHistory = runClineHistory
 
 func runClineHistory(agent *model.Agent) ([]byte, error) {
-	bin := "cline"
-	if agent != nil {
-		if cmd := strings.Fields(agent.AcpCommand); len(cmd) > 0 && cmd[0] != "" {
-			bin = cmd[0]
-		}
-	}
+	bin := clineBinary(agent)
 	ctx, cancel := context.WithTimeout(context.Background(), clineHistoryTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, bin, "history", "--json").Output()
@@ -135,5 +132,58 @@ func convertClineSessions(records []clineHistoryRecord, cwd string) []acp.Sessio
 
 // samePath compares two absolute paths without touching the filesystem.
 func samePath(a, b string) bool {
-	return strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+	if a == "" || b == "" {
+		return false
+	}
+	ca, cb := filepath.Clean(a), filepath.Clean(b)
+	if ca == cb {
+		return true
+	}
+	// The CLI records the cwd it was started in, which may be a realpath: on
+	// macOS /tmp is a symlink to /private/tmp, so a string comparison would drop
+	// every session of a project living under /tmp.
+	ra, erra := filepath.EvalSymlinks(ca)
+	rb, errb := filepath.EvalSymlinks(cb)
+	if erra == nil && errb == nil {
+		if ra == rb {
+			return true
+		}
+		// APFS/HFS+ are case-insensitive by default; the CLI may have
+		// canonicalised the case of a path the user typed differently.
+		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+			return strings.EqualFold(ra, rb)
+		}
+		return false
+	}
+	return false
+}
+
+// clineBinary is the executable the history subcommand must run.
+//
+// It is NOT the first token of the agent's AcpCommand: that command is the ACP
+// entry point and may be a wrapper (`npx … --acp`, `env FOO=1 cline --acp`), so
+// its first token can be `npx` — running `npx history --json` returns an empty
+// list with no error, and the @resume drawer silently loses every session.
+// Only a token that IS the cline binary is accepted; anything else falls back to
+// the binary this backend declares.
+func clineBinary(agent *model.Agent) string {
+	if agent == nil {
+		return "cline"
+	}
+	for _, field := range strings.Fields(agent.AcpCommand) {
+		if strings.HasPrefix(field, "-") {
+			// Flags follow the command; nothing executable comes after them.
+			break
+		}
+		if strings.HasPrefix(field, "@") || strings.Contains(field, "=") {
+			// A package spec (`npx @scope/cli`) or an env assignment.
+			continue
+		}
+		switch filepath.Base(field) {
+		case "npx", "bunx", "pnpm", "yarn", "env", "node", "deno":
+			continue
+		}
+		return field
+	}
+	return "cline"
 }

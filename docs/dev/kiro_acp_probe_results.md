@@ -152,9 +152,9 @@ session/new 接受 `mcpServers`（返回无错），initialize 也广告 `http/s
 | `Spec.NativeSkillsDirs` | `[".kiro/skills"]` | §6 实测 |
 | `Spec.AutoLoadsNativeSkills` | `true` | §6 实测 |
 | `ModelSource` | `StaticSource("kiro","kiro-cli",KiroCatalog)` | §3 |
-| autopilot（session/new 默认 on） | 需建会话后 `session/set_config_option(autopilot=off)`，**公共层未接线** | §7.1 实测可关 |
+| autopilot（session/new 默认 on） | `ACP.InitialConfigOptions: {"autopilot":"off"}`（公共层建会话后自动下发） | §7.1 实测可关 |
 | `ProviderEnv` | `KeyOnly: "KIRO_API_KEY"`（**没有** OwnServiceEnv） | §2：唯一凭据，无 endpoint 槽、无 private 协议入口 |
-| `ACP.*` | 全空 | 无工具帧可证 |
+| `ACP.*` | 仅 `InitialConfigOptions: {"autopilot":"off"}` | §7.1 实测可关；其余无工具帧可证 |
 | `Behavior` | 不填 | |
 | `OrphanCmdline` | **未登记** | 见下 |
 | `ThinkingEffortLevels` | 未填 | v3 没有 effort configOption（`--effort` 是 v2-only） |
@@ -196,13 +196,17 @@ session/new 接受 `mcpServers`（返回无错），initialize 也广告 `http/s
 | **只对当前会话有效** | 关掉后再 `session/new`，新会话 `autopilot.currentValue` 仍是 **`on`** |
 | **没有本地持久化通道** | `settings list --all` 无 autopilot 项；`acp/chat --help` 无 flag；二进制 `grep -i autopilot` 只有枚举 `AUTOPILOT`/`SUPERVISED`，无环境变量 |
 
-### 对 ClawBench 的含义（公共层缺口）
+### 对 ClawBench 的含义（已接线）
 
-正确做法：**每个新会话建好后立刻发一次** `session/set_config_option(configId:"autopilot", value:"off")`。
+正确做法就是**每个新会话建好后立刻发一次** `session/set_config_option(configId:"autopilot", value:"off")`，公共层为此加了注册点：
 
-当前 `internal/ai/` **没有**「建会话后写初始 config option」的注册点（grep `InitialConfigOptions` / `InitialMode` 均无），所以 kiro 包无法自己完成这一步。在公共层补上之前，Kiro 后端在 ClawBench 里就是**工具静默执行**——这是必须跟用户说清的已知行为，不能让人以为有权限卡。
+- `backends.ACPPlugin.InitialConfigOptions`（本后端填 `{"autopilot": "off"}`）
+- `internal/ai/acp_initial_config.go`：`createSessionLocked` 成功后在 `session/new` 的响应里**只对已广告的 id**发送，值已相同则跳过（未认证的 Kiro 几乎不广告任何 option，发过去只会 -32602）
+- 测试：`internal/ai/acp_initial_config_test.go`（发送/跳过/布尔/空声明）、`kiro/register_test.go`（钉住 autopilot=off）
 
-· 补充：关掉之后没能验证「工具会弹 `session/request_permission`」——假 key 下 prompt 仍被 `-32000 ModelRegistryAccessDeniedError` 挡住，没有走到工具执行。`off` 的语义（Supervised：「asks for approval before file changes」）来自选项描述。
+因此新会话默认就是 Supervised，权限卡流程保持开启。
+
+· 仍未验证：关掉之后**真的会弹 `session/request_permission`**——假 key 下 prompt 仍被 `-32000 ModelRegistryAccessDeniedError` 挡住，没走到工具执行。`off` 的语义（Supervised：「asks for approval before file changes」）来自选项描述。拿到真账号后应补一次实测。
 
 ## 8. 复现方式
 
@@ -244,4 +248,4 @@ python3 /tmp/acp_probe.py --cmd "... acp --agent-engine=v3" --prompt "say hi" --
 4. 验证注入 MCP 后工具是否出现（`MCPUnsupported` 是否该置位）。
 5. 验证 `_kiro/*` 反向请求不答的后果（尤其 `governance/state`）。
 6. v2 与 v3 的真实差异（未登录帧完全相同，所以只能靠真账号对比）。
-7. autopilot 已在 §7.1 实测**可以关**（建会话后发 `session/set_config_option(autopilot=off)`）；待补的是公共层的「初始 config option」机制，以及真账号下验证关掉后确实弹 `session/request_permission`。
+7. autopilot 已在 §7.1 实测**可以关**，公共层的 `InitialConfigOptions` 已接线（每个新会话自动下发）；待补的是真账号下验证关掉后确实弹 `session/request_permission`。

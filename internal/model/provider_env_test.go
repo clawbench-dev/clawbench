@@ -855,3 +855,69 @@ func TestBuildProviderEnv_ModelEnvOmittedWithoutAModel(t *testing.T) {
 		}
 	}
 }
+
+// A pin left over from another provider must not become the startup model: the
+// new endpoint does not serve it, and every turn would fail instead of using the
+// model the endpoint does have.
+func TestBuildProviderEnv_ModelEnvIgnoresAForeignPin(t *testing.T) {
+	registerTestSpec(t, "test-model-env-foreign", ProviderEnvSpec{
+		OpenAI:   ProtoEnv("TEST_BASE_URL", "TEST_API_KEY", ""),
+		ModelEnv: "TEST_MODEL",
+	})
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "k", ProviderAuthAuto)
+	p.Models = []string{"model-b"}
+	p.DefaultModel = "model-b"
+	np := p.Normalized()
+
+	env, err := BuildProviderEnv("test-model-env-foreign", &np, "model-from-the-old-provider")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "TEST_MODEL=model-b") {
+		t.Fatalf("a pin this provider does not serve must fall back to its default, got %v", env)
+	}
+}
+
+// The key-only exit (a provider with no endpoint) and the own-service exit are
+// separate early returns; both must still carry the startup model.
+func TestBuildProviderEnv_ModelEnvOnKeyOnlyPath(t *testing.T) {
+	registerTestSpec(t, "test-model-env-keyonly", ProviderEnvSpec{
+		KeyOnly:  "TEST_API_KEY",
+		ModelEnv: "TEST_MODEL",
+	})
+	p := providerForTest(ProviderProtocolAnthropic, "", "k", ProviderAuthAuto)
+	p.Models = []string{"model-a"}
+	p.DefaultModel = "model-a"
+	np := p.Normalized()
+
+	env, err := BuildProviderEnv("test-model-env-keyonly", &np, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "TEST_API_KEY=k") || !strings.Contains(joined, "TEST_MODEL=model-a") {
+		t.Fatalf("the key-only path must carry both the credential and the startup model, got %v", env)
+	}
+}
+
+func TestBuildProviderEnv_ModelEnvOnOwnServicePath(t *testing.T) {
+	registerTestSpec(t, "test-model-env-own", ProviderEnvSpec{
+		OwnServiceEnv: "TEST_OWN_TOKEN",
+		ModelEnv:      "TEST_MODEL",
+	})
+	p := providerForTest(ProviderProtocolPrivate, "", "tok", ProviderAuthAuto)
+	p.Backend = "test-model-env-own"
+	p.Models = []string{"model-a"}
+	p.DefaultModel = "model-a"
+	np := p.Normalized()
+
+	env, err := BuildProviderEnv("test-model-env-own", &np, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "TEST_OWN_TOKEN=tok") || !strings.Contains(joined, "TEST_MODEL=model-a") {
+		t.Fatalf("the own-service path must carry both the token and the startup model, got %v", env)
+	}
+}

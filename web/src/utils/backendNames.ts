@@ -23,6 +23,7 @@ const backendDisplayNames: Record<string, string> = {
   commandcode: 'Command Code',
   cursor: 'Cursor',
   openclaw: 'OpenClaw',
+  zcode: 'ZCode',
   qwen: 'Qwen Code',
   cline: 'Cline',
   copilot: 'GitHub Copilot',

@@ -75,26 +75,29 @@ func init() {
 		// endpoint/edition concept to hide, so it would only add a second,
 		// meaningless entry to the provider picker.
 		//
-		// TODO(kiro/autopilot): Kiro's session/new returns
-		// configOptions {id:"autopilot", currentValue:"on"} — on =
-		// "Agent executes tools without confirmation", off = "Supervised".
-		// So by default Kiro runs tools without asking and ClawBench's
-		// permission cards (session/request_permission) never appear, which is
-		// the opposite of every other backend.
+		// Kiro's session/new returns configOptions
+		// {id:"autopilot", currentValue:"on"} — on = "Agent executes tools
+		// without confirmation", off = "Supervised". Left alone, Kiro runs
+		// tools without asking and ClawBench's permission cards
+		// (session/request_permission) never appear, which is the opposite of
+		// every other backend.
 		//
 		// Measured on 3.5.0 (docs/dev/kiro_acp_probe_results.md §7.1):
 		// session/set_config_option(configId:"autopilot", value:"off") WORKS
-		// (result restates autopilot.currentValue="off", plus a
-		// config_option_update notification), but (a) it must be sent AFTER
-		// session/new — otherwise -32000 "Session ... not found" — and (b) it
-		// is per-session, so a fresh session/new is back to "on". There is no
-		// settings key, CLI flag or env var.
-		//
-		// This package cannot fix it: the shared ACP layer has no hook for
-		// "send an initial config option after session/new". Until that
-		// exists, Kiro runs tools silently in ClawBench.
+		// (the result restates autopilot.currentValue="off", plus a
+		// config_option_update notification), but only AFTER session/new
+		// (before it: -32000 "Session ... not found") and only for that
+		// session — a fresh session is back to "on". There is no settings key,
+		// CLI flag or env var, so InitialConfigOptions is the only lever.
 		ProviderEnv: &model.ProviderEnvSpec{
 			KeyOnly: "KIRO_API_KEY",
+		},
+		// Every new session starts Supervised. The host applies this right
+		// after session/new and only when the agent advertised the option (an
+		// unauthenticated Kiro advertises almost nothing, and sending it then
+		// would only fail).
+		ACP: &backends.ACPPlugin{
+			InitialConfigOptions: map[string]string{"autopilot": "off"},
 		},
 	})
 }

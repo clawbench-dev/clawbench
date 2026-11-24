@@ -130,3 +130,18 @@ func TestKiroCatalogOnlyHasAssertedIDs(t *testing.T) {
 		t.Fatalf("only `auto` is asserted (Kiro's documented recommended default); got %q", KiroCatalog[0].ID)
 	}
 }
+
+// TestNewSessionsStartSupervised pins the startup default that keeps the
+// permission flow alive: Kiro's own default is autopilot=on, which means tools
+// run without a session/request_permission — ClawBench would never render a
+// permission card. Measured on 3.5.0, set_config_option(autopilot=off) is the
+// only way to change it, and it resets with every new session.
+func TestNewSessionsStartSupervised(t *testing.T) {
+	got := backends.LookupACPInitialConfigOptions("kiro")
+	if got["autopilot"] != "off" {
+		t.Fatalf("kiro must start new sessions with autopilot=off, got %v", got)
+	}
+	if len(got) != 1 {
+		t.Fatalf("only autopilot is pinned, got %v", got)
+	}
+}
