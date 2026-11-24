@@ -819,6 +819,22 @@ describe('selectStartupVersion', () => {
     // the pointer actually names — normalizing the return would break it.
     expect(selectStartupVersion('v1.2.3', '1.0.0')).toBe('v1.2.3')
   })
+
+  it('never takes over for a pointer naming an OLDER version', () => {
+    // The pointer is written by an in-app upgrade, so it only ever moves the
+    // user forward. A stale one from an old install used to hijack every later
+    // launch: a user who installed v0.147 by hand kept getting the v0.132 shell
+    // from the version store, losing everything fixed after v0.132.
+    expect(selectStartupVersion('v0.132.0', '0.147.0')).toBe('')
+    expect(selectStartupVersion('0.132.0', '0.147.0')).toBe('')
+    expect(selectStartupVersion('1.2.3', '1.2.4')).toBe('')
+  })
+
+  it('compares numerically, not as strings', () => {
+    // '0.99.0' > '0.132.0' lexicographically, which would have flipped the
+    // direction of a perfectly ordinary upgrade.
+    expect(selectStartupVersion('v0.132.0', '0.99.0')).toBe('v0.132.0')
+  })
 })
 
 describe('handOffToPointedVersion', () => {
@@ -863,6 +879,18 @@ describe('handOffToPointedVersion', () => {
   it('does not hand off when there is no pointer', async () => {
     await expect(handOffToPointedVersion('1.0.0')).resolves.toBe(false)
     expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('ignores AND drops a pointer naming an older version', async () => {
+    // The reported bug: v0.132.0 left in the pointer, v0.147 launched by hand.
+    // Handing off would run the old shell forever — and every later release
+    // installed by hand would look like it "did not take".
+    installVersion('v0.132.0')
+    writePointer('v0.132.0')
+
+    await expect(handOffToPointedVersion('0.147.0')).resolves.toBe(false)
+    expect(spawnMock).not.toHaveBeenCalled()
+    expect(readCurrentVersion()).toBe('')
   })
 
   it('clears a pointer whose version directory is gone, instead of refusing to start', async () => {
