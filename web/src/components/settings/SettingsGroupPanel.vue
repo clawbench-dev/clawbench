@@ -244,7 +244,7 @@ import { reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
-import { confirmOnKeys, requiresConfirmBeforeEnabling } from './confirmOnSettings'
+import { confirmOnSettings, requiresConfirmBeforeEnabling } from './confirmOnSettings'
 import { useAgents } from '@/composables/useAgents'
 import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
 import { formatFileSize } from '@/utils/fileType'
@@ -681,9 +681,10 @@ function isRagProgressField(field: ItemSpec): boolean {
 }
 
 async function setLocalValue(key: string, value: unknown) {
-  if (requiresConfirmBeforeEnabling(key, localValues[key], value)) {
-    const confirmed = await dialog.confirm(t(confirmOnKeys[key]), {
-      title: t('settings.items.forgeAllowSelfAuthoredConfirmTitle'),
+  const guard = confirmOnSettings[key]
+  if (guard && requiresConfirmBeforeEnabling(key, localValues[key], value)) {
+    const confirmed = await dialog.confirm(t(guard.body), {
+      title: t(guard.title),
       dangerous: true,
     })
     // Cancelling must not leave the value changed: the input is controlled by

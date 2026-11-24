@@ -9,6 +9,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // allowSelfConfig returns a config with the anti-recursion suppression turned
@@ -38,7 +39,12 @@ func selfAuthoredOpened(t *testing.T, cfg model.Config) int {
 	tr.HandleChange(context.Background(), triggerRepo(), item,
 		forge.Change{Type: forge.EventOpened, Number: 1, Actor: "me"})
 
-	time.Sleep(50 * time.Millisecond)
+	// Dispatch happens on the drain goroutine. Wait for it to settle instead of
+	// sleeping a fixed 50ms: the fixed sleep is a flake under load, and the
+	// suppressed cases need the same barrier to prove "nothing was ever fired"
+	// rather than "nothing fired yet".
+	require.Eventually(t, func() bool { return !tr.IsDraining(1) }, time.Second, 5*time.Millisecond,
+		"the drain loop did not settle")
 	return fired
 }
 

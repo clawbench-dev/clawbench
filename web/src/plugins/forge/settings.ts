@@ -52,6 +52,6 @@ export default [
     // write from re-triggering the same AI forever. Unavoidably relevant to
     // "I created an issue myself and no task ran", so it is exposed — but it
     // asks for confirmation with the reasoning spelled out on every enable
-    // (see CONFIRM_ON_KEYS in SettingsGroupPanel).
+    // (see confirmOnSettings.ts).
     { type: 'item', spec: { labelKey: 'settings.items.forgeAllowSelfAuthored', descriptionKey: 'settings.items.forgeAllowSelfAuthoredDesc', key: 'forge.allow_self_authored_events', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
 ] satisfies CategoryEntry[]

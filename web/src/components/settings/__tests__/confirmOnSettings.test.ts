@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { confirmOnKeys, requiresConfirmBeforeEnabling } from '@/components/settings/confirmOnSettings'
+import { confirmOnSettings, requiresConfirmBeforeEnabling } from '@/components/settings/confirmOnSettings'
 
 /**
  * Settings that cannot be switched ON without an explanation.
@@ -34,10 +34,19 @@ describe('requiresConfirmBeforeEnabling', () => {
     expect(requiresConfirmBeforeEnabling('forge.allow_self_authored_events', false, 'on')).toBe(false)
   })
 
-  it('guards the self-authored switch with an explanation key', () => {
-    // The dialog's body is a translation of the risk; a missing key would render
-    // the raw key name and explain nothing.
-    expect(confirmOnKeys['forge.allow_self_authored_events'])
-      .toBe('settings.items.forgeAllowSelfAuthoredConfirm')
+  it('asks when the stored value is missing entirely', () => {
+    // A server that predates the key sends nothing, so the switch starts from
+    // `undefined`. Treating only literal `false` as OFF would skip the warning
+    // for exactly the users who never saw this setting before.
+    expect(requiresConfirmBeforeEnabling('forge.allow_self_authored_events', undefined, true)).toBe(true)
+  })
+
+  it('guards the self-authored switch with its own title and body keys', () => {
+    // A missing key would render the raw identifier and explain nothing, and a
+    // hardcoded title would be wrong the moment a second guarded setting exists.
+    expect(confirmOnSettings['forge.allow_self_authored_events']).toEqual({
+      title: 'settings.items.forgeAllowSelfAuthoredConfirmTitle',
+      body: 'settings.items.forgeAllowSelfAuthoredConfirm',
+    })
   })
 })
