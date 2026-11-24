@@ -535,33 +535,41 @@ const items = computed<AgentItem[]>(() => {
   // ask for consent because they modify a file outside ClawBench.
   // Key-only backends advertise no protocols yet still take a provider, so the
   // gate cannot be "has protocols" alone (it hid the picker for cursor).
-  if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly) {
-    result.push({
-      key: 'provider_id',
-      label: t('settings.items.agentProvider'),
-      description: t('settings.items.agentProviderHint'),
-      type: 'select',
-      options: [
-        { label: t('settings.items.agentProviderNone'), value: '' },
-        ...providerOptions.value.map((p) => ({
-          // The provider list marks a keyless row in orange; without carrying
-          // that into this picker the user binds it and only finds out on the
-          // next turn ("provider has no API key").
-          label: p.hasKey === false
-            ? `${p.name} · ${protocolLabel(p)} · ${t('settings.items.providerNoKey')}`
-            : `${p.name} · ${protocolLabel(p)}`,
-          value: p.id,
-        })),
-      ],
-      patchField: 'provider_id',
-    })
-  } else {
-    result.push({
-      key: 'provider_id',
-      label: t('settings.items.agentProvider'),
-      description: t('settings.items.agentProviderUnsupported'),
-      type: 'info',
-    })
+  //
+  // The built-in agent gets NO provider option at all: it calls the endpoint
+  // itself and its model picker already lists every configured provider's
+  // models (issue #753), so the model id — not a binding — decides which
+  // endpoint a turn uses. Offering a binding here would only suggest a
+  // restriction that does not exist.
+  if (!a.builtinBackend) {
+    if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly) {
+      result.push({
+        key: 'provider_id',
+        label: t('settings.items.agentProvider'),
+        description: t('settings.items.agentProviderHint'),
+        type: 'select',
+        options: [
+          { label: t('settings.items.agentProviderNone'), value: '' },
+          ...providerOptions.value.map((p) => ({
+            // The provider list marks a keyless row in orange; without carrying
+            // that into this picker the user binds it and only finds out on the
+            // next turn ("provider has no API key").
+            label: p.hasKey === false
+              ? `${p.name} · ${protocolLabel(p)} · ${t('settings.items.providerNoKey')}`
+              : `${p.name} · ${protocolLabel(p)}`,
+            value: p.id,
+          })),
+        ],
+        patchField: 'provider_id',
+      })
+    } else {
+      result.push({
+        key: 'provider_id',
+        label: t('settings.items.agentProvider'),
+        description: t('settings.items.agentProviderUnsupported'),
+        type: 'info',
+      })
+    }
   }
 
   // Preferred Thinking Effort

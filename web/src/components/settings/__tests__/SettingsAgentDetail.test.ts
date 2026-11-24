@@ -144,6 +144,12 @@ vi.mock('@/composables/useAgents', async () => {
       getAgentAvailableConfigOptions: () => mockConfigOptions.value,
     }),
     populateACPStateFromCache: mockPopulateACPStateFromCache,
+    // The tool-policy section (rendered for the built-in agent) imports these
+    // capability ids at module scope; the mock must expose them or the import
+    // throws before any assertion runs.
+    CAP_EXEC: 'exec',
+    CAP_FS_READ: 'fs.read',
+    CAP_FS_WRITE: 'fs.write',
   }
 })
 
@@ -1211,6 +1217,22 @@ describe('SettingsAgentDetail', () => {
   })
 
   // ─── Provider binding failures ─────────────────
+
+  // The built-in agent picks its endpoint from the MODEL (its picker lists every
+  // configured provider's models), so a binding would only look like a
+  // restriction that does not exist. The row must not render at all — not even
+  // the "unsupported" info row (issue #753).
+  it('hides the model-provider row for the built-in agent', () => {
+    const wrapper = mountDetail({
+      builtinBackend: true,
+      providerProtocols: ['anthropic', 'openai'],
+      providerKeyOnly: false,
+    })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'settings.items.agentProvider')
+    expect(item).toBeUndefined()
+  })
+
 
   /** Emit a new value on the model-provider select row. */
   async function bindProvider(wrapper: ReturnType<typeof mountDetail>, value: unknown) {
