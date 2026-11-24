@@ -218,8 +218,9 @@ func TestResumeExecution_ContinuesTheSameRun(t *testing.T) {
 	).Scan(&executions))
 	assert.Equal(t, 1, executions, "the continuation must reuse the execution row, not add a second run")
 
-	assert.Equal(t, AutoContinuePrompt(), backend.lastPrompt(),
-		"the agent is asked to continue, not to redo the original prompt")
+	assert.Equal(t, RestartResumePrompt(), backend.lastPrompt(),
+		"the agent is told the run was interrupted and asked to re-check the current state — "+
+			"a bare \"continue\" would let it redo effects the interrupted attempt already wrote")
 
 	var runCount int
 	require.NoError(t, store.ReadDB().QueryRow(

@@ -1187,10 +1187,10 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (Array.isArray(mlData.resolvedModels) && mlData.resolvedModels.length > 0) {
           applyResolvedModelList(
             aid,
-            mlData.resolvedModels as Array<{ id: string; name: string; default: boolean }>,
+            mlData.resolvedModels as Array<{ id: string; name: string; default: boolean; provider?: string; providerId?: number }>,
           )
         } else if (Array.isArray(mlData.models) && mlData.models.length > 0) {
-          updateACPModelList(aid, mlData.models as { id: string; name: string }[], mlData.currentModelId)
+          updateACPModelList(aid, mlData.models as { id: string; name: string; provider?: string; providerId?: number }[], mlData.currentModelId)
         }
         // The new list is authoritative: if the session's model is no longer
         // offered, move the chip to the new default instead of leaving a dead

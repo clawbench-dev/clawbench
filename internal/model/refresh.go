@@ -689,7 +689,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 // the shared prefix and the user-editable portion, in that order.
 //
 // builtin selects the base prompt: only the in-process agent gets it, because
-// an ACP agent brings its own prompt and a second set of behavioural rules
+// an ACP agent brings its own prompt and a second set of behavioral rules
 // would fight it.
 //
 // The stored prompt column is deliberately ignored. It used to hold a composed

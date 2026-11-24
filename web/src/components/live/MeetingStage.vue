@@ -532,7 +532,7 @@ import { baseName } from '@/utils/path'
 import { useScreenWindow, ANNOTATE_WINDOW_NAME, SCREEN_WINDOW_NAME } from '@/composables/useScreenWindow'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { getNative, isDesktopApp } from '@/utils/clawbenchNative'
-import { resolveUserNickname } from '@/utils/userNickname'
+import { resolveMeetingAttendeeName } from '@/share/meetingNickname'
 import { resolveRemoteControlSupport } from '@/utils/remoteControlSupport'
 import { browserScreenCaptureAvailable } from '@/utils/screenCaptureSupport'
 import {
@@ -620,12 +620,17 @@ const recorder = useMeetingRecorder()
 const { serverConfig } = useSettingsConfig()
 
 /**
- * The host's chat name: the account nickname, or the role label when unset.
- * Viewers render the `name` carried on the wire, so this is what identifies the
- * host in their chat and in the archived transcript.
+ * The host's chat name: 参会称呼 (meeting.attendee_name), or the role label when
+ * unset. Viewers render the `name` carried on the wire, so this is what
+ * identifies the host in their chat and in the archived transcript.
+ *
+ * It must be 参会称呼 and not `user.nickname`: the record detail decides "this
+ * line is mine" by comparing the speaker against 参会称呼, and the participant
+ * list shows 参会称呼. Using the chat name here made the host appear under two
+ * different names and left their own lines unmirrored in the record.
  */
 const hostChatName = computed(
-  () => resolveUserNickname(serverConfig.value?.user) || t('liveShare.hostName'),
+  () => resolveMeetingAttendeeName(serverConfig.value?.meeting) || t('liveShare.hostName'),
 )
 
 /**

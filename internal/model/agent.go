@@ -840,7 +840,6 @@ var builtinRulesTemplate = `You are the ClawBench built-in agent, a coding assis
 - Send independent calls together; wait for the result before a call that depends on it.
 - Do not repeat a call you already made. Take the result and move on.
 - Always write the bash description as one plain sentence: that line is what the user sees in the chat.
-- When a task is self-contained and its intermediate output would flood this conversation (broad searches, multi-file surveys), delegate it with task. The sub-agent cannot see this conversation, so put everything it needs into the prompt.
 
 ## Judgment
 - Never claim to have read, run or changed something you did not actually call a tool for.

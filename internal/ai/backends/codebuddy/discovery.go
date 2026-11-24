@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -288,32 +287,4 @@ func decodeCacheEntry(raw []byte) ([]byte, bool) {
 		return s, true
 	}
 	return nil, false
-}
-
-// codebuddyModelRe extracts model IDs from codebuddy --help output (legacy, kept for ParseCodebuddyModels).
-var codebuddyModelRe = regexp.MustCompile(`Currently supported: \(([^)]+)\)`)
-
-// ParseCodebuddyModels parses codebuddy --help output to extract model IDs.
-//
-// Deprecated: codebuddy --help launches a TUI that hangs without a TTY; use DiscoverCodebuddyModels instead.
-func ParseCodebuddyModels(output string) []model.AgentModel {
-	matches := codebuddyModelRe.FindStringSubmatch(output)
-	if len(matches) < 2 {
-		return nil
-	}
-
-	parts := strings.Split(matches[1], ",")
-	var models []model.AgentModel
-	for i, p := range parts {
-		id := strings.TrimSpace(p)
-		if id == "" {
-			continue
-		}
-		models = append(models, model.AgentModel{
-			ID:      id,
-			Name:    id,
-			Default: i == 0,
-		})
-	}
-	return models
 }

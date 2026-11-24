@@ -250,7 +250,9 @@ const resumeAbandonReason = "restart"
 // The run is NOT replayed: the original prompt is already in the timeline and
 // may have changed files. The agent is told the previous attempt was
 // interrupted and asked to check the current state and carry on — the same
-// instruction the interactive resume and the abnormal-end retry use.
+// instruction the interactive restart resume sends (RestartResumePrompt, NOT
+// AutoContinuePrompt's bare "continue": a scheduled run may already have written
+// half of its effects, so it must re-read the current state before acting).
 //
 // Everything that belongs to the run rather than to one attempt is preserved:
 // the session (so the agent keeps its context), the execution row (so the task
@@ -279,14 +281,6 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 	); err != nil {
 		return err
 	}
-
-	// Close the previous attempt's half-written reply before this attempt opens
-	// its own row. The restart interrupted that attempt in the middle of a
-	// stream, so its assistant row is still streaming=1; every "did this session
-	// finish?" check reads those rows, and leaving one behind left a row that
-	// nothing would ever close. The cancel path does the same thing in
-	// abandonTurn — this path simply never ran it.
-	FinalizeOrphanedMessages(sessionID, resumeAbandonReason)
 
 	// Claim the session as running, exactly as executeTask does. Two things
 	// depend on it and neither happens anywhere else on this path:
@@ -320,6 +314,18 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 	// released (cancelling that context) when the run is over.
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
+
+	// Close the previous attempt's half-written reply before this attempt opens
+	// its own row. The restart interrupted that attempt in the middle of a
+	// stream, so its assistant row is still streaming=1; every "did this session
+	// finish?" check reads those rows, and leaving one behind left a row that
+	// nothing would ever close. The cancel path does the same thing in
+	// abandonTurn — this path simply never ran it.
+	//
+	// AFTER the claim on purpose: finalizing closes whatever is streaming in the
+	// session, and before the claim that could be the OTHER run's live row when
+	// the claim is about to fail. Only the owner may close it.
+	FinalizeOrphanedMessages(sessionID, resumeAbandonReason)
 	// FinishClaimedSessionRun — not FinishSessionRun — so a run that retires
 	// just before a fresh prompt claims the session does not cancel the new
 	// owner's context.
@@ -422,7 +428,7 @@ func (s *Scheduler) runResumedExecution(ctx context.Context, execID int64, task 
 	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.SupportsACP())
 
 	req := BuildChatRequest(
-		AutoContinuePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
+		RestartResumePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
 		effectiveModel, effectiveThinking, "", task.ProjectPath, false,
 	)
 	// BuildChatRequest is the interactive builder; a resumed task run is still a

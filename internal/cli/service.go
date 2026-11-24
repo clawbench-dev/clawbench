@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"clawbench/internal/model"
@@ -22,10 +21,6 @@ import (
 // is no cgo and no D-Bus binding. The unit file is the only thing this command
 // creates; systemd does the rest.
 func RunServiceCommand(args []string) int {
-	if runtime.GOOS != "linux" {
-		fmt.Fprintf(os.Stderr, "clawbench service: 只支持 Linux（当前系统是 %s）\n", runtime.GOOS)
-		return 1
-	}
 	action := ""
 	if len(args) > 0 {
 		action = args[0]
@@ -63,15 +58,6 @@ func printServiceUsage() {
 // serviceUnitName is the systemd unit this command manages.
 const serviceUnitName = "clawbench.service"
 
-// serviceTarget describes where the unit file goes and how systemctl is called
-// for the chosen install scope.
-type serviceTarget struct {
-	system bool   // true = 系统级（/etc/systemd/system, 需 sudo）
-	dir    string // unit 文件所在目录
-	user   string // 系统级的 User=；用户级为空
-	home   string // HOME，必须显式写（见 buildUnitFile 注释）
-}
-
 // serviceOutcome is a decision plus the reason shown to the user when the
 // decision is "refuse".
 type serviceOutcome struct {
@@ -81,6 +67,10 @@ type serviceOutcome struct {
 
 // decideServiceInstall reports whether this install can be registered as a
 // systemd service, and why not when it cannot.
+//
+// systemd availability is deliberately NOT decided here: only the caller can
+// tell the user/system scopes apart, and it probes both before writing
+// anything. This function answers the one question that depends on the paths.
 //
 // The unit must pin a path that SURVIVES an upgrade. An npm install keeps the
 // real binary under a version-numbered directory that is replaced wholesale on
@@ -93,15 +83,12 @@ type serviceOutcome struct {
 // The extra process layer a shim adds does not matter here — systemd tracks the
 // unit's MainPID, and the server's own "am I supervised?" check only asks
 // whether this process is that MainPID.
-func decideServiceInstall(exePath, stableEntry, dataDir string, systemdAvailable, isContainer, managed bool) (string, serviceOutcome) {
+func decideServiceInstall(exePath, stableEntry string, isContainer, managed bool) (string, serviceOutcome) {
 	if isContainer {
 		return "", serviceOutcome{reason: "当前在容器里运行，服务的启停由容器来管（docker --restart / k8s），不需要也不应该再装一层 systemd。"}
 	}
 	if managed {
 		return "", serviceOutcome{reason: "当前进程由 ClawBench 桌面客户端托管，服务只能由客户端启停。"}
-	}
-	if !systemdAvailable {
-		return "", serviceOutcome{reason: "这台机器上没有可用的 systemctl，装不了 systemd 服务。"}
 	}
 	if exePath == "" {
 		return "", serviceOutcome{reason: "解析不到当前二进制的路径，无法写服务文件。"}
@@ -133,7 +120,7 @@ func isVersionedInstallPath(path string) bool {
 	return false
 }
 
-// buildUnitFile renders the systemd unit for this instalation.
+// buildUnitFile renders the systemd unit for this installation.
 //
 // Environment=HOME is written explicitly in BOTH scopes. systemd does not guess
 // HOME once User= is set for a system service, and a user unit's manager may
@@ -166,8 +153,8 @@ func buildUnitFile(exe, dataDir, user, home string) string {
 	if user != "" {
 		fmt.Fprintf(&b, "User=%s\n", user)
 	}
-	fmt.Fprintf(&b, "Environment=HOME=%s\n", home)
-	fmt.Fprintf(&b, "WorkingDirectory=%s\n", home)
+	fmt.Fprintf(&b, "Environment=HOME=%s\n", systemdQuote(home))
+	fmt.Fprintf(&b, "WorkingDirectory=%s\n", systemdQuote(home))
 	fmt.Fprintf(&b, "ExecStart=%s --data-dir %s\n", systemdQuote(exe), systemdQuote(dataDir))
 	// SIGTERM is what the server already handles for a graceful shutdown; this
 	// only documents it.
@@ -196,13 +183,19 @@ func buildUnitFile(exe, dataDir, user, home string) string {
 //
 // Paths with spaces are rare here but not impossible (~/.local/share under a
 // home directory with a space). systemd splits ExecStart on whitespace and
-// honours double quotes, so the only byte that needs escaping is " and \.
+// honors double quotes, so " and \ need escaping when quoting.
+//
+// `%` and `$` are escaped UNCONDITIONALLY: systemd expands `%h`/`%u` style
+// specifiers and `$VAR` in ExecStart whether or not the argument is quoted, so a
+// path containing either byte would silently become a different path. `%%` and
+// `$$` are systemd's literal forms.
 func systemdQuote(s string) string {
+	r := strings.NewReplacer(`%`, `%%`, `$`, `$$`, `\`, `\\`, `"`, `\"`)
+	escaped := r.Replace(s)
 	if !strings.ContainsAny(s, " \t\"'\\") {
-		return s
+		return escaped
 	}
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-	return `"` + r.Replace(s) + `"`
+	return `"` + escaped + `"`
 }
 
 // --- systemctl plumbing -----------------------------------------------------
@@ -226,7 +219,7 @@ var findStableEntry = func() string {
 
 // runCommand is the single shell-out point, so tests can stub it.
 var runCommand = func(name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...) //nolint:gosec // argv-only, no shell; args are built here
+	cmd := exec.Command(name, args...)
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
@@ -245,13 +238,16 @@ func hasSystemd(system bool) bool {
 
 // --- the three actions ------------------------------------------------------
 
-func runServiceInstall(args []string) int {
-	// --binary overrides the path pinned into the unit. Ordinary installs do not
-	// need it: the `clawbench` entry on PATH is already a stable location. It is
-	// the escape hatch for a binary that was put somewhere deliberately outside
-	// PATH.
+// resolveServiceBinary decides which path the unit will pin, and refuses a
+// --binary that would not survive an upgrade.
+//
+// --binary overrides the path pinned into the unit. Ordinary installs do not
+// need it: the `clawbench` entry on PATH is already a stable location. It is
+// the escape hatch for a binary that was put somewhere deliberately outside
+// PATH.
+func resolveServiceBinary(args []string) (exe, stableEntry string, code int) {
 	overrideBin := ""
-	for i := 0; i < len(args); i++ {
+	for i := range args {
 		if (args[i] == "--binary" || args[i] == "-b") && i+1 < len(args) {
 			overrideBin = args[i+1]
 		} else if strings.HasPrefix(args[i], "--binary=") {
@@ -261,55 +257,40 @@ func runServiceInstall(args []string) int {
 	exe, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "读不到当前程序路径: %v\n", err)
-		return 1
+		return "", "", 1
 	}
 	// The pin target: an explicit --binary, else the fixed entry point on PATH.
-	stableEntry := overrideBin
-	if stableEntry == "" {
-		stableEntry = findStableEntry()
+	if overrideBin == "" {
+		return exe, findStableEntry(), 0
 	}
-	if overrideBin != "" {
-		abs, absErr := filepath.Abs(overrideBin)
-		if absErr != nil {
-			fmt.Fprintf(os.Stderr, "--binary 路径无效: %v\n", absErr)
-			return 1
-		}
-		info, statErr := os.Stat(abs)
-		if statErr != nil {
-			fmt.Fprintf(os.Stderr, "--binary 指向的文件不存在: %v\n", statErr)
-			return 1
-		}
-		if info.Mode()&0o111 == 0 {
-			fmt.Fprintf(os.Stderr, "--binary 指向的文件没有执行权限: %s\n  chmod +x %s\n", abs, abs)
-			return 1
-		}
-		if isVersionedInstallPath(abs) {
-			fmt.Fprintln(os.Stderr, "--binary 指向的是 npm 的版本目录，升级后会失效。")
-			fmt.Fprintln(os.Stderr, "不指定 --binary 时会自动改用 PATH 上那个固定入口；")
-			fmt.Fprintf(os.Stderr, "或者换成一个固定路径：sudo cp %s /usr/local/bin/clawbench\n", abs)
-			return 1
-		}
-		if overrideBin != "" {
-			stableEntry = abs
-		}
+	abs, absErr := filepath.Abs(overrideBin)
+	if absErr != nil {
+		fmt.Fprintf(os.Stderr, "--binary 路径无效: %v\n", absErr)
+		return "", "", 1
 	}
-	dataDir := model.DataDir
-	if dataDir == "" {
-		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".clawbench")
+	info, statErr := os.Stat(abs)
+	if statErr != nil {
+		fmt.Fprintf(os.Stderr, "--binary 指向的文件不存在: %v\n", statErr)
+		return "", "", 1
 	}
-	isRoot := os.Geteuid() == 0
-	isContainer := platform.IsContainer()
-	managed := model.ManagedByEmbedder
+	if info.Mode()&0o111 == 0 {
+		fmt.Fprintf(os.Stderr, "--binary 指向的文件没有执行权限: %s\n  chmod +x %s\n", abs, abs)
+		return "", "", 1
+	}
+	if isVersionedInstallPath(abs) {
+		fmt.Fprintln(os.Stderr, "--binary 指向的是 npm 的版本目录，升级后会失效。")
+		fmt.Fprintln(os.Stderr, "不指定 --binary 时会自动改用 PATH 上那个固定入口；")
+		fmt.Fprintf(os.Stderr, "或者换成一个固定路径：sudo cp %s /usr/local/bin/clawbench\n", abs)
+		return "", "", 1
+	}
+	return exe, abs, 0
+}
 
-	// 系统级探测和用户级探测分开：容器里 systemctl 也是存在的，只是不该用。
-	exeResolved, outcome := decideServiceInstall(exe, stableEntry, dataDir, len(exe) > 0, isContainer, managed)
-	if !outcome.ok {
-		fmt.Fprintln(os.Stderr, "无法注册为服务：")
-		fmt.Fprintln(os.Stderr, outcome.reason)
-		return 1
-	}
-
+// pickServiceScope probes both systemd scopes and decides which one to install
+// into, asking only when both work.
+//
+// 系统级探测和用户级探测分开：容器里 systemctl 也是存在的，只是不该用。
+func pickServiceScope(isRoot bool) (system bool, code int) {
 	systemdUser := hasSystemd(false)
 	systemdSystem := hasSystemd(true)
 	if isRoot {
@@ -317,52 +298,80 @@ func runServiceInstall(args []string) int {
 	}
 	if !systemdUser && !systemdSystem {
 		fmt.Fprintln(os.Stderr, "这台机器上没有可用的 systemd（systemctl 调用失败），装不了服务。")
-		return 1
+		return false, 1
 	}
-
 	// 只有一条路可行就直接走，不拿多余的问题烦人。
-	system := false
 	switch {
 	case systemdUser && systemdSystem:
-		system = promptBool("装成系统级服务（开机就启动，需要 sudo）吗？选否则装成当前用户的服务（登录后启动）", isRoot)
+		return promptBool("装成系统级服务（开机就启动，需要 sudo）吗？选否则装成当前用户的服务（登录后启动）", isRoot), 0
 	case systemdSystem:
-		system = true
+		return true, 0
 	default:
-		system = false
+		return false, 0
 	}
+}
 
+// resolveServiceIdentity answers which HOME and User= the unit gets.
+func resolveServiceIdentity(system bool) (home, user string, code int) {
 	home, homeErr := os.UserHomeDir()
 	if homeErr != nil || home == "" {
 		fmt.Fprintln(os.Stderr, "读不到 HOME，无法写服务文件。")
+		return "", "", 1
+	}
+	if !system {
+		return home, "", 0
+	}
+	user = os.Getenv("SUDO_USER")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	if user == "" {
+		user = "root"
+	}
+	// 用 sudo 跑：HOME 现在是 /root，真实用户的家目录要另算。
+	if user != "root" {
+		if h := lookupHome(user); h != "" {
+			home = h
+		}
+	}
+	return home, user, 0
+}
+
+func runServiceInstall(args []string) int {
+	exe, stableEntry, code := resolveServiceBinary(args)
+	if code != 0 {
+		return code
+	}
+	dataDir := model.DataDir
+	if dataDir == "" {
+		home, _ := os.UserHomeDir()
+		dataDir = filepath.Join(home, ".clawbench")
+	}
+	isRoot := os.Geteuid() == 0
+
+	exeResolved, outcome := decideServiceInstall(exe, stableEntry, platform.IsContainer(), model.ManagedByEmbedder)
+	if !outcome.ok {
+		fmt.Fprintln(os.Stderr, "无法注册为服务：")
+		fmt.Fprintln(os.Stderr, outcome.reason)
 		return 1
 	}
-	user := ""
-	if system {
-		user = os.Getenv("SUDO_USER")
-		if user == "" {
-			u := os.Getenv("USER")
-			if u == "" {
-				u = "root"
-			}
-			user = u
-		}
-		if user != "root" {
-			// 用 sudo 跑：HOME 现在是 /root，真实用户的家目录要另算。
-			if h := lookupHome(user); h != "" {
-				home = h
-			}
-		}
+
+	system, code := pickServiceScope(isRoot)
+	if code != 0 {
+		return code
+	}
+	home, user, code := resolveServiceIdentity(system)
+	if code != 0 {
+		return code
 	}
 
-	target := serviceTarget{system: system, user: user, home: home}
+	unitDir := filepath.Join(home, ".config", "systemd", "user")
 	if system {
-		target.dir = "/etc/systemd/system"
-	} else {
-		target.dir = filepath.Join(home, ".config", "systemd", "user")
+		unitDir = "/etc/systemd/system"
 	}
 
 	unit := buildUnitFile(exeResolved, dataDir, user, home)
-	unitPath := filepath.Join(target.dir, serviceUnitName)
+	unitPath := filepath.Join(unitDir, serviceUnitName)
 
 	fmt.Println("即将写入服务文件：")
 	fmt.Println("  " + unitPath)
@@ -374,7 +383,7 @@ func runServiceInstall(args []string) int {
 		return 1
 	}
 
-	if err := writeUnitFile(target, unitPath, unit); err != nil {
+	if err := writeUnitFile(unitPath, unit); err != nil {
 		if system && os.IsPermission(err) {
 			// Not root: we cannot write /etc and we cannot ask for a sudo
 			// password (no controlling terminal). Hand the two steps over
@@ -389,11 +398,30 @@ func runServiceInstall(args []string) int {
 		return 1
 	}
 
+	if code := enableServiceUnit(system); code != 0 {
+		return code
+	}
+
+	fmt.Println()
+	fmt.Println("已注册。查看状态：clawbench service status")
+	if !system {
+		fmt.Println()
+		fmt.Println("提示：用户级服务跟随登录，注销后就停了。想让它没登录时也跑，执行一次：")
+		fmt.Printf("  sudo loginctl enable-linger %s\n", userOrFallback())
+	}
+	fmt.Println()
+	fmt.Println("注意：当前这个手动启动的进程还占着数据目录和端口，请把它停掉，systemd 才能接管。")
+	return 0
+}
+
+// enableServiceUnit runs the two systemctl steps, or hands them to the user
+// when a system-scope install needs a sudo password this process cannot ask for.
+func enableServiceUnit(system bool) int {
 	prefix := []string{}
 	if system {
 		if os.Geteuid() != 0 {
-			// 到这里说明用户选了系统级但不是 root：只能靠 sudo，而 sudo 需要
-			// 密码，本进程没有终端密码框。把命令交出去，让用户自己执行。
+			// 用户选了系统级但不是 root：只能靠 sudo，而 sudo 需要密码，
+			// 本进程没有终端密码框。把命令交出去，让用户自己执行。
 			fmt.Println()
 			fmt.Println("系统级服务需要 root 权限，请执行下面这条命令完成注册：")
 			fmt.Println()
@@ -409,20 +437,7 @@ func runServiceInstall(args []string) int {
 	if code := runSystemctl(prefix, "daemon-reload"); code != 0 {
 		return code
 	}
-	if code := runSystemctl(prefix, "enable", "--now", serviceUnitName); code != 0 {
-		return code
-	}
-
-	fmt.Println()
-	fmt.Println("已注册。查看状态：clawbench service status")
-	if !system {
-		fmt.Println()
-		fmt.Println("提示：用户级服务跟随登录，注销后就停了。想让它没登录时也跑，执行一次：")
-		fmt.Printf("  sudo loginctl enable-linger %s\n", userOrFallback())
-	}
-	fmt.Println()
-	fmt.Println("注意：当前这个手动启动的进程还占着数据目录和端口，请把它停掉，systemd 才能接管。")
-	return 0
+	return runSystemctl(prefix, "enable", "--now", serviceUnitName)
 }
 
 func runServiceUninstall() int {
@@ -500,7 +515,7 @@ func runSystemctl(prefix []string, args ...string) int {
 	return 0
 }
 
-func writeUnitFile(t serviceTarget, path, content string) error {
+func writeUnitFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

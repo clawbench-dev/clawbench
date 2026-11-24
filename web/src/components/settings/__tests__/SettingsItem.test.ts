@@ -1098,6 +1098,24 @@ describe('SettingsItem', () => {
       wrapper.unmount()
     })
 
+    it('filters by provider heading', async () => {
+      // The built-in agent lists models from every provider, so the provider
+      // name is the most natural way to narrow the list. Only the heading
+      // carries it — the row label is the model's own name.
+      const grouped = [
+        { label: 'MiniMax-M2', value: 'p1:MiniMax-M2', modelName: 'MiniMax-M2', modelId: 'p1:MiniMax-M2', groupKey: 'p1', groupLabel: 'MiniMax' },
+        { label: 'Claude Sonnet 4.6', value: 'p2:claude', modelName: 'Claude Sonnet 4.6', modelId: 'p2:claude', groupKey: 'p2', groupLabel: 'Anthropic' },
+      ]
+      const wrapper = mountItem({ type: 'select', modelValue: 'p1:MiniMax-M2', options: grouped })
+      const vm = wrapper.vm as any
+      await wrapper.find('.settings-item').trigger('click')
+      await nextTick()
+      vm.$.setupState.searchQuery = 'minimax'
+      await nextTick()
+      expect(vm.$.setupState.filteredRenderOptions.map((o: any) => o.value)).toEqual(['p1:MiniMax-M2'])
+      wrapper.unmount()
+    })
+
     it('yields an empty list when nothing matches', async () => {
       const wrapper = mountItem({ type: 'select', modelValue: 'claude-sonnet-4-6', options: modelOptions })
       const vm = wrapper.vm as any

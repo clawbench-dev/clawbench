@@ -16,7 +16,6 @@ func TestDecideServiceInstall_Refusals(t *testing.T) {
 		stable    string
 		container bool
 		managed   bool
-		systemd   bool
 		wantOK    bool
 		wantIn    string
 		wantExe   string
@@ -24,41 +23,31 @@ func TestDecideServiceInstall_Refusals(t *testing.T) {
 		{
 			name:      "container is refused even with systemd present",
 			exe:       "/usr/local/bin/clawbench",
-			systemd:   true,
 			container: true,
 			wantIn:    "容器",
 		},
 		{
 			name:    "desktop-managed process is refused",
 			exe:     "/opt/clawbench/clawbench",
-			systemd: true,
 			managed: true,
 			wantIn:  "客户端托管",
-		},
-		{
-			name:   "no systemctl",
-			exe:    "/usr/local/bin/clawbench",
-			wantIn: "systemctl",
 		},
 		{
 			// The regression this whole check exists for: an npm install's
 			// directory carries the version and is replaced on upgrade, so a
 			// unit pinned to it dies at the first upgrade.
-			name:    "npm versioned path is refused",
-			exe:     "/home/u/.local/share/clawbench/npm/lib/node_modules/@xulongzhe/clawbench-linux-x64/bin/clawbench",
-			systemd: true,
-			wantIn:  "带版本号",
+			name:   "npm versioned path is refused",
+			exe:    "/home/u/.local/share/clawbench/npm/lib/node_modules/@xulongzhe/clawbench-linux-x64/bin/clawbench",
+			wantIn: "带版本号",
 		},
 		{
-			name:    "node_modules anywhere is refused",
-			exe:     "/srv/app/node_modules/clawbench/bin/clawbench",
-			systemd: true,
-			wantIn:  "带版本号",
+			name:   "node_modules anywhere is refused",
+			exe:    "/srv/app/node_modules/clawbench/bin/clawbench",
+			wantIn: "带版本号",
 		},
 		{
 			name:    "stable binary path is accepted",
 			exe:     "/usr/local/bin/clawbench",
-			systemd: true,
 			wantOK:  true,
 			wantExe: "/usr/local/bin/clawbench",
 		},
@@ -69,23 +58,21 @@ func TestDecideServiceInstall_Refusals(t *testing.T) {
 			name:    "versioned binary with a stable PATH entry pins the entry",
 			exe:     "/home/u/.local/share/clawbench/npm/lib/node_modules/@xulongzhe/clawbench-linux-x64/bin/clawbench",
 			stable:  "/usr/local/bin/clawbench",
-			systemd: true,
 			wantOK:  true,
 			wantExe: "/usr/local/bin/clawbench",
 		},
 		{
 			// A "stable" entry that is itself versioned is no better than the
 			// binary path; the upgrade would break it the same way.
-			name:    "versioned PATH entry does not count as stable",
-			exe:     "/home/u/.local/share/clawbench/npm/lib/node_modules/@xulongzhe/clawbench-linux-x64/bin/clawbench",
-			stable:  "/srv/node_modules/clawbench/bin/clawbench",
-			systemd: true,
-			wantIn:  "带版本号",
+			name:   "versioned PATH entry does not count as stable",
+			exe:    "/home/u/.local/share/clawbench/npm/lib/node_modules/@xulongzhe/clawbench-linux-x64/bin/clawbench",
+			stable: "/srv/node_modules/clawbench/bin/clawbench",
+			wantIn: "带版本号",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			gotExe, out := decideServiceInstall(tc.exe, tc.stable, "/data/.clawbench", tc.systemd, tc.container, tc.managed)
+			gotExe, out := decideServiceInstall(tc.exe, tc.stable, tc.container, tc.managed)
 			if out.ok != tc.wantOK {
 				t.Fatalf("ok = %v, want %v (reason: %s)", out.ok, tc.wantOK, out.reason)
 			}
@@ -100,9 +87,15 @@ func TestDecideServiceInstall_Refusals(t *testing.T) {
 }
 
 func TestDecideServiceInstall_EmptyExe(t *testing.T) {
-	_, out := decideServiceInstall("", "", "/data", true, false, false)
+	_, out := decideServiceInstall("", "", false, false)
 	if out.ok {
 		t.Fatal("empty executable path must be refused")
+	}
+	// The reason must name the real cause. Passing an empty exe used to be
+	// reported as "no systemctl" because the caller fed `len(exe) > 0` into the
+	// systemd flag, sending whoever hit this looking in the wrong place.
+	if !strings.Contains(out.reason, "二进制的路径") {
+		t.Errorf("reason %q should name the unresolvable binary path", out.reason)
 	}
 }
 
@@ -163,6 +156,26 @@ func TestBuildUnitFile_QuotesPathsWithSpaces(t *testing.T) {
 func TestSystemdQuote_LeavesPlainPathsAlone(t *testing.T) {
 	if got := systemdQuote("/usr/local/bin/clawbench"); got != "/usr/local/bin/clawbench" {
 		t.Errorf("plain path was modified: %q", got)
+	}
+}
+
+// ExecStart expands `%h`-style specifiers and `$VAR` even inside double quotes,
+// so a literal % or $ in a path has to be doubled or the unit points somewhere
+// else. A home directory containing either byte is rare, which is exactly why
+// this has to be asserted rather than noticed in the wild.
+func TestSystemdQuote_EscapesSpecifierAndVariableBytes(t *testing.T) {
+	if got := systemdQuote("/home/100%/clawbench"); got != "/home/100%%/clawbench" {
+		t.Errorf("%% not escaped: %q", got)
+	}
+	if got := systemdQuote("/home/a$b/clawbench"); got != "/home/a$$b/clawbench" {
+		t.Errorf("$ not escaped: %q", got)
+	}
+	if got := systemdQuote("/home/a b%/clawbench"); got != `"/home/a b%%/clawbench"` {
+		t.Errorf("quoted form should still escape %%: %q", got)
+	}
+	unit := buildUnitFile("/home/100%/clawbench", "/home/100%/.clawbench", "", "/home/100%")
+	if !strings.Contains(unit, "Environment=HOME=/home/100%%") {
+		t.Errorf("Environment=HOME must escape %%:\n%s", unit)
 	}
 }
 

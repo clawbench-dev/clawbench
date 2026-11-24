@@ -618,7 +618,7 @@ func TestComposeSystemPrompt_SharedPromptIsAlwaysFresh(t *testing.T) {
 
 // The in-process agent gets its own base prompt ahead of the shared prefix, and
 // only it does: an ACP agent brings its own prompt, so a second set of
-// behavioural rules would fight the one it already has.
+// behavioral rules would fight the one it already has.
 func TestComposeSystemPrompt_BuiltinBasePrompt(t *testing.T) {
 	base := BuildBuiltinPrompt()
 	common := BuildCommonPrompt()

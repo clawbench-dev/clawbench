@@ -372,8 +372,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     // the discovered skeleton. The raw `models` fallback covers an emit path
     // with no model source to resolve against.
     const modelListState = sessionData.modelListState as {
-      models?: Array<{ id: string; name: string }>
-      resolvedModels?: Array<{ id: string; name: string; default: boolean }>
+      models?: Array<{ id: string; name: string; provider?: string; providerId?: number }>
+      resolvedModels?: Array<{ id: string; name: string; default: boolean; provider?: string; providerId?: number }>
       currentModelId?: string
     } | undefined
     if (currentAgentId.value) {

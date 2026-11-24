@@ -484,11 +484,10 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 		modelID = agent.DefaultModelID()
 	}
 
-	provider := agent.Provider()
 	// A scoped id that names a provider which no longer exists falls back to the
 	// binding: the row was deleted between the pick and the turn, and running
 	// the bound provider's default is better than refusing the whole turn.
-	provider, modelID = agent.ResolveProviderForModel(modelID)
+	provider, modelID := agent.ResolveProviderForModel(modelID)
 	if provider == nil {
 		return nil, "", newNoProviderError()
 	}

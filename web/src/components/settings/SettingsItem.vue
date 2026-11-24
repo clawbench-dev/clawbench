@@ -581,7 +581,9 @@ const isModelSelect = computed(() => !!renderOptions.value?.some(o => o.modelNam
 /** Search text for the model picker (mirrors the chat model drawer). */
 const searchQuery = ref('')
 
-/** Model options after applying the search filter (by name or raw id). */
+/** Model options after applying the search filter (by name, raw id, or the
+ *  provider heading the row sits under — the built-in agent lists models from
+ *  every provider, so "MiniMax" is the most natural way to narrow it). */
 const filteredRenderOptions = computed<SelectOption[] | undefined>(() => {
   const opts = renderOptions.value
   if (!opts) return opts
@@ -589,7 +591,8 @@ const filteredRenderOptions = computed<SelectOption[] | undefined>(() => {
   if (!q) return opts
   return opts.filter(o =>
     o.label.toLowerCase().includes(q) ||
-    (o.modelId ?? '').toLowerCase().includes(q),
+    (o.modelId ?? '').toLowerCase().includes(q) ||
+    (o.groupLabel ?? '').toLowerCase().includes(q),
   )
 })
 

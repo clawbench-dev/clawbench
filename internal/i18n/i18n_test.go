@@ -547,3 +547,19 @@ func TestModelSwitchKeysPresentAndRenderable(t *testing.T) {
 			"%s: detail must be interpolated, got %q", loc, withDetail)
 	}
 }
+
+// Validation messages returned as `MsgKey` from the settings PATCH are rendered
+// server-side; a key with no locale entry ships the raw identifier to the user.
+// The meeting attendee name is one of those, and it was added without either
+// locale, so it is pinned here rather than trusted to review.
+func TestMeetingAttendeeNameKeyPresent(t *testing.T) {
+	for _, loc := range []string{"en", "zh"} {
+		msg := T(LocalizerForLocale(loc), "InvalidMeetingAttendeeName", map[string]any{"Max": 32})
+		if msg == "InvalidMeetingAttendeeName" {
+			t.Fatalf("%s: InvalidMeetingAttendeeName has no translation", loc)
+		}
+		if !strings.Contains(msg, "32") {
+			t.Errorf("%s: Max must be interpolated, got %q", loc, msg)
+		}
+	}
+}
