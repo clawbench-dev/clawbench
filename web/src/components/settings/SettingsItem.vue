@@ -283,7 +283,7 @@
          and the search box. -->
     <template v-for="(group, gi) in renderGroups" :key="group.groupKey ?? gi">
       <div v-if="group.groupKey" class="settings-item__option-group">
-        {{ t(group.groupKey) }}
+        {{ group.label || t(group.groupKey) }}
       </div>
       <div
         v-for="opt in group.options"
@@ -555,11 +555,14 @@ export interface SelectOption {
    *  over `modelPrice` in the row's single cost tag. */
   modelCredits?: string
   groupKey?: string
+  /** Literal heading for a group that has no i18n key (a provider name).
+   *  When set it wins over `t(groupKey)`. */
+  groupLabel?: string
   badgeKey?: string
   /** CSS font-family used to render this option's label in its own font. */
   previewFont?: string
 }
-interface SelectGroup { groupKey?: string; options: SelectOption[] }
+interface SelectGroup { groupKey?: string; label?: string; options: SelectOption[] }
 
 /** Options actually rendered: props.options, replaced by the async filter
  *  result while the picker is open (null until a filter has produced output). */
@@ -623,7 +626,7 @@ const renderGroups = computed<SelectGroup[]>(() => {
   const groups: SelectGroup[] = []
   for (const opt of opts) {
     const last = groups[groups.length - 1]
-    if (!last || last.groupKey !== opt.groupKey) groups.push({ groupKey: opt.groupKey, options: [opt] })
+    if (!last || last.groupKey !== opt.groupKey) groups.push({ groupKey: opt.groupKey, label: opt.groupLabel, options: [opt] })
     else last.options.push(opt)
   }
   return groups

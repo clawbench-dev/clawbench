@@ -1218,6 +1218,32 @@ describe('SettingsAgentDetail', () => {
 
   // ─── Provider binding failures ─────────────────
 
+  // The built-in agent's list spans every configured provider, so the preferred-
+  // model picker groups them under a heading per provider (issue #753). Without
+  // it the same model name appears several times with only the id line to tell
+  // them apart, which is exactly what the chat drawer already avoids.
+  it('groups preferred-model options by provider for the built-in agent', () => {
+    const wrapper = mountDetail({
+      builtinBackend: true,
+      models: [
+        { id: 'p1:gpt-4o', name: 'gpt-4o', default: true, provider: 'MiniMax', providerId: 1 },
+        { id: 'p2:gpt-4o', name: 'gpt-4o', provider: '自建网关', providerId: 2 },
+      ],
+      providerModels: [],
+    })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find((it: any) => it.props('label') === 'Preferred Model')
+    expect(item).toBeDefined()
+    const opts = item!.props('options') as Array<Record<string, any>>
+
+    expect(opts.map(o => o.groupLabel)).toEqual(['MiniMax', '自建网关'])
+    expect(opts[0].groupKey).toBe('provider:1')
+    // The heading carries the provider, so the row shows only the model name.
+    expect(opts.map(o => o.label)).toEqual(['gpt-4o', 'gpt-4o'])
+    expect(opts[0].modelId).toBe('gpt-4o')
+  })
+
+
   // The built-in agent picks its endpoint from the MODEL (its picker lists every
   // configured provider's models), so a binding would only look like a
   // restriction that does not exist. The row must not render at all — not even

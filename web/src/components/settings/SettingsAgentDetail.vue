@@ -502,11 +502,12 @@ const items = computed<AgentItem[]>(() => {
       description: usingCatalogModels ? t('settings.items.agentCatalogModelsDesc') : undefined,
       note: usingCatalogModels ? t('settings.items.agentCatalogModelsNote') : undefined,
       type: 'select',
-      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string; provider?: string }) => ({
-        // A model offered by several providers repeats the same display name
-        // (the built-in agent lists them all), so the provider is part of the
-        // label. Without it the dropdown shows two identical "gpt-4o" rows.
-        label: m.provider ? `${m.name || m.id} · ${m.provider}` : (m.name || m.id),
+      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }) => ({
+        // One heading per provider (the built-in agent lists models from all of
+        // them), so the row itself carries only the model's own name. A
+        // single-provider backend keeps a flat list, where the id line below the
+        // name is what separates two models sharing a display name.
+        label: m.name || m.id,
         value: m.id,
         modelName: m.name || m.id,
         modelPrice: m.price,
@@ -519,9 +520,15 @@ const items = computed<AgentItem[]>(() => {
         modelId: bareModelId(m.id),
         // Grouped rendering requires the key on every option: SettingsItem only
         // switches to grouped mode when at least one option carries it.
-        ...(hasProviderModels
-          ? { groupKey: providerModelIds.has(m.id) ? 'settings.items.agentModelsGroupProvider' : 'settings.items.agentModelsGroupAgent' }
-          : {}),
+        //
+        // A named provider becomes its own heading (a literal label — it is not
+        // an i18n key). Without one, the old two-bucket split (provider vs the
+        // agent's own models) still applies.
+        ...(m.provider
+          ? { groupKey: `provider:${m.providerId ?? m.provider}`, groupLabel: m.provider }
+          : hasProviderModels
+            ? { groupKey: providerModelIds.has(m.id) ? 'settings.items.agentModelsGroupProvider' : 'settings.items.agentModelsGroupAgent' }
+            : {}),
       })),
       // A provider-backed agent may serve an id neither list knows about, so
       // the picker always keeps a free-form escape.
