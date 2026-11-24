@@ -78,9 +78,10 @@ func TestApply_AppliesEveryFeatureSection(t *testing.T) {
 func TestApplyForge_AllFieldsAndNotify(t *testing.T) {
 	cfg := model.Config{}
 	applyForge(&cfg, map[string]any{"forge": map[string]any{
-		"enabled":           true,
-		"insecure_tls":      true,
-		"pause_event_tasks": true,
+		"enabled":                    true,
+		"insecure_tls":               true,
+		"pause_event_tasks":          true,
+		"allow_self_authored_events": true,
 		"notify": map[string]any{
 			"opened":    true,
 			"closed":    true,
@@ -93,6 +94,7 @@ func TestApplyForge_AllFieldsAndNotify(t *testing.T) {
 	assert.True(t, cfg.Forge.Enabled)
 	assert.True(t, cfg.Forge.InsecureTLS)
 	assert.True(t, cfg.Forge.PauseEventTasks)
+	assert.True(t, cfg.Forge.AllowSelfAuthoredEvents)
 	assert.True(t, cfg.Forge.Notify.Opened)
 	assert.True(t, cfg.Forge.Notify.Closed)
 	assert.True(t, cfg.Forge.Notify.Merged)
@@ -102,15 +104,30 @@ func TestApplyForge_AllFieldsAndNotify(t *testing.T) {
 }
 
 func TestApplyForge_ExplicitFalseAndWrongTypesAreIgnored(t *testing.T) {
-	cfg := model.Config{Forge: model.ForgeConfig{Enabled: true, InsecureTLS: true, PauseEventTasks: true}}
+	cfg := model.Config{Forge: model.ForgeConfig{Enabled: true, InsecureTLS: true, PauseEventTasks: true, AllowSelfAuthoredEvents: true}}
 	applyForge(&cfg, map[string]any{"forge": map[string]any{
-		"enabled":           false,
-		"insecure_tls":      "yes", // wrong type: leave the existing value
-		"pause_event_tasks": false,
+		"enabled":                    false,
+		"insecure_tls":               "yes", // wrong type: leave the existing value
+		"pause_event_tasks":          false,
+		"allow_self_authored_events": false,
 	}})
 	assert.False(t, cfg.Forge.Enabled)
 	assert.True(t, cfg.Forge.InsecureTLS, "wrong-typed value must not overwrite")
 	assert.False(t, cfg.Forge.PauseEventTasks)
+	assert.False(t, cfg.Forge.AllowSelfAuthoredEvents)
+}
+
+// TestForge_AllowSelfAuthoredIsPatchableAndDefaultsOff pins the two halves that
+// make the switch safe to expose: it can be written through PATCH (otherwise
+// the settings row would 400 on save), and an install that never wrote the key
+// reads it as OFF — the suppression must not disappear on upgrade.
+func TestForge_AllowSelfAuthoredIsPatchableAndDefaultsOff(t *testing.T) {
+	assert.True(t, Fields("forge")["forge.allow_self_authored_events"])
+
+	cfg := model.Config{}
+	Forge.Defaults(&cfg, func(string) bool { return false })
+	assert.False(t, cfg.Forge.AllowSelfAuthoredEvents,
+		"absent key must mean suppressed; defaulting to true would silently remove the anti-recursion guard")
 }
 
 func TestApplyForge_IgnoresNonMapSections(t *testing.T) {

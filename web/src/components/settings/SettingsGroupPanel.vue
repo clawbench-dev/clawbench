@@ -244,6 +244,7 @@ import { reconnectTunnel } from '@/utils/clawbenchNative'
 import { usePortForward } from '@/composables/usePortForward'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
+import { confirmOnKeys, requiresConfirmBeforeEnabling } from './confirmOnSettings'
 import { useAgents } from '@/composables/useAgents'
 import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
 import { formatFileSize } from '@/utils/fileType'
@@ -679,7 +680,20 @@ function isRagProgressField(field: ItemSpec): boolean {
   return field.key === 'rag.status.index_progress' || field.key === 'rag.status.embed_progress'
 }
 
-function setLocalValue(key: string, value: unknown) {
+async function setLocalValue(key: string, value: unknown) {
+  if (requiresConfirmBeforeEnabling(key, localValues[key], value)) {
+    const confirmed = await dialog.confirm(t(confirmOnKeys[key]), {
+      title: t('settings.items.forgeAllowSelfAuthoredConfirmTitle'),
+      dangerous: true,
+    })
+    // Cancelling must not leave the value changed: the input is controlled by
+    // modelValue, and a rejected change would otherwise be saved on the next
+    // "Save" without the user having agreed to it.
+    if (!confirmed) {
+      localValues[key] = false
+      return
+    }
+  }
   localValues[key] = value
 }
 

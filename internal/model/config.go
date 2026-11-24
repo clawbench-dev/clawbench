@@ -459,6 +459,16 @@ type ForgeConfig struct {
 	// When true, forge events still notify and count as unread, but no task is
 	// fired. Off by default.
 	PauseEventTasks bool `yaml:"pause_event_tasks"`
+	// AllowSelfAuthoredEvents lets an event authored by the credential's own
+	// account fire a task, instead of being suppressed as self-authored.
+	//
+	// Off by default, and deliberately hostile to being turned on: the
+	// suppression exists to stop a write the AI itself performed from
+	// re-triggering the same AI, indefinitely. Turning it on is legitimate when
+	// the user is the one creating issues under that same account and wants
+	// their own actions to drive automation — the loop risk is real but it is
+	// theirs to accept. See ForgeTaskTrigger.isSelfAuthored.
+	AllowSelfAuthoredEvents bool `yaml:"allow_self_authored_events"`
 }
 
 // ForgeNotifyConfig selects which forge events push a notification. Each flag

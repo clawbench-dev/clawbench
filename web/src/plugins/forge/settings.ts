@@ -48,4 +48,10 @@ export default [
     // Global kill-switch for event-triggered AI tasks. Notifications and unread
     // keep working while it is on; only automatic task firing stops.
     { type: 'item', spec: { labelKey: 'settings.items.forgePauseEventTasks', descriptionKey: 'settings.items.forgePauseEventTasksDesc', key: 'forge.pause_event_tasks', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
+    // Off by default: the suppression it disables is what stops an AI's own
+    // write from re-triggering the same AI forever. Unavoidably relevant to
+    // "I created an issue myself and no task ran", so it is exposed — but it
+    // asks for confirmation with the reasoning spelled out on every enable
+    // (see CONFIRM_ON_KEYS in SettingsGroupPanel).
+    { type: 'item', spec: { labelKey: 'settings.items.forgeAllowSelfAuthored', descriptionKey: 'settings.items.forgeAllowSelfAuthoredDesc', key: 'forge.allow_self_authored_events', type: 'switch', source: 'server', sectionHeader: 'settings.items.forgeAutomationSection' } },
 ] satisfies CategoryEntry[]

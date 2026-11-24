@@ -797,6 +797,9 @@ type configForge struct {
 	InsecureTLS bool `json:"insecure_tls"`
 	// PauseEventTasks is the global kill-switch for event-triggered AI tasks.
 	PauseEventTasks bool `json:"pause_event_tasks"`
+	// AllowSelfAuthoredEvents lets events authored by the credential's own
+	// account fire a task instead of being suppressed. Off by default.
+	AllowSelfAuthoredEvents bool `json:"allow_self_authored_events"`
 	// Notify carries the per-event notification toggles.
 	Notify configForgeNotify `json:"notify"`
 }
@@ -1044,12 +1047,13 @@ func buildConfigForge(cfg model.Config) configForge {
 	}
 
 	return configForge{
-		Enabled:             cfg.Forge.Enabled,
-		CredentialHosts:     hosts,
-		CredentialSchemes:   schemes,
-		CredentialPlatforms: platforms,
-		InsecureTLS:         cfg.Forge.InsecureTLS,
-		PauseEventTasks:     cfg.Forge.PauseEventTasks,
+		Enabled:                 cfg.Forge.Enabled,
+		CredentialHosts:         hosts,
+		CredentialSchemes:       schemes,
+		CredentialPlatforms:     platforms,
+		InsecureTLS:             cfg.Forge.InsecureTLS,
+		PauseEventTasks:         cfg.Forge.PauseEventTasks,
+		AllowSelfAuthoredEvents: cfg.Forge.AllowSelfAuthoredEvents,
 		Notify: configForgeNotify{
 			Opened:    cfg.Forge.Notify.Opened,
 			Closed:    cfg.Forge.Notify.Closed,

@@ -198,7 +198,11 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 	// Anti-recursion: an event authored by the credential's own account is
 	// almost certainly a side effect of a previous AI action. Firing on it would
 	// let the AI's own write re-trigger itself indefinitely.
-	if t.isSelfAuthored(repo, item, change) {
+	//
+	// The user can opt out (allow_self_authored_events) when they act under that
+	// same account themselves. The flag is surfaced on the event either way, so
+	// a task's prompt still knows (see ACTOR_IS_SELF).
+	if !cfg.Forge.AllowSelfAuthoredEvents && t.isSelfAuthored(repo, item, change) {
 		slog.Info("forge event suppressed as self-authored",
 			slog.String("repo", repo.Key()),
 			slog.Int("number", item.Number),
