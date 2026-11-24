@@ -166,12 +166,36 @@ func modelListStateForAgent(agent *model.Agent) *ai.ModelListState {
 		out[i].Default = out[i].ID == current
 	}
 	if current != "" && !hasModelID(out, current) {
-		// The pick is outside the provider's list (typed by hand). Keep it first
-		// and flagged: it IS the model running, and the picker groups by
-		// "what this agent can run" before "what the endpoint also offers".
-		out = append([]model.AgentModel{{
-			ID: current, Name: model.ProviderModelName(current), Default: true,
-		}}, out...)
+		// A bare pick (an agent default written before the picker scoped ids, or
+		// a hand-typed one) may name the same model as a scoped entry. Adopt that
+		// entry instead of prepending a duplicate the turn cannot run — a bare id
+		// resolves to the agent's binding, which may not even exist.
+		//
+		// Only an UNAMBIGUOUS match counts: two providers serving the same name
+		// means the bare pick cannot say which one was meant, and guessing would
+		// silently switch providers. That case keeps the old prepend.
+		bare := model.ProviderModelName(current)
+		adoptedIdx := -1
+		ambiguous := false
+		for i := range out {
+			if model.ProviderModelName(out[i].ID) == bare {
+				if adoptedIdx >= 0 {
+					ambiguous = true
+					break
+				}
+				adoptedIdx = i
+			}
+		}
+		if adoptedIdx >= 0 && !ambiguous {
+			current = out[adoptedIdx].ID
+			for i := range out {
+				out[i].Default = out[i].ID == current
+			}
+		} else {
+			out = append([]model.AgentModel{{
+				ID: current, Name: model.ProviderModelName(current), Default: true,
+			}}, out...)
+		}
 	}
 	return &ai.ModelListState{CurrentModelID: current, Models: out}
 }

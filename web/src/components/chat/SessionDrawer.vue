@@ -106,7 +106,11 @@
               @touchmove.passive="onTouchMove"
             >
               <span class="model-item-indicator" :class="{ active: row.m.id === effectiveModelId }"></span>
-              <ModelRow :name="row.m.name" :model-id="row.m.id" :price="row.m.price" :credits="row.m.credits" :active="row.m.id === effectiveModelId" />
+              <!-- The id line exists to tell apart models that share a name. Here the
+                   provider heading already does that, and the raw form carries the
+                   `pN:` scope, which reads as noise — pass the bare name so the line
+                   disappears when it adds nothing. -->
+              <ModelRow :name="row.m.name" :model-id="bareModelId(row.m.id)" :price="row.m.price" :credits="row.m.credits" :active="row.m.id === effectiveModelId" />
               <span v-if="row.m.id === defaultModelId" class="default-label">
                 <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
                 <span class="default-star"><Star :size="12" fill="currentColor" /></span>
@@ -330,6 +334,7 @@ import { normalizeTokenRate } from '@/utils/usageDisplay'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
+import { bareModelId } from '@/utils/modelSelection'
 import { compactGroupMember } from '@/composables/useGroupChat'
 import { useAgents, applyRefreshedModelList, applyRefreshedACPState } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'

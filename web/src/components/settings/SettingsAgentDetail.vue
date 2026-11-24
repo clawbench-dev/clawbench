@@ -230,6 +230,7 @@ import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
 import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import { bareModelId } from '@/utils/modelSelection'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField, patchAgentFields } from '@/composables/useSettingsConfig'
 import type { AvatarSaveSpec } from '@/utils/avatarPolicy'
@@ -515,7 +516,7 @@ const items = computed<AgentItem[]>(() => {
         // the only way to tell them apart in the picker. Some ACP agents carry
         // a JSON-shaped wire id; the shared ModelRow shows it readably on a
         // second line (the value stays untouched).
-        modelId: m.id,
+        modelId: bareModelId(m.id),
         // Grouped rendering requires the key on every option: SettingsItem only
         // switches to grouped mode when at least one option carries it.
         ...(hasProviderModels

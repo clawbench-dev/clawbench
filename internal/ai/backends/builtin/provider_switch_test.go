@@ -97,3 +97,66 @@ func TestBuildClient_PlainAndDanglingIDsFallBackToTheBinding(t *testing.T) {
 	}
 	assert.Equal(t, int32(2), atomic.LoadInt32(&hits))
 }
+
+// A pick written before the picker scoped ids names the same model as its
+// scoped entry. The list must adopt that entry instead of prepending a
+// duplicate bare row — the duplicate cannot run (a bare id resolves to the
+// agent's binding, which a multi-provider agent may not have) and it hides the
+// provider grouping with a row that belongs to no provider.
+func TestModelListState_AdoptsTheScopedEntryForABarePick(t *testing.T) {
+	model.ReplaceProviders([]*model.Provider{{
+		ID: 6, Name: "cbproxy", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "http://127.0.0.1:1", APIKey: "k",
+		Models: []string{"deepseek-v4.1-flash"}, DefaultModel: "deepseek-v4.1-flash",
+	}})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	agent := &model.Agent{
+		ID: "builtin-bare-pick", Backend: BackendID, BuiltinBackend: true,
+		// A default written before the scope existed.
+		PreferredModel: "deepseek-v4.1-flash",
+	}
+	state := modelListStateForAgent(agent)
+	if state == nil {
+		t.Fatal("a pick must still produce a list")
+	}
+	if len(state.Models) != 1 {
+		t.Fatalf("models = %+v, want the scoped entry alone (no duplicate row)", state.Models)
+	}
+	if state.Models[0].ID != model.ProviderScopedModelID(6, "deepseek-v4.1-flash") {
+		t.Fatalf("id = %q, want the scoped entry", state.Models[0].ID)
+	}
+	if !state.Models[0].Default {
+		t.Fatal("the adopted entry is the model the turn runs")
+	}
+	if state.CurrentModelID != state.Models[0].ID {
+		t.Fatalf("currentModelId = %q, want the adopted entry", state.CurrentModelID)
+	}
+}
+
+// Two providers serving the same name make a bare pick ambiguous. Guessing
+// would move the session to the wrong endpoint, so the bare pick is kept as
+// its own row and no entry is adopted.
+func TestModelListState_KeepsABarePickWhenTheNameIsAmbiguous(t *testing.T) {
+	model.ReplaceProviders([]*model.Provider{
+		{ID: 3, Name: "DeepSeek", Protocol: model.ProviderProtocolOpenAI, BaseURL: "http://127.0.0.1:1", APIKey: "k", Models: []string{"deepseek-flash"}, DefaultModel: "deepseek-flash"},
+		{ID: 6, Name: "cbproxy", Protocol: model.ProviderProtocolOpenAI, BaseURL: "http://127.0.0.1:1", APIKey: "k", Models: []string{"deepseek-flash"}, DefaultModel: "deepseek-flash"},
+	})
+	t.Cleanup(func() { model.ReplaceProviders(nil) })
+
+	agent := &model.Agent{
+		ID: "builtin-ambiguous", Backend: BackendID, BuiltinBackend: true,
+		PreferredModel: "deepseek-flash",
+	}
+	state := modelListStateForAgent(agent)
+	if state == nil {
+		t.Fatal("a pick must still produce a list")
+	}
+	// The bare pick plus both providers' entries: no guessing.
+	if len(state.Models) != 3 {
+		t.Fatalf("models = %+v, want the bare pick plus both providers' entries", state.Models)
+	}
+	if state.CurrentModelID != "deepseek-flash" {
+		t.Fatalf("currentModelId = %q, want the bare pick kept as-is", state.CurrentModelID)
+	}
+}
