@@ -24,6 +24,16 @@ type AgentModel struct {
 	// Empty means the agent does not publish one — the picker then shows the
 	// price tag instead (or nothing).
 	Credits string `json:"credits,omitempty"`
+	// Provider is the display name of the model provider this entry came from.
+	//
+	// Only set for a backend that offers models from SEVERAL providers at once
+	// (the built-in agent, see SelectableProviderModels). Empty means the model
+	// belongs to the backend's own discovery or to its single bound provider —
+	// the picker renders those without a group heading.
+	Provider string `json:"provider,omitempty"`
+	// ProviderID is the row behind Provider. The picker echoes it back when the
+	// user picks one of these models; the id in ID carries the same number.
+	ProviderID int64 `json:"providerId,omitempty"`
 }
 
 // Agent represents an AI agent with its own system prompt, backend, and models.
@@ -291,6 +301,15 @@ type Agent struct {
 // ids, like "openai/gpt-4o", stores the namespaced one) — comparing a single
 // form silently ignores the user's pick and falls back to the provider default.
 func (a *Agent) DefaultModelID() string {
+	// A provider-scoped pin names its own provider. Only the built-in agent
+	// produces these (it can run several providers), and its preference must
+	// survive a rebind: comparing the scoped form against the bound provider's
+	// bare list would drop the pick and silently fall back to a default.
+	if pid, bare, ok := ParseProviderScopedModelID(a.PreferredModel); ok {
+		if p := GetProvider(pid); p != nil && containsString(p.Models, bare) {
+			return a.PreferredModel
+		}
+	}
 	if p := a.Provider(); p != nil && len(p.Models) > 0 {
 		if pref := a.PreferredModel; pref != "" && a.providerAcceptsPin(p, pref) {
 			return a.providerModelID(p, pref)
@@ -306,7 +325,12 @@ func (a *Agent) DefaultModelID() string {
 		return a.providerModelID(p, a.PreferredModel)
 	}
 	if a.PreferredModel != "" {
-		return a.PreferredModel
+		// A scoped pin whose provider is gone (or no longer serves it) cannot
+		// run. Returning it would put a dead id on the chip and mark it as the
+		// current model, while the turn actually falls back to the binding.
+		if _, _, scoped := ParseProviderScopedModelID(a.PreferredModel); !scoped {
+			return a.PreferredModel
+		}
 	}
 	return a.BaseModelID()
 }
@@ -835,6 +859,16 @@ func (a *Agent) PreferredModelForProvider(p *Provider) string {
 			return ""
 		}
 		return a.PreferredModel
+	}
+	// A scoped pin names its own provider (the built-in agent can run several).
+	// Rebinding does not invalidate it: the pick still names a live provider
+	// that still serves the model, and for this backend the pin — not the
+	// binding — is what decides which endpoint a turn uses. Rewriting it to the
+	// newly bound provider's default would silently discard the user's choice.
+	if pid, bare, ok := ParseProviderScopedModelID(a.PreferredModel); ok {
+		if target := GetProvider(pid); target != nil && containsString(target.Models, bare) {
+			return a.PreferredModel
+		}
 	}
 	if a.providerAcceptsPin(p, a.PreferredModel) {
 		return a.PreferredModel

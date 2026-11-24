@@ -29,6 +29,22 @@ export interface ModelSelection {
 }
 
 /**
+ * Strip the provider scope from a model id.
+ *
+ * The built-in agent can run several providers at once, so its picker hands out
+ * `p<providerId>:<model>` ids (issue #753). Sessions created before that hold
+ * the bare id, and a user reading a model name should never see the scope — so
+ * every place that compares or displays an id goes through this.
+ *
+ * Any other id is returned unchanged: an ACP/CLI id is opaque, and a colon in it
+ * (a gateway namespacing its own ids) must not be mistaken for our scope.
+ */
+export function bareModelId(id: string): string {
+  const m = /^p\d+:(.+)$/.exec((id || '').trim())
+  return m ? m[1] : id
+}
+
+/**
  * Pick the agent's default model id.
  *
  * Priority: `preferredModel` (the user's choice) > first entry flagged
@@ -66,6 +82,24 @@ export function resolveModelSelection(
     if (known) return { modelId: candidate, modelName: known.name || candidate, retired: false }
     if (models.length === 0) {
       return { modelId: candidate, modelName: nameOf?.(candidate) || candidate, retired: false }
+    }
+    // A session created before the picker scoped ids to providers holds the
+    // bare name, while the list now offers `pN:<same name>`. That is the SAME
+    // model, not a retired one — falling back to the default here would move
+    // the session off the model it is actually running on the first reload.
+    //
+    // Only an UNAMBIGUOUS match counts: two providers may serve the same name,
+    // and guessing between them would silently switch providers.
+    const bare = bareModelId(candidate)
+    if (bare !== candidate) {
+      // Already scoped, so the exact match above is the only correct one.
+      const modelId = pickDefaultModelId(models, preferredModel)
+      const fallback = models.find(m => m.id === modelId)
+      return { modelId, modelName: fallback?.name || modelId, retired: true }
+    }
+    const sameName = models.filter(m => bareModelId(m.id) === bare)
+    if (sameName.length === 1) {
+      return { modelId: sameName[0].id, modelName: sameName[0].name || bare, retired: false }
     }
     const modelId = pickDefaultModelId(models, preferredModel)
     const fallback = models.find(m => m.id === modelId)

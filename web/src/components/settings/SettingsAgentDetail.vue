@@ -501,8 +501,11 @@ const items = computed<AgentItem[]>(() => {
       description: usingCatalogModels ? t('settings.items.agentCatalogModelsDesc') : undefined,
       note: usingCatalogModels ? t('settings.items.agentCatalogModelsNote') : undefined,
       type: 'select',
-      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string }) => ({
-        label: m.name || m.id,
+      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string; provider?: string }) => ({
+        // A model offered by several providers repeats the same display name
+        // (the built-in agent lists them all), so the provider is part of the
+        // label. Without it the dropdown shows two identical "gpt-4o" rows.
+        label: m.provider ? `${m.name || m.id} · ${m.provider}` : (m.name || m.id),
         value: m.id,
         modelName: m.name || m.id,
         modelPrice: m.price,

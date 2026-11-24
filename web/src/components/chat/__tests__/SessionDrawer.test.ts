@@ -250,6 +250,71 @@ describe('SessionDrawer', () => {
     expect(tabs[3].text()).toContain('chat.sessionInfo.contextUsage')
   })
 
+  describe('provider groups (issue #753)', () => {
+    // The built-in agent can run several providers at once, so its list mixes
+    // their models. Two providers may serve the SAME model name; the heading is
+    // the only thing that tells them apart, which is why it must be rendered.
+    function addGroupedAgent(id: string, models: any[]) {
+      mockAgents.agents.value.push({
+        id,
+        name: 'Builtin',
+        backend: 'builtin',
+        builtinBackend: true,
+        models,
+        thinkingEffortLevels: [],
+        preferredModel: models[0]?.id || '',
+        preferredThinkingEffort: '',
+        canRefreshModels: false,
+      } as any)
+      return id
+    }
+
+    it('renders one heading per provider and keeps same-named models apart', () => {
+      const id = addGroupedAgent('tmp-grouped', [
+        { id: 'p1:gpt-4o', name: 'gpt-4o', default: true, provider: 'MiniMax', providerId: 1 },
+        { id: 'p2:gpt-4o', name: 'gpt-4o', default: false, provider: '自建网关', providerId: 2 },
+        { id: 'p2:qwen3', name: 'qwen3', default: false, provider: '自建网关', providerId: 2 },
+      ])
+
+      const wrapper = mountDrawer({ agentId: id })
+
+      const heads = wrapper.findAll('.model-group-head')
+      expect(heads.length).toBe(2)
+      expect(heads[0].text()).toContain('MiniMax')
+      expect(heads[1].text()).toContain('自建网关')
+
+      // Three rows, and the duplicate name appears under both headings.
+      expect(wrapper.findAll('.model-item').length).toBe(3)
+      expect(wrapper.findAll('.model-item').map(i => i.text()).filter(t => t.includes('gpt-4o')).length).toBe(2)
+
+      // The heading belongs to the FIRST row of its group only — a heading per
+      // row would read as if every model had its own provider. Headings and
+      // rows are siblings, so assert the rendered order.
+      const kids = Array.from(wrapper.find('.model-list').element.children)
+        .map(el => (el.classList.contains('model-group-head') ? 'head' : 'row'))
+      expect(kids).toEqual(['head', 'row', 'head', 'row', 'row'])
+    })
+
+    it('renders no heading when the list names no provider (single-provider agents)', () => {
+      const wrapper = mountDrawer() // the claude fixture: plain ids, no provider
+      expect(wrapper.findAll('.model-item').length).toBeGreaterThan(0)
+      expect(wrapper.findAll('.model-group-head').length).toBe(0)
+    })
+
+    it('matches a provider name in the search box', async () => {
+      const id = addGroupedAgent('tmp-search', [
+        { id: 'p1:gpt-4o', name: 'gpt-4o', default: true, provider: 'MiniMax', providerId: 1 },
+        { id: 'p2:qwen3', name: 'qwen3', default: false, provider: '自建网关', providerId: 2 },
+      ])
+
+      const wrapper = mountDrawer({ agentId: id })
+      await wrapper.find('.model-search-row input').setValue('网关')
+
+      expect(wrapper.findAll('.model-item').length).toBe(1)
+      expect(wrapper.findAll('.model-item')[0].text()).toContain('qwen3')
+    })
+  })
+
   // ── Agent-declared extra options (issue #634) ──
   // The first user is codex-acp's "Fast mode": a select the agent advertises
   // only for models with a fast service tier. ClawBench renders it from the

@@ -337,9 +337,27 @@ func resolveAgentModelLists(agents []*model.Agent, states map[string]*acpState,
 			// the settings page offer a default mode/level without a live
 			// session — the same shape an ACP agent's snapshot has.
 			if a.BuiltinBackend {
+				// This backend calls the endpoint itself, so it can run EVERY
+				// configured provider the user has set up — not just the bound
+				// one. The backend's own ModelListState is the single place that
+				// decides the list (it also answers refresh-models), so read it
+				// here rather than rebuilding the rule in the handler.
+				state := reg.GetModelListState(a.ID, "")
 				states[a.ID] = &acpState{
-					Mode:   reg.GetModeState(a.ID, ""),
-					Effort: reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), ""),
+					Mode:      reg.GetModeState(a.ID, ""),
+					Effort:    reg.GetThinkingEffortStateForModel(a.ID, a.DefaultModelID(), ""),
+					ModelList: state,
+				}
+				if state != nil && len(state.Models) > 0 {
+					clone := *a
+					clone.Models = state.Models
+					// ProviderModels is what the settings picker groups under "from
+					// a provider". For this backend every entry comes from one, so
+					// publishing the same list keeps the grouping honest and stops
+					// the union in the client from re-adding bare-id duplicates.
+					clone.ProviderModels = state.Models
+					agents[i] = &clone
+					continue
 				}
 			}
 			// CLI agents inherit the curated list too: the endpoint is custom,

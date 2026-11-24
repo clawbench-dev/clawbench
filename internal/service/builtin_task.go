@@ -158,14 +158,22 @@ func RunBuiltinAgentTask(ctx context.Context, task BuiltinAgentTask) (string, er
 // would produce answers the user cannot account for ("why is this minutes
 // document written by a model I never chose?").
 func builtinAgentClient(agent *model.Agent) (llm.Client, string, error) {
-	provider := agent.Provider()
-	if provider == nil {
+	if agent.Provider() == nil {
 		return nil, "", fmt.Errorf("%s", serviceMessage("BuiltinNoProvider"))
 	}
 	modelID := agent.DefaultModelID()
 	if modelID == "" {
 		return nil, "", fmt.Errorf("%s", serviceMessage("BuiltinNoModel"))
 	}
+	// A task has no per-request override, so its model is the agent's default —
+	// which may name another provider (the picker stores provider-scoped ids).
+	// Resolving through the model keeps a task on the endpoint the user picked
+	// instead of asking the bound provider for a model it never served.
+	provider, bareModelID := agent.ResolveProviderForModel(modelID)
+	if provider == nil {
+		return nil, "", fmt.Errorf("%s", serviceMessage("BuiltinNoProvider"))
+	}
+	modelID = bareModelID
 	client, err := llm.New(llm.Config{
 		Protocol:       provider.Protocol,
 		BaseURL:        provider.BaseURL,
