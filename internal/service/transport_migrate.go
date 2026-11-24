@@ -59,9 +59,14 @@ func MigrateSessionTransportColumns() bool {
 }
 
 // MigrateRemoveRetiredBackends deletes the agents of backends that no longer
-// exist: vecli only ever spoke its own CLI stream, and copilot declared an ACP
-// command that was never verified, so it only ever ran over CLI. Both were
-// removed with the CLI transport.
+// exist. vecli only ever spoke its own CLI stream, which was removed with the
+// CLI transport.
+//
+// copilot used to be on this list: it had declared an ACP command that was
+// never verified, so it only ever ran over CLI. `copilot --acp` has since been
+// verified against the real CLI (initialize/session/new/prompt), so the backend
+// is live again and its agents must NOT be deleted — an upgrade keeps them, and
+// the spec sync fills in their acp_command on the next discovery refresh.
 //
 // An upgraded install can still hold rows for them. Such an agent has no ACP
 // command and no in-process implementation, so every turn fails — leaving the
@@ -99,7 +104,7 @@ func MigrateRemoveRetiredBackends() bool {
 
 	retired, err := query(
 		`SELECT id, name, backend, acp_command FROM agents
-		  WHERE backend IN ('vecli', 'copilot')
+		  WHERE backend = 'vecli'
 		  ORDER BY sort_order, id`)
 	if err != nil {
 		slog.Warn("migration: listing retired-backend agents failed", "err", err)
@@ -121,17 +126,17 @@ func MigrateRemoveRetiredBackends() bool {
 	var replacement *model.Agent
 	for _, q := range []string{
 		`SELECT id, name, backend, acp_command FROM agents
-		  WHERE backend NOT IN ('vecli', 'copilot')
+		  WHERE backend != 'vecli'
 		    AND (COALESCE(acp_command, '') != '' OR backend = 'builtin')
 		    AND disabled = 0 AND project_id IS NULL
 		  ORDER BY sort_order, id LIMIT 1`,
 		`SELECT id, name, backend, acp_command FROM agents
-		  WHERE backend NOT IN ('vecli', 'copilot')
+		  WHERE backend != 'vecli'
 		    AND (COALESCE(acp_command, '') != '' OR backend = 'builtin')
 		    AND disabled = 0
 		  ORDER BY sort_order, id LIMIT 1`,
 		`SELECT id, name, backend, acp_command FROM agents
-		  WHERE backend NOT IN ('vecli', 'copilot')
+		  WHERE backend != 'vecli'
 		    AND (COALESCE(acp_command, '') != '' OR backend = 'builtin')
 		  ORDER BY sort_order, id LIMIT 1`,
 	} {

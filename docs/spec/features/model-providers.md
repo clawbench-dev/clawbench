@@ -46,9 +46,21 @@
 | cursor | key-only | `CURSOR_API_KEY`（不支持自定义端点）；也支持私有协议 |
 | commandcode | key-only | `COMMAND_CODE_API_KEY`（完整 BYOK 仍需其 providers.json）；也支持私有协议 |
 | codex | **配置文件** | `~/.codex/config.toml` 托管块 + `CLAWBENCH_PROVIDER_API_KEY` |
+| qwen | openai | `OPENAI_BASE_URL` / `OPENAI_API_KEY` + `OPENAI_MODEL`（启动时模型，见下节 `ModelEnv`） |
+| copilot | openai、anthropic、gemini | `COPILOT_PROVIDER_BASE_URL` / `COPILOT_PROVIDER_API_KEY` / `COPILOT_PROVIDER_TYPE`（按协议）+ `COPILOT_PROVIDER_MODEL_ID`（`ModelEnv`） |
+| cline | 不支持 | 只认账号登录（设备码 OAuth）；`settings/providers.json` 实测不影响 ACP 会话 |
+| minimax | 不支持 | BYOK 只能写它自己的 `config.yaml`（`mcode provider add`），环境变量无效 |
+| kiro | 不支持 | 订阅制，没有端点/密钥对 |
+| trae | 不支持 | 企业订阅；未实测 |
 | qoder / qodercn / openclaw / custom-acp | 不支持 | 绑定时 400 `ProviderUnsupported` |
 
 不支持的后端**不会静默无效**：PATCH 校验直接拒绝，前端对应选项灰显并说明原因。
+
+### 启动时模型（`ModelEnv`）
+
+有的后端在**会话建立之前**就要知道模型：qwen 的 openai 鉴权不给模型直接 `-32000`（且请求里用的就是这个 id），copilot 的 BYOK 不给模型拒绝启动。这类后端声明 `ProviderEnvSpec.ModelEnv`（变量名），`BuildProviderEnv` 自动填 **agent 固定的模型**（来自 provider 时），没有就填 **provider 的 DefaultModel**，两者都没有则不注入（让后端自己报「缺模型」比塞一个端点没服务的 id 更好）。
+
+它是**进程级默认值**，不是会话级切换：qwen 在 BYOK 下换模型要改 provider 的默认模型；copilot 的候选集在建会话时就固定成 `auto` + 这一个 id。
 
 ## 注入实现
 

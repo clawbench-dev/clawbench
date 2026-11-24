@@ -23,6 +23,12 @@ const backendDisplayNames: Record<string, string> = {
   commandcode: 'Command Code',
   cursor: 'Cursor',
   openclaw: 'OpenClaw',
+  qwen: 'Qwen Code',
+  cline: 'Cline',
+  copilot: 'GitHub Copilot',
+  minimax: 'MiniMax Code',
+  kiro: 'Kiro',
+  trae: 'TRAE',
   // The built-in agent's tools live inside ClawBench itself (no external CLI).
   // Named after the product rather than "Builtin", which described the
   // implementation instead of the agent.

@@ -7,6 +7,7 @@ const ALL_BACKENDS = [
     'claude', 'codebuddy', 'opencode', 'codex',
     'qoder', 'kimi', 'mimo', 'pi', 'deepseek', 'dsh', 'grok', 'antigravity', 'hermes', 'cursor',
     'commandcode', 'openclaw', 'qodercn', 'zcode', 'custom-acp', 'builtin',
+    'qwen', 'cline', 'copilot', 'minimax', 'kiro', 'trae',
 ]
 
 /**

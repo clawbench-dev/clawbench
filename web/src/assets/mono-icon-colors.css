@@ -56,3 +56,11 @@
 
 /* ---- Kimi: brand blue — readable on both themes, no backdrop needed ---- */
 .mono-kimi { color: #1783FF; }
+
+/* ---- Cline: near-black mark — invisible on dark bg ---- */
+.mono-cline { color: #1A1A1A; }
+[data-theme-base="dark"] .mono-cline { color: #e6edf3; }
+
+/* ---- GitHub Copilot: GitHub's near-black mark — invisible on dark bg ---- */
+.mono-copilot { color: #1F2328; }
+[data-theme-base="dark"] .mono-copilot { color: #e6edf3; }

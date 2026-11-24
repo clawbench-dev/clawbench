@@ -789,3 +789,69 @@ func TestProviderCapabilityPredicates(t *testing.T) {
 		t.Error("an unknown backend offers no editions")
 	}
 }
+
+// ModelEnv exists for backends that resolve the model BEFORE a session exists
+// (qwen's OpenAI auth, copilot's BYOK): they refuse to start without a model
+// name, and the picker's per-session choice cannot reach them.
+func TestBuildProviderEnv_ModelEnvCarriesProviderDefault(t *testing.T) {
+	registerTestSpec(t, "test-model-env", ProviderEnvSpec{
+		OpenAI:   ProtoEnv("TEST_BASE_URL", "TEST_API_KEY", ""),
+		ModelEnv: "TEST_MODEL",
+	})
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "k", ProviderAuthAuto)
+	p.Models = []string{"model-a", "model-b"}
+	p.DefaultModel = "model-b"
+	np := p.Normalized()
+
+	env, err := BuildProviderEnv("test-model-env", &np, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "TEST_MODEL=model-b") {
+		t.Fatalf("the provider's default model must be handed to the process, got %v", env)
+	}
+}
+
+func TestBuildProviderEnv_ModelEnvPrefersPinnedModel(t *testing.T) {
+	registerTestSpec(t, "test-model-env-pin", ProviderEnvSpec{
+		OpenAI:   ProtoEnv("TEST_BASE_URL", "TEST_API_KEY", ""),
+		ModelEnv: "TEST_MODEL",
+	})
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "k", ProviderAuthAuto)
+	p.Models = []string{"model-a", "model-b"}
+	p.DefaultModel = "model-b"
+	np := p.Normalized()
+
+	env, err := BuildProviderEnv("test-model-env-pin", &np, "model-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	joined := strings.Join(env, ",")
+	if !strings.Contains(joined, "TEST_MODEL=model-a") {
+		t.Fatalf("the pinned model must win over the provider default, got %v", env)
+	}
+	if strings.Contains(joined, "TEST_MODEL=model-b") {
+		t.Fatalf("the default must not also be exported, got %v", env)
+	}
+}
+
+// A provider with no model at all must not be given an invented one: the
+// backend's own "no model" error names the real problem.
+func TestBuildProviderEnv_ModelEnvOmittedWithoutAModel(t *testing.T) {
+	registerTestSpec(t, "test-model-env-empty", ProviderEnvSpec{
+		OpenAI:   ProtoEnv("TEST_BASE_URL", "TEST_API_KEY", ""),
+		ModelEnv: "TEST_MODEL",
+	})
+	p := providerForTest(ProviderProtocolOpenAI, "https://gw.example/v1", "k", ProviderAuthAuto)
+
+	env, err := BuildProviderEnv("test-model-env-empty", p, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "TEST_MODEL=") {
+			t.Fatalf("no model was declared, so no model variable may be exported: %v", env)
+		}
+	}
+}

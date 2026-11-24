@@ -51,6 +51,18 @@ var mcpProbeBackends = []mcpProbeBackend{
 	// catches an AcpCommand change, and so a future re-probe notices if the
 	// bridge ever starts accepting the field.
 	{ID: "openclaw", Args: []string{"openclaw", "acp"}, CLI: "openclaw"},
+	// Added with the 2026-11-24 backend batch. Only copilot and minimax were
+	// MEASURED with an injected server (both attach it and call its tool in the
+	// first turn, see docs/dev/*_acp_probe_results.md). qwen, cline, kiro and
+	// trae are listed so the drift guard covers their AcpCommand; their MCP
+	// behavior is still unverified (kiro advertises http/sse only once a
+	// credential is present, and trae has no obtainable binary).
+	{ID: "qwen", Args: []string{"qwen", "--acp"}, CLI: "qwen"},
+	{ID: "cline", Args: []string{"cline", "--acp"}, CLI: "cline"},
+	{ID: "copilot", Args: []string{"copilot", "--acp"}, CLI: "copilot"},
+	{ID: "minimax", Args: []string{"mcode", "acp"}, CLI: "mcode"},
+	{ID: "kiro", Args: []string{"kiro-cli", "acp", "--agent-engine=v3"}, CLI: "kiro-cli"},
+	{ID: "trae", Args: []string{"traecli", "acp", "serve"}, CLI: "traecli"},
 }
 
 // TestMCPProbeBackendTable 是源码守卫：探针表里每个后端的 spawn 命令必须与
