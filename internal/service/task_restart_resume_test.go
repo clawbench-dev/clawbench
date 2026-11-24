@@ -64,10 +64,68 @@ func (b *recordingTaskBackend) lastPrompt() string {
 	return b.prompt
 }
 
+// blockingResumeBackend holds one turn open until the test releases it, so a
+// test can observe the run while it is genuinely in flight (claim, cancel
+// context, streaming row) instead of after it has already finished.
+type blockingResumeBackend struct {
+	name    string
+	started chan struct{}
+	proceed chan struct{}
+}
+
+func newBlockingResumeBackend() *blockingResumeBackend {
+	name := fmt.Sprintf("test-task-resume-block-%d", resumeBackendSeq.Add(1))
+	b := &blockingResumeBackend{
+		name:    name,
+		started: make(chan struct{}),
+		proceed: make(chan struct{}),
+	}
+	ai.RegisterBackend(name, func() ai.AIBackend { return b })
+	return b
+}
+
+func (b *blockingResumeBackend) Name() string { return b.name }
+
+func (b *blockingResumeBackend) ExecuteStream(ctx context.Context, _ ai.ChatRequest) (<-chan ai.StreamEvent, error) {
+	ch := make(chan ai.StreamEvent, 2)
+	ch <- ai.StreamEvent{Type: "content", Content: "continued"}
+	close(b.started)
+	go func() {
+		defer close(ch)
+		select {
+		case <-b.proceed:
+			ch <- ai.StreamEvent{Type: "done"}
+		case <-ctx.Done():
+			// Never the terminal event: the caller must see a cancelled turn,
+			// which is what the shutdown path produces.
+		}
+	}()
+	return ch, nil
+}
+
+// release lets the in-flight turn finish normally.
+func (b *blockingResumeBackend) release() {
+	select {
+	case <-b.proceed:
+	default:
+		close(b.proceed)
+	}
+}
+
+// awaitRun blocks until the backend has been entered.
+func awaitRun(t *testing.T, started <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the resumed run never reached the backend")
+	}
+}
+
 // seedInterruptedExecution builds the state a restart leaves behind: a task, the
 // session it was running in (with history, so the agent resumes it), and an
 // execution row that the shutdown marked as interrupted.
-func seedInterruptedExecution(t *testing.T, backend *recordingTaskBackend, taskStatus string) (*Scheduler, *model.ScheduledTask, string, int64) {
+func seedInterruptedExecution(t *testing.T, backend ai.AIBackend, taskStatus string) (*Scheduler, *model.ScheduledTask, string, int64) {
 	t.Helper()
 	setupSchedulerExecDB(t)
 
@@ -289,6 +347,67 @@ func TestResumeExecution_SkipsUnusableTargets(t *testing.T) {
 			assert.Empty(t, backend.lastPrompt(), "no turn may run for an unusable target")
 		})
 	}
+}
+
+// TestResumeExecution_IsCancellableByShutdown pins the consequence of the
+// resumed run not being claimed by the session registry: the NEXT restart found
+// nothing to cancel for it. CancelAllRunning walks that registry, so it neither
+// cancelled the turn nor wrote the restart marker — the run was left "running"
+// in the DB with a dead goroutine and was never resumed again.
+func TestResumeExecution_IsCancellableByShutdown(t *testing.T) {
+	blocking := newBlockingResumeBackend()
+	s, task, sessionID, execID := seedInterruptedExecution(t, blocking, "active")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		require.NoError(t, s.resumeExecution(execID))
+	}()
+
+	awaitRun(t, blocking.started)
+
+	require.True(t, s.HasRunningExecutions(task.ID),
+		"the resumed run must be visible as running, or the shutdown cannot cancel it")
+	assert.True(t, IsSessionRunning(sessionID),
+		"the resumed run must hold the session, or a second turn can interleave with it")
+
+	s.CancelAllRunning()
+	blocking.release()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the resumed run did not stop after CancelAllRunning")
+	}
+
+	_, flag := executionRow(t, execID)
+	assert.Equal(t, 1, flag,
+		"cancelling the resumed run must stamp the restart marker, or the run is lost across the next restart")
+	assert.False(t, s.HasRunningExecutions(task.ID), "the claim must be released")
+}
+
+// TestResumeExecution_FinalizesInterruptedReplyBeforeStarting pins the second
+// half of the same defect: the previous attempt died in the middle of a stream,
+// so its assistant row is still streaming=1. The resumed run never closed it, and
+// the leftover row made the session look like it was streaming forever.
+func TestResumeExecution_FinalizesInterruptedReplyBeforeStarting(t *testing.T) {
+	backend := newResumeBackend()
+	s, _, sessionID, execID := seedInterruptedExecution(t, backend, "active")
+
+	// What the killed attempt left behind: an assistant row that never got a
+	// terminal event.
+	msgID, err := AddChatMessage("", backend.Name(), sessionID, "assistant",
+		`{"blocks":[{"type":"text","text":"half a thought","done":true}]}`, nil, true, "")
+	require.NoError(t, err)
+
+	require.NoError(t, s.resumeExecution(execID))
+
+	var streaming int
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT streaming FROM chat_history WHERE id = ?", msgID,
+	).Scan(&streaming))
+	assert.Equal(t, 0, streaming,
+		"the interrupted attempt's row must be closed before the continuation starts")
 }
 
 // TestResumeTaskExecution_RoutesThroughGlobalScheduler covers the wiring main()
@@ -557,9 +676,8 @@ func TestResumeExecution_EmptyBackendAborts(t *testing.T) {
 
 	model.Agents["test-agent"].Backend = ""
 
-	err := s.resumeExecution(execID)
-	require.Error(t, err, "an agent with no backend must abort the resume")
-	assert.Contains(t, err.Error(), "has no backend")
+	require.NoError(t, s.resumeExecution(execID),
+		"the caller gets no error: the refusal is logged and recorded on the execution row")
 
 	status, _ := executionRow(t, execID)
 	assert.Equal(t, statusFailed, status,
