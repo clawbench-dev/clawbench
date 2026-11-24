@@ -211,6 +211,14 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
+// The clipboard utility reaches for navigator.clipboard, which jsdom does not
+// implement; the row's whole behaviour is "hand the command over", so the mock
+// is what the assertion looks at.
+const mockCopyText = vi.fn((_text: string, onSuccess?: () => void) => { onSuccess?.() })
+vi.mock('@/utils/clipboard', () => ({
+  copyText: (text: string, onSuccess?: () => void, onError?: () => void) => mockCopyText(text, onSuccess, onError),
+}))
+
 
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
 vi.mock('@/composables/useDialog.ts', () => ({
@@ -410,6 +418,9 @@ const i18n = createI18n({
           showWelcomeDesc: '打开欢迎界面',
           checkUpgrade: '检查更新',
           checkUpgradeDesc: '检查更新',
+          registerService: '注册为系统服务',
+          registerServiceDesc: '在终端运行 clawbench service install',
+          registerServiceCopied: '命令已复制：clawbench service install',
           saveFailed: '保存失败',
           passwordChanged: '密码修改成功',
           passwordDiscarded: '密码已丢弃',
@@ -1465,6 +1476,36 @@ describe('SettingsCategory', () => {
       expect(mockDialogConfirm).toHaveBeenCalled()
       await wrapper.vm.$nextTick()
       expect(wrapper.emitted('restartRequested')).toBeFalsy()
+    })
+  })
+
+  // ─── registerService ──────────────────
+  // The row must hand over the exact command and confirm it, not attempt the
+  // install: registering a unit needs sudo or the user's own systemctl --user,
+  // neither of which this process can drive.
+  describe('registerService', () => {
+    it('copies the install command and confirms', async () => {
+      mockCopyText.mockClear()
+      mockToastShow.mockClear()
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      vm.$.setupState.handleClick({ key: 'registerService' })
+      await wrapper.vm.$nextTick()
+      expect(mockCopyText).toHaveBeenCalledTimes(1)
+      expect(mockCopyText.mock.calls[0][0]).toBe('clawbench service install')
+      expect(mockToastShow).toHaveBeenCalled()
+    })
+
+    it('reports a failure instead of silently doing nothing', async () => {
+      mockCopyText.mockClear()
+      mockToastShow.mockClear()
+      const wrapper = mountCategory('about')
+      const vm = wrapper.vm as any
+      // Swap in a copy that fails, to check the error branch is wired.
+      mockCopyText.mockImplementationOnce((_t: string, _ok?: () => void, onError?: () => void) => { onError?.() })
+      vm.$.setupState.handleClick({ key: 'registerService' })
+      await wrapper.vm.$nextTick()
+      expect(mockToastShow).toHaveBeenCalled()
     })
   })
 

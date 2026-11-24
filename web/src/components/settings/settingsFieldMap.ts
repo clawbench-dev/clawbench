@@ -674,6 +674,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.showWelcome', descriptionKey: 'settings.items.showWelcomeDesc', key: 'showWelcome', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.restartServer', descriptionKey: 'settings.items.restartServerDesc', key: 'restartServer', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.checkUpgrade', descriptionKey: 'settings.items.checkUpgradeDesc', key: 'checkUpgrade', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
+    // Copy-only, deliberately: registering a systemd unit needs either sudo or
+    // the user's own systemctl --user, neither of which this process can drive
+    // on their behalf. The row hands over the command instead of pretending to
+    // install. Hidden outside a Linux server context in SettingsCategory.vue.
+    { type: 'item', spec: { labelKey: 'settings.items.registerService', descriptionKey: 'settings.items.registerServiceDesc', key: 'registerService', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
   ],
 
   // ── Panel-only categories (formerly drill-down) ────────────
