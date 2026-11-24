@@ -88,8 +88,9 @@ vi.mock('@/utils/remoteControlSupport', () => ({
   resolveRemoteControlSupport: async () => false,
 }))
 
-// The create page reads the account nickname (user.nickname) for its required
-// identity field, and writes an edit back through the settings API.
+// The create page reads 参会称呼 (meeting.attendee_name) for its required
+// identity field and writes an edit back through the settings API. It is NOT
+// the account nickname agents use in a chat (user.nickname).
 const settingsApi = vi.hoisted(() => ({
   serverConfig: { value: {} as Record<string, unknown> },
   localConfig: {
@@ -273,6 +274,20 @@ describe('MeetingCreate in a browser', () => {
     // The nickname is required, so fill it before checking the start button.
     await wrapper.find('[data-role="meeting-nick"]').setValue('Alex')
     expect(start.attributes('disabled')).toBeUndefined()
+  })
+
+  it('saves an edited name to meeting.attendee_name, not the chat nickname', async () => {
+    stubCaptureApi(true)
+    settingsApi.serverConfig.value = { user: { nickname: '老板' }, meeting: { attendee_name: '老板' } }
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-role="meeting-nick"]').setValue('参会的小泷')
+    await wrapper.find('[data-action="meeting-start"]').trigger('click')
+    await flushPromises()
+
+    expect(settingsApi.setServerValue).toHaveBeenCalledWith('meeting.attendee_name', '参会的小泷')
+    expect(settingsApi.setServerValue).not.toHaveBeenCalledWith('user.nickname', expect.anything())
   })
 
   it('starts with no picture at all instead of refusing', async () => {
@@ -874,18 +889,27 @@ describe('MeetingCreate in a browser', () => {
     expect(title.compareDocumentPosition(nick) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('pre-fills the account nickname', async () => {
+  it('pre-fills 参会称呼', async () => {
     stubCaptureApi(true)
-    settingsApi.serverConfig.value = { user: { nickname: '泷泽' } }
+    settingsApi.serverConfig.value = { meeting: { attendee_name: '泷泽' } }
     const wrapper = mountPanel()
     await flushPromises()
 
     expect((wrapper.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('泷泽')
   })
 
+  it('ignores the chat nickname when pre-filling', async () => {
+    stubCaptureApi(true)
+    settingsApi.serverConfig.value = { user: { nickname: '老板' }, meeting: { attendee_name: '' } }
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect((wrapper.find('[data-role="meeting-nick"]').element as HTMLInputElement).value).toBe('')
+  })
+
   it('does not pre-fill the fallback literal', async () => {
     stubCaptureApi(true)
-    settingsApi.serverConfig.value = { user: { nickname: 'User' } }
+    settingsApi.serverConfig.value = { meeting: { attendee_name: 'User' } }
     const wrapper = mountPanel()
     await flushPromises()
 

@@ -1119,7 +1119,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 	// Compose the runtime prompt now. The clone goes straight into the live
 	// Agents map, and nothing recomposes it until the next reload, so leaving
 	// it empty would make the new agent run with no system prompt at all.
-	clone.RuntimeSystemPrompt = model.ComposeSystemPrompt(clone.CustomSystemPrompt)
+	clone.RuntimeSystemPrompt = model.ComposeSystemPrompt(clone.CustomSystemPrompt, clone.BuiltinBackend)
 
 	return clone, nil
 }
@@ -1167,7 +1167,7 @@ func CreateCustomACPAgent(name, acpCommand string) (*model.Agent, error) {
 	// A fresh agent has no custom prompt, so its runtime copy is the shared
 	// prefix only. Composing it here keeps the agent usable immediately: it goes
 	// straight into the live map and nothing recomposes it until the next load.
-	agent.RuntimeSystemPrompt = model.ComposeSystemPrompt("")
+	agent.RuntimeSystemPrompt = model.ComposeSystemPrompt("", false)
 
 	if err := SaveAgent(store.WriteDB(), agent); err != nil {
 		return nil, fmt.Errorf("save custom acp agent: %w", err)

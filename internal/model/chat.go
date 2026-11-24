@@ -464,6 +464,13 @@ type ContentBlock struct {
 	// the member's timeline accent consistently with the roster.
 	MemberName  string `json:"member_name,omitempty"`
 	MemberColor string `json:"member_color,omitempty"`
+	// NotFoundThisRun marks a tool call that named a tool the backend does not
+	// have at all (a hallucinated name), for backends that can KNOW it rather
+	// than infer it from the error text. On such a block Output is the backend's
+	// "no such tool" message, and Name is whatever the model invented — which
+	// may collide with a real card name like AskUserQuestion. RemoveRejectedToolBlocks
+	// drops these so the invented call does not render as a duplicate card.
+	NotFoundThisRun bool `json:"not_found_this_run,omitempty"`
 }
 
 // randRead is the entropy source for GenerateThinkingID, as a package-level

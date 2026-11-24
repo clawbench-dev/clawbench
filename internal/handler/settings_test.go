@@ -273,6 +273,88 @@ func TestServeConfig_Patch_UserNickname(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
 }
 
+// 参会称呼 (meeting.attendee_name) is the meeting's OWN name for the user. It
+// round-trips through PATCH /api/config, is trimmed and stored, and — the point
+// of the whole field — never touches user.nickname.
+func TestServeConfig_Patch_MeetingAttendeeName(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ConfigInstance.User.Nickname = "老板"
+	model.UserNickname = "老板"
+	t.Cleanup(func() { model.UserNickname = "" })
+
+	body := `{"meeting":{"attendee_name":"  泷泽  "}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "泷泽", model.ConfigInstance.Meeting.AttendeeName,
+		"a meeting-only change must be stored trimmed")
+	assert.Equal(t, "老板", model.ConfigInstance.User.Nickname,
+		"editing 参会称呼 must not rewrite the chat nickname")
+	assert.Equal(t, "老板", model.UserNickname,
+		"the chat identity global must be untouched")
+	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
+
+	// The reverse direction: editing the chat nickname leaves 参会称呼 alone.
+	body = `{"user":{"nickname":"新老板"}}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "泷泽", model.ConfigInstance.Meeting.AttendeeName,
+		"editing the chat nickname must not rewrite 参会称呼")
+}
+
+// 参会称呼 has its own rules: it is only ever READ on screen, so the
+// group-routing delimiters and agent-name uniqueness do not apply — but a
+// control character still cannot be stored, because the value is written
+// verbatim into chat.md as a speaker label.
+func TestServeConfig_Patch_MeetingAttendeeNameValidation(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A comma, quotes and an angle bracket are all legitimate meeting names.
+	model.ConfigInstance = model.Config{}
+	body := `{"meeting":{"attendee_name":"张, 李 <访客>"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, "张, 李 <访客>", model.ConfigInstance.Meeting.AttendeeName)
+
+	// An agent's name is a fine meeting name too: nothing routes to it.
+	model.ConfigInstance = model.Config{}
+	body = `{"meeting":{"attendee_name":"Claude"}}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeConfig, req)
+	assert.Equal(t, http.StatusOK, w.Code, "a meeting name must not be checked against agent names")
+
+	for _, bad := range []string{"a\nb", "a\u0007b", strings.Repeat("字", model.MaxMeetingAttendeeRunes+1)} {
+		model.ConfigInstance = model.Config{}
+		model.ConfigInstance.Meeting.AttendeeName = "原名"
+		body, _ := json.Marshal(map[string]any{"meeting": map[string]any{"attendee_name": bad}})
+		req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeConfig, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code, "attendee name %q must be rejected", bad)
+		assert.Contains(t, w.Body.String(), "InvalidMeetingAttendeeName",
+			"the 400 must carry the localized msgKey")
+		assert.Equal(t, "原名", model.ConfigInstance.Meeting.AttendeeName,
+			"a rejected value must not be stored")
+	}
+}
+
 // Surrounding whitespace must be stripped before validation and storage. The
 // nickname is a routing target and the mention parser trims each target, so a
 // stored "  User  " would be unreachable (byName keys it untrimmed, lookup

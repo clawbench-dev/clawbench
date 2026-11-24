@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -22,34 +21,6 @@ import (
 // this guards against a corrupt or hostile .info file (gzip bomb) without
 // rejecting legitimate ones.
 const maxCacheEntryBytes = 4 << 20 // 4 MiB
-
-// codebuddyProductFiles are the product-config filenames CodeBuddy ships.
-// The npm package and native binary both reference several variants; only one
-// is present for a given distribution channel.
-//
-// These files are a FALLBACK only: they are generic factory defaults whose
-// model list can differ completely from the account's deployment (issue #539).
-// The authoritative source is the runtime cache written by the CLI from the
-// server's per-enterprise response, which discoverCodebuddyModelsFrom probes
-// first. The order below is therefore only a last-resort preference for
-// installs with no cache at all.
-var codebuddyProductFiles = []string{
-	"product.cloudhosted.json",
-	"product.internal.json",
-	"product.ioa.json",
-	"product.selfhosted.json",
-	"product.json",
-}
-
-// codebuddyProductEnvVars are the official environment variables that override
-// the product config. ACC_PRODUCT_CONFIG_PATH points at a file; the others may
-// carry either a file path or inline JSON.
-var codebuddyProductEnvVars = []string{
-	"ACC_PRODUCT_CONFIG_PATH",
-	"ACC_PRODUCT_CONFIG_V3",
-	"ACC_PRODUCT_CONFIG_V2",
-	"ACC_PRODUCT_CONFIG",
-}
 
 // codebuddyProductModel represents a model entry in codebuddy's product JSON.
 type codebuddyProductModel struct {
@@ -72,7 +43,6 @@ type codebuddyProduct struct {
 var (
 	codebuddyResolveCLIPath = platform.ResolveCLIPath
 	codebuddyUserHomeDir    = os.UserHomeDir
-	codebuddyGetenv         = os.Getenv
 )
 
 // discoverCodebuddyModels is the ModelSource entry point. The failure detail is
@@ -82,163 +52,44 @@ var (
 func discoverCodebuddyModels() ([]model.AgentModel, string) {
 	realPath := codebuddyResolveCLIPath("codebuddy")
 	home, _ := codebuddyUserHomeDir()
-	return discoverCodebuddyModelsFrom(realPath, home, codebuddyGetenv)
+	return discoverCodebuddyModelsFrom(realPath, home)
 }
 
 // discoverCodebuddyModelsFrom is the testable core of DiscoverCodebuddyModels.
 // It returns the discovered models (nil on failure) and a human-readable detail
 // string describing what was attempted (empty on success).
 //
-// Source priority is deliberate (issue #539): the runtime cache is the config
-// the CLI fetched from the server for THIS account's deployment (enterpriseId +
-// deploymentType), so it is the only list that matches what the CLI can
-// actually run. The product.*.json files shipped inside the npm package are
-// generic factory defaults whose models can be entirely disjoint from the
-// deployment's — preferring them made the picker show retired models and miss
-// the ones in use. They are therefore probed only as a fallback.
-func discoverCodebuddyModelsFrom(realPath, home string, getenv func(string) string) ([]model.AgentModel, string) {
-	// 1. Explicit env override wins — but only when the CLI is actually
-	// present. These are CodeBuddy's own variables, read from the ClawBench
-	// server process env; without this gate a stray value would make discovery
-	// report models for a CLI that isn't installed.
-	if realPath != "" {
-		if models := modelsFromEnvOverride(getenv); len(models) > 0 {
-			return models, ""
-		}
-	}
-
-	// 2. Runtime cache written by the CLI itself: the per-deployment config
-	// fetched from the server, and the authoritative selectable model list.
-	// Also the only source that works for native/standalone installs, where the
-	// product config is compiled into the binary and never written to disk.
+// There is exactly ONE local source: the runtime cache the CLI writes under
+// ~/.codebuddy/local_storage/. It is the config the CLI itself fetched from the
+// server for THIS account's deployment (enterpriseId + deploymentType), so it is
+// the only list that matches what the CLI can actually run.
+//
+// The two sources that used to sit beside it are deliberately gone:
+//
+//   - The product.*.json files shipped inside the npm package. They are generic
+//     factory defaults whose models can be entirely disjoint from the account's
+//     deployment (issue #539), so they did not merely rank lower — they were
+//     actively wrong. Preferring them made the picker show retired models.
+//   - The ACC_PRODUCT_CONFIG* environment overrides. They only apply to
+//     enterprise deployments that set them by hand, and reading them from the
+//     server process env silently produced a model list for whoever happened to
+//     have the variable set.
+//
+// With no cache the answer is "nothing", which the UI renders as an empty picker
+// with a refresh button — never a plausible-looking list that cannot run.
+func discoverCodebuddyModelsFrom(realPath, home string) ([]model.AgentModel, string) {
 	// Gated on the CLI being present so a stale cache left behind by an
 	// uninstalled CLI is not reported.
-	cacheNote := "skipped (CLI not found)"
 	if realPath != "" {
 		if models := modelsFromRuntimeCache(home); len(models) > 0 {
 			slog.Debug("codebuddy model discovery: parsed runtime cache", "home", home, "models", len(models))
 			return models, ""
 		}
-		cacheNote = "no usable entry"
+		return nil, "no CodeBuddy model list found (runtime cache " +
+			filepath.Join(home, ".codebuddy", "local_storage") +
+			" has no usable entry; run codebuddy once to sign in)"
 	}
-
-	// 3. Product JSON on disk, probing every candidate directory × filename.
-	// These are generic factory defaults, consulted only when the runtime cache
-	// is unavailable (e.g. the CLI has never run against this account).
-	var tried []string
-	for _, dir := range codebuddyProductDirs(realPath, home) {
-		for _, name := range codebuddyProductFiles {
-			path := filepath.Join(dir, name)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			tried = append(tried, path)
-			if models := parseProductModels(data); len(models) > 0 {
-				slog.Debug("codebuddy model discovery: parsed product JSON (runtime cache unavailable)",
-					"path", path, "models", len(models))
-				return models, ""
-			}
-		}
-	}
-
-	// Build a detail that names every source actually attempted, so a native
-	// install (which has no product JSON on disk by design) is not misled into
-	// looking for a file that will never exist.
-	var parts []string
-	if len(tried) > 0 {
-		const maxListed = 6
-		listed := tried
-		if len(listed) > maxListed {
-			listed = append(append([]string{}, listed[:maxListed]...), "…")
-		}
-		parts = append(parts, "product config: "+strings.Join(listed, ", "))
-	} else if realPath == "" {
-		parts = append(parts, "codebuddy CLI not found on PATH")
-	} else {
-		parts = append(parts, "product config: none found next to the CLI")
-	}
-	parts = append(parts, "runtime cache: "+cacheNote)
-
-	return nil, "no CodeBuddy model list found (" + strings.Join(parts, "; ") + ")"
-}
-
-// codebuddyProductDirs returns candidate directories that may hold a product
-// config, ordered by likelihood. It covers both the npm layout
-// (.../node_modules/@tencent-ai/codebuddy-code/) and the native layout
-// (~/.local/share/codebuddy/versions/<ver>/), plus the CLI's config dir.
-func codebuddyProductDirs(realPath, home string) []string {
-	seen := make(map[string]bool)
-	var dirs []string
-	add := func(dir string) {
-		if dir == "" || dir == "." || seen[dir] {
-			return
-		}
-		seen[dir] = true
-		dirs = append(dirs, dir)
-	}
-
-	if realPath != "" {
-		add(filepath.Dir(realPath))               // alongside the binary
-		add(filepath.Dir(filepath.Dir(realPath))) // npm package root
-	}
-
-	if home != "" {
-		// Native install keeps versioned binaries under this tree; a future
-		// distribution may place the product config there too. Unix-only
-		// convention — on Windows this directory simply does not exist.
-		versionsDir := filepath.Join(home, ".local", "share", "codebuddy", "versions")
-		add(versionsDir)
-		if entries, err := os.ReadDir(versionsDir); err == nil {
-			// Prefer the newest version dir (names are semver, so a lexical
-			// descending sort puts the active install first).
-			var names []string
-			for _, e := range entries {
-				if e.IsDir() {
-					names = append(names, e.Name())
-				}
-			}
-			sort.Sort(sort.Reverse(sort.StringSlice(names)))
-			for _, name := range names {
-				add(filepath.Join(versionsDir, name))
-			}
-		}
-		add(filepath.Join(home, ".local", "share", "codebuddy"))
-		add(filepath.Join(home, ".local", "bin"))
-		add(filepath.Join(home, ".codebuddy"))
-	}
-
-	return dirs
-}
-
-// modelsFromEnvOverride reads the ACC_PRODUCT_CONFIG* environment variables.
-// Each value may be a path to a product JSON file or inline JSON content.
-func modelsFromEnvOverride(getenv func(string) string) []model.AgentModel {
-	if getenv == nil {
-		return nil
-	}
-	for _, key := range codebuddyProductEnvVars {
-		val := strings.TrimSpace(getenv(key))
-		if val == "" {
-			continue
-		}
-		// Inline JSON
-		if strings.HasPrefix(val, "{") {
-			if models := parseProductModels([]byte(val)); len(models) > 0 {
-				slog.Warn("codebuddy model discovery: using product JSON from env override", "var", key)
-				return models
-			}
-			continue
-		}
-		// File path
-		if data, err := os.ReadFile(val); err == nil {
-			if models := parseProductModels(data); len(models) > 0 {
-				slog.Warn("codebuddy model discovery: using product JSON from env override", "var", key, "path", val)
-				return models
-			}
-		}
-	}
-	return nil
+	return nil, "codebuddy CLI not found on PATH"
 }
 
 // parseProductModels parses product-config JSON bytes into models, applying the
@@ -436,32 +287,4 @@ func decodeCacheEntry(raw []byte) ([]byte, bool) {
 		return s, true
 	}
 	return nil, false
-}
-
-// codebuddyModelRe extracts model IDs from codebuddy --help output (legacy, kept for ParseCodebuddyModels).
-var codebuddyModelRe = regexp.MustCompile(`Currently supported: \(([^)]+)\)`)
-
-// ParseCodebuddyModels parses codebuddy --help output to extract model IDs.
-//
-// Deprecated: codebuddy --help launches a TUI that hangs without a TTY; use DiscoverCodebuddyModels instead.
-func ParseCodebuddyModels(output string) []model.AgentModel {
-	matches := codebuddyModelRe.FindStringSubmatch(output)
-	if len(matches) < 2 {
-		return nil
-	}
-
-	parts := strings.Split(matches[1], ",")
-	var models []model.AgentModel
-	for i, p := range parts {
-		id := strings.TrimSpace(p)
-		if id == "" {
-			continue
-		}
-		models = append(models, model.AgentModel{
-			ID:      id,
-			Name:    id,
-			Default: i == 0,
-		})
-	}
-	return models
 }

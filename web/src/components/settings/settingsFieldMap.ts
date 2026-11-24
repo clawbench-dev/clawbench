@@ -674,6 +674,13 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.showWelcome', descriptionKey: 'settings.items.showWelcomeDesc', key: 'showWelcome', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.restartServer', descriptionKey: 'settings.items.restartServerDesc', key: 'restartServer', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.checkUpgrade', descriptionKey: 'settings.items.checkUpgradeDesc', key: 'checkUpgrade', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
+    // Copy-only, deliberately: registering a systemd unit needs either sudo or
+    // the user's own systemctl --user, neither of which this process can drive
+    // on their behalf. The row hands over the command instead of pretending to
+    // install. It renders on every platform: the panel has no server-OS field to
+    // gate on, and the command itself only exists on Linux (the description says
+    // systemd, so the row is self-explanatory where it does not apply).
+    { type: 'item', spec: { labelKey: 'settings.items.registerService', descriptionKey: 'settings.items.registerServiceDesc', key: 'registerService', type: 'action', source: 'local', sectionHeader: 'settings.items.aboutActionsSection' } },
   ],
 
   // ── Panel-only categories (formerly drill-down) ────────────

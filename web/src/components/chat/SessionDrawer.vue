@@ -86,34 +86,60 @@
       </div>
       <!-- Model list -->
       <div class="model-list">
-        <div
-          v-for="(m, idx) in filteredModels"
-          :key="m.id"
-          class="model-item-wrapper"
-        >
-          <button
-            class="model-item"
-            :class="{ current: m.id === effectiveModelId, 'is-default': m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === idx }"
-            @click="selectModel(m)"
-            @contextmenu.prevent="showDefaultMenu(m)"
-            @touchstart.passive="onTouchStart(m, $event)"
-            @touchend="onTouchEnd"
-            @touchmove.passive="onTouchMove"
-          >
-            <span class="model-item-indicator" :class="{ active: m.id === effectiveModelId }"></span>
-            <ModelRow :name="m.name" :model-id="m.id" :price="m.price" :credits="m.credits" :active="m.id === effectiveModelId" />
-            <span v-if="m.id === defaultModelId" class="default-label">
-              <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
-              <span class="default-star"><Star :size="12" fill="currentColor" /></span>
-            </span>
-            <button v-if="m.id !== defaultModelId" class="set-default-btn" @click.stop="setDefaultModel(m)" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
-              <Star :size="12" />
+        <template v-for="row in modelRows" :key="row.m.id">
+          <!-- Provider heading. Only rendered when the backend offers models
+               from more than one provider (the built-in agent): the group name
+               is what tells two same-named models apart. A single-provider
+               backend keeps the flat list it always had. -->
+          <div v-if="row.head" class="model-group-head">
+            <span class="model-group-name">{{ row.head }}</span>
+            <span class="model-group-line"></span>
+          </div>
+          <div class="model-item-wrapper">
+            <button
+              class="model-item"
+              :class="{ current: row.m.id === effectiveModelId, 'is-default': row.m.id === defaultModelId, 'nav-active': listNav.activeIndex.value === row.idx }"
+              @click="selectModel(row.m)"
+              @contextmenu.prevent="showDefaultMenu(row.m)"
+              @touchstart.passive="onTouchStart(row.m, $event)"
+              @touchend="onTouchEnd"
+              @touchmove.passive="onTouchMove"
+            >
+              <span class="model-item-indicator" :class="{ active: row.m.id === effectiveModelId }"></span>
+              <!-- The id line exists to tell apart models that share a name. Here the
+                   provider heading already does that, and the raw form carries the
+                   `pN:` scope, which reads as noise — pass the bare name so the line
+                   disappears when it adds nothing. -->
+              <ModelRow :name="row.m.name" :model-id="bareModelId(row.m.id)" :price="row.m.price" :credits="row.m.credits" :active="row.m.id === effectiveModelId" />
+              <span v-if="row.m.id === defaultModelId" class="default-label">
+                <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
+                <span class="default-star"><Star :size="12" fill="currentColor" /></span>
+              </span>
+              <button v-if="row.m.id !== defaultModelId" class="set-default-btn" @click.stop="setDefaultModel(row.m)" :title="t('chat.sessionSetting.setAsDefault')" :aria-label="t('chat.sessionSetting.setAsDefault')" :aria-pressed="false">
+                <Star :size="12" />
+              </button>
             </button>
-          </button>
-          <div v-if="idx < filteredModels.length - 1" class="model-divider"></div>
-        </div>
+            <div v-if="!row.lastInGroup" class="model-divider"></div>
+          </div>
+        </template>
         <div v-if="filteredModels.length === 0" class="model-empty">
-          {{ searchQuery ? t('chat.sessionSetting.noSearchResults') : t('chat.sessionSetting.noModels') }}
+          <!-- No models and not searching: the list is simply unknown yet (a
+               fresh CodeBuddy install has no runtime cache until the CLI has
+               signed in once). The only useful action is the refresh in the
+               header, so the empty state IS that button rather than a sentence
+               telling the user to go find it. -->
+          <RefreshButton
+            v-if="!searchQuery && canRefresh"
+            class="model-empty-refresh"
+            :loading="refreshing"
+            :disabled="refreshing"
+            :title="t('chat.sessionSetting.refresh')"
+            @click.stop="handleRefresh"
+          />
+          <span v-if="!searchQuery && canRefresh">{{ t('chat.sessionSetting.noModels') }}</span>
+          <template v-if="searchQuery || !canRefresh">
+            {{ searchQuery ? t('chat.sessionSetting.noSearchResults') : t('chat.sessionSetting.noModels') }}
+          </template>
         </div>
       </div>
     </div>
@@ -308,6 +334,7 @@ import { normalizeTokenRate } from '@/utils/usageDisplay'
 import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
 import { appLog } from '@/utils/appLog'
+import { bareModelId } from '@/utils/modelSelection'
 import { compactGroupMember } from '@/composables/useGroupChat'
 import { useAgents, applyRefreshedModelList, applyRefreshedACPState } from '@/composables/useAgents'
 import { useListNav } from '@/composables/useListNav'
@@ -623,11 +650,40 @@ const filteredModels = computed(() => {
   if (!q) return models.value
   // Match the formatted id too: the list shows the readable form, so a query
   // typed against what the user sees must hit (the raw id may not contain it).
+  // The provider name matches as well: once several providers share one list,
+  // typing a provider's name is the fastest way to narrow it down.
   return models.value.filter(m =>
     m.name.toLowerCase().includes(q) ||
     m.id.toLowerCase().includes(q) ||
+    (m.provider || '').toLowerCase().includes(q) ||
     formatModelIdForDisplay(m.id).toLowerCase().includes(q),
   )
+})
+
+// Flat rows carrying the provider grouping, so the template stays a single
+// v-for while the keyboard navigation keeps its plain index. `idx` is the
+// position in filteredModels, which is exactly what listNav expects.
+//
+// `head` is set only on the FIRST row of each provider group (and only when the
+// entry names one). Rows without a provider (a backend's own models, or a
+// single-provider binding) get no heading — the list then looks exactly as it
+// did before.
+const modelRows = computed(() => {
+  const list = filteredModels.value
+  const rows = []
+  let lastProvider = null
+  list.forEach((m, idx) => {
+    const provider = m.provider || ''
+    const next = list[idx + 1]
+    rows.push({
+      m,
+      idx,
+      head: provider && provider !== lastProvider ? provider : '',
+      lastInGroup: !next || (next.provider || '') !== provider,
+    })
+    lastProvider = provider
+  })
+  return rows
 })
 
 // ── Keyboard ↑/↓ + Enter navigation over the active tab's list ──
@@ -1220,6 +1276,34 @@ defineExpose({
   /* No extra styling — items are flush */
 }
 
+/* Provider heading, shown only when one list spans several providers. It
+   sticks to the top of the scrolling list so the group name stays visible
+   while its rows scroll under it. */
+.model-group-head {
+  display: flex;
+  align-items: center;
+  gap: calc(7 * var(--dp));
+  padding: calc(12 * var(--dp)) calc(14 * var(--dp)) calc(6 * var(--dp));
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-primary, #fff);
+}
+
+.model-group-name {
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-muted, #999);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.model-group-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-color, #e5e5e5);
+}
+
 .model-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);
@@ -1352,6 +1436,33 @@ defineExpose({
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
+}
+
+/* The empty state's refresh affordance. Sized as a real target rather than a
+   24dp header icon: it is the ONLY way out of an empty picker, so it must be
+   comfortable to hit on a phone. */
+.model-empty-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(36 * var(--dp));
+  height: calc(36 * var(--dp));
+  margin: 0 auto calc(8 * var(--dp));
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: var(--radius-sm, 6px);
+  background: none;
+  color: var(--accent-color, #0066cc);
+  cursor: pointer;
+  transition: background var(--duration-base);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.model-empty-refresh:hover {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+}
+
+.model-empty > span {
+  display: block;
 }
 
 .tab-empty-hint {

@@ -121,6 +121,16 @@ var allowedCJKFiles = map[string]string{
 	// installs keep their seeded snapshot) vs. re-seed per locale (would clobber
 	// user edits). Tracked as a follow-up; listed here so the guard does not
 	// silently hide it behind a false "not user-visible" claim.
+	//
+	// `clawbench service install|uninstall|status` output — KNOWN GAP, same
+	// category as the row above: it IS shown to a human (a terminal), just not
+	// by the web UI. The CLI has no locale negotiation at all (every message in
+	// internal/cli and cmd/server's usage text is hardcoded English for that
+	// reason), so there is no Localizer to route it through; the operator-facing
+	// scripts/install.sh is Chinese for the same audience. Localizing it means
+	// building a CLI-wide locale mechanism first, which is a separate change.
+	"internal/cli/service.go":       "CLI terminal output; the CLI has no locale negotiation (see scripts/install.sh)",
+	"internal/cli/service_other.go": "same subcommand's non-Linux refusal message",
 }
 
 // repoRoot walks up until it finds go.mod.

@@ -763,6 +763,14 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		os.Exit(cli.RunUpgradeReplaceCommand(os.Args[2:]))
 	}
 
+	// Service subcommand dispatch (register/unregister/status of this install
+	// as a systemd unit). Must run before any server startup: it writes a unit
+	// file and exits, and it is invoked both through the npm launcher (which
+	// forwards argv unchanged) and directly on the binary.
+	if len(os.Args) > 1 && os.Args[1] == "service" {
+		os.Exit(cli.RunServiceCommand(os.Args[2:]))
+	}
+
 	// Parse CLI flags
 	cliPort := 0
 	cliDataDir := ""

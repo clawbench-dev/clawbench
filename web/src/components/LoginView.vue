@@ -153,6 +153,16 @@
           <ChevronRight :size="16" class="install-arrow" />
         </div>
       </div>
+
+      <!-- Version line. The server version comes from the public /api/health
+           probe (the only version source reachable before login); the client
+           version is added only inside a native shell, where the bridge can
+           report its own package version. -->
+      <div v-if="serverVersion || clientVersion" class="login-versions">
+        <span v-if="serverVersion" class="login-version-item">{{ t('login.versionServer', { v: serverVersion }) }}</span>
+        <span v-if="serverVersion && clientVersion" class="login-version-sep">·</span>
+        <span v-if="clientVersion" class="login-version-item">{{ t('login.versionClient', { v: clientVersion }) }}</span>
+      </div>
     </div>
 
     <!-- iOS install instructions sheet -->
@@ -173,6 +183,7 @@ import LoadingIndicator from './common/LoadingIndicator.vue'
 import { downloadByUrl } from '@/utils/download'
 import { getNative } from '@/utils/clawbenchNative'
 import { normalizeServerUrl } from '@/utils/url'
+import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 const { isAppMode } = useAppMode()
@@ -196,6 +207,36 @@ const showPasswordField = ref(true)
 
 const showServerSelector = computed(() => servers.value.length >= 1)
 const showInstallBanner = computed(() => pwaInstall.showPwaInstall.value || pwaInstall.showApkDownload.value)
+
+// Version line at the bottom of the page. Server version is fetched from the
+// public /api/health probe (see loadServerVersion); client version only exists
+// inside a native shell.
+const serverVersion = ref('')
+const clientVersion = ref('')
+
+async function loadServerVersion() {
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' })
+    if (!res.ok) return
+    const data = await res.json()
+    serverVersion.value = typeof data?.version === 'string' ? data.version : ''
+  } catch {
+    // The login form already surfaces a network error when it matters; a
+    // missing version line is not worth a second message.
+    appLog.d('login', 'server version probe failed')
+  }
+}
+
+async function loadClientVersion() {
+  try {
+    const native = getNative()
+    if (!native?.getAppVersion) return
+    const v = await native.getAppVersion()
+    clientVersion.value = typeof v === 'string' ? v : ''
+  } catch {
+    appLog.d('login', 'client version probe failed')
+  }
+}
 
 function selectServer(srv) {
   if (srv.url === selectedServerUrl.value) return
@@ -338,7 +379,9 @@ function handleApkDownload() {
 }
 
 onMounted(() => {
+  void loadServerVersion()
   if (isAppMode.value) {
+    void loadClientVersion()
     void loadServers()
     // Set current server URL
     selectedServerUrl.value = window.location.origin
@@ -812,5 +855,28 @@ input:focus {
 .install-arrow {
     color: var(--text-muted);
     flex-shrink: 0;
+}
+
+/* Version line */
+.login-versions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    /* The parent column already adds a 36dp gap between blocks; the version
+       line belongs closer to the card it annotates. */
+    margin-top: calc(-20 * var(--dp));
+    user-select: text;
+}
+
+.login-version-item {
+    white-space: nowrap;
+}
+
+.login-version-sep {
+    opacity: var(--opacity-disabled);
 }
 </style>

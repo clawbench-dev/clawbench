@@ -49,13 +49,16 @@ func TestModelListState_ReportsTheBoundProvidersList(t *testing.T) {
 	if state.AgentID != agentID {
 		t.Fatalf("state must name the agent it was resolved for, got %q", state.AgentID)
 	}
-	if len(state.Models) != 1 || state.Models[0].ID != "edge-model" {
-		t.Fatalf("models = %+v, want the provider's curated list", state.Models)
+	if len(state.Models) != 1 || state.Models[0].ID != model.ProviderScopedModelID(70, "edge-model") {
+		t.Fatalf("models = %+v, want the provider's curated list (provider-scoped)", state.Models)
+	}
+	if state.Models[0].Name != "edge-model" {
+		t.Fatalf("name = %q, want the bare model name the row shows", state.Models[0].Name)
 	}
 	if !state.Models[0].Default {
 		t.Fatal("the model a turn would run must be flagged default")
 	}
-	if state.CurrentModelID != "edge-model" {
+	if state.CurrentModelID != model.ProviderScopedModelID(70, "edge-model") {
 		t.Fatalf("currentModelId = %q, want the model the turn runs", state.CurrentModelID)
 	}
 }
@@ -84,10 +87,11 @@ func TestModelListState_UncuratedProviderEchoesThePick(t *testing.T) {
 	if state == nil {
 		t.Fatal("a hand-typed pick on an otherwise list-less provider must still be reported")
 	}
-	if len(state.Models) != 1 || state.Models[0].ID != "hand-typed-model" || !state.Models[0].Default {
+	want := model.ProviderScopedModelID(71, "hand-typed-model")
+	if len(state.Models) != 1 || state.Models[0].ID != want || !state.Models[0].Default {
 		t.Fatalf("models = %+v, want exactly the picked model as default", state.Models)
 	}
-	if state.CurrentModelID != "hand-typed-model" {
+	if state.CurrentModelID != want {
 		t.Fatalf("currentModelId = %q, want the pick", state.CurrentModelID)
 	}
 }

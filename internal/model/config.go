@@ -91,13 +91,43 @@ const (
 	// into EVERY agent system prompt, so an unbounded value would be a
 	// per-turn cost the user cannot see. 4000 runes is a few paragraphs.
 	MaxUserProfileRunes = 4000
+	// MaxMeetingAttendeeRunes bounds 参会称呼, the meeting display name. Same
+	// length as the account nickname so nothing a user already typed becomes
+	// invalid, but the two values are validated separately: this one is only
+	// ever READ on screen, so the group-routing reserved characters are allowed
+	// and only control characters (which could forge a transcript line) are
+	// refused.
+	MaxMeetingAttendeeRunes = 32
 )
+
+// SanitizeMeetingAttendeeName turns 参会称呼 into the string that may be written
+// into the member list, a transcript speaker label and the archived chat.md.
+//
+// Control characters become spaces rather than being deleted so a byte that
+// was meant as a separator does not glue two words together; the runs are then
+// collapsed. Everything else is kept verbatim, including quotes, commas and
+// angle brackets: a meeting name never enters the group-routing protocol, so
+// mangling a legitimate name ("张, 李") would be worse than the risk.
+func SanitizeMeetingAttendeeName(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f {
+			b.WriteRune(' ')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
 
 // UserConfig is the human user's identity (config.yaml `user` section).
 type UserConfig struct {
-	// Nickname is how agents address the user and how other meeting viewers see
-	// them. It must not collide with any agent name and must not contain the
-	// group-routing protocol's reserved characters (", <, >, comma).
+	// Nickname is how agents address the user. It must not collide with any
+	// agent name and must not contain the group-routing protocol's reserved
+	// characters (", <, >, comma). It is NOT the meeting display name — that is
+	// MeetingConfig.AttendeeName (参会称呼), which carries none of those
+	// constraints.
 	Nickname string `yaml:"nickname"`
 	// Profile is a free-form self-description ("I am a backend engineer, prefer
 	// concise answers…"). Injected into every agent's system prompt so the
@@ -429,6 +459,16 @@ type ForgeConfig struct {
 	// When true, forge events still notify and count as unread, but no task is
 	// fired. Off by default.
 	PauseEventTasks bool `yaml:"pause_event_tasks"`
+	// AllowSelfAuthoredEvents lets an event authored by the credential's own
+	// account fire a task, instead of being suppressed as self-authored.
+	//
+	// Off by default, and deliberately hostile to being turned on: the
+	// suppression exists to stop a write the AI itself performed from
+	// re-triggering the same AI, indefinitely. Turning it on is legitimate when
+	// the user is the one creating issues under that same account and wants
+	// their own actions to drive automation — the loop risk is real but it is
+	// theirs to accept. See ForgeTaskTrigger.isSelfAuthored.
+	AllowSelfAuthoredEvents bool `yaml:"allow_self_authored_events"`
 }
 
 // ForgeNotifyConfig selects which forge events push a notification. Each flag
@@ -896,6 +936,15 @@ type MeetingConfig struct {
 	// AgentMinutesMaxRounds bounds the agent's model round-trips per artifact.
 	// 0 means unlimited (the run is still bounded by its own timeout).
 	AgentMinutesMaxRounds int `yaml:"agent_minutes_max_rounds"`
+	// AttendeeName is 参会称呼: how a MEETING shows the user — the host row in
+	// the audience's member list, the speaker labels in the transcript and the
+	// archived chat. Deliberately separate from User.Nickname, which is an
+	// addressable routing target inside a group chat (it must not collide with
+	// an agent name, it cannot carry commas or angle brackets); none of those
+	// constraints make sense for a name someone only reads on screen.
+	// Empty means "not configured"; the fallback is applied where it is USED,
+	// never stored.
+	AttendeeName string `yaml:"attendee_name"`
 }
 
 // RAGConfig holds configuration for the RAG history memory system.

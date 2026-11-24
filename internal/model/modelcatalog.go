@@ -717,9 +717,8 @@ func (s *pluginSource) Discover() ([]AgentModel, string) {
 		return nil, detail
 	}
 	// Copy before flagging the default: probes commonly return a package-level
-	// catalog by reference (a backend's `catalog.go`, e.g. claude.ClaudeCatalog),
-	// and writing into it would mutate shared state that other callers read
-	// concurrently.
+	// catalog by reference (a backend's own `catalog.go`), and writing into it
+	// would mutate shared state that other callers read concurrently.
 	models = cloneModels(models)
 	markFirstDefault(models)
 	slog.Info("model discovery succeeded (plugin)", "backend", s.backend, "models", len(models))

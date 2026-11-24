@@ -19,7 +19,9 @@ import (
 //
 //  1. preamble — the agent's own instructions. Unwrapped and first, because it
 //     is what the user wrote and it must outrank the mechanical text below it.
-//     The project's rules file is already part of this preamble: the service
+//     It is already a composed blob: model.ComposeSystemPrompt puts the
+//     built-in base prompt, the shared prefix and the user's own text into it,
+//     in that order. The project's rules file is part of it too: the service
 //     layer appends its <project_context> section before the prompt gets here
 //     (it is the only layer that knows the project root, the working directory
 //     and the agent's skip switch). Reading the rules file again here would put
@@ -44,7 +46,6 @@ func buildSystemPrompt(agentPrompt, workDir string, toolList []tools.Tool, polic
 	b.WriteString(section("rules", renderRules(toolList, policy, workDir != "")))
 	b.WriteString(section("environment", renderEnvironment(workDir)))
 	b.WriteString(section("unavailable", renderToolNotes(toolNotes)))
-	b.WriteString(section("output", renderOutputRules()))
 
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -202,18 +203,4 @@ func renderEnvironment(workDir string) string {
 	// Forward slashes on every platform: a Windows path in the prompt is read
 	// by the model as an escape sequence far more often than as a real path.
 	return "Working directory: " + strings.ReplaceAll(workDir, `\`, "/")
-}
-
-// renderOutputRules states the response conventions.
-//
-// These are the two rules pi ships unconditionally, and they matter more for a
-// tool-using agent than for a chat one: a long narration of file contents is
-// worse than a short answer that names the file, and an agent that writes
-// "I updated X" without having called write is actively misleading.
-func renderOutputRules() string {
-	return strings.Join([]string{
-		"- Be concise. Report what you did, not a transcript of your thinking.",
-		"- Name file paths explicitly when you refer to files.",
-		"- Never claim to have read, run or changed something you did not actually call a tool for.",
-	}, "\n")
 }

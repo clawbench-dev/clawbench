@@ -588,14 +588,14 @@ func TestComposeSystemPrompt(t *testing.T) {
 	common := BuildCommonPrompt()
 	require.NotEmpty(t, common)
 
-	assert.Equal(t, common, ComposeSystemPrompt(""), "no custom text yields the shared prompt alone")
-	assert.Equal(t, common+"\n\nmy instructions", ComposeSystemPrompt("my instructions"))
+	assert.Equal(t, common, ComposeSystemPrompt("", false), "no custom text yields the shared prompt alone")
+	assert.Equal(t, common+"\n\nmy instructions", ComposeSystemPrompt("my instructions", false))
 
 	// The shared prompt appears exactly once — no frozen copy can be appended.
-	assert.Equal(t, 1, strings.Count(ComposeSystemPrompt("my instructions"), common))
+	assert.Equal(t, 1, strings.Count(ComposeSystemPrompt("my instructions", false), common))
 
 	// The custom text is always present.
-	assert.Contains(t, ComposeSystemPrompt("my instructions"), "my instructions")
+	assert.Contains(t, ComposeSystemPrompt("my instructions", false), "my instructions")
 }
 
 // The shared prompt is composed on every read, so changing the built-in prompt
@@ -607,13 +607,33 @@ func TestComposeSystemPrompt_SharedPromptIsAlwaysFresh(t *testing.T) {
 	require.NotEmpty(t, commonPrompt)
 
 	// A user with no custom text gets exactly the current shared prompt.
-	assert.Equal(t, commonPrompt, ComposeSystemPrompt(""))
+	assert.Equal(t, commonPrompt, ComposeSystemPrompt("", false))
 
 	// A user with custom text gets the current shared prompt plus their text —
 	// never a previously stored composition.
-	got := ComposeSystemPrompt("my instructions")
+	got := ComposeSystemPrompt("my instructions", false)
 	assert.Contains(t, got, "my instructions")
 	assert.NotContains(t, got, "OLD-COMMON")
+}
+
+// The in-process agent gets its own base prompt ahead of the shared prefix, and
+// only it does: an ACP agent brings its own prompt, so a second set of
+// behavioral rules would fight the one it already has.
+func TestComposeSystemPrompt_BuiltinBasePrompt(t *testing.T) {
+	base := BuildBuiltinPrompt()
+	common := BuildCommonPrompt()
+	require.NotEmpty(t, base)
+	require.NotEmpty(t, common)
+
+	got := ComposeSystemPrompt("my instructions", true)
+	assert.True(t, strings.HasPrefix(got, base), "the built-in base must lead, got:\n%s", got)
+	assert.True(t, strings.HasSuffix(got, "my instructions"), "the user's own text stays last, got:\n%s", got)
+	assert.Less(t, strings.Index(got, base), strings.Index(got, common))
+	assert.Less(t, strings.Index(got, common), strings.Index(got, "my instructions"))
+
+	acp := ComposeSystemPrompt("my instructions", false)
+	assert.NotContains(t, acp, "ClawBench built-in agent")
+	assert.Equal(t, common+"\n\nmy instructions", acp)
 }
 
 // ---------------------------------------------------------------------------

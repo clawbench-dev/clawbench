@@ -36,7 +36,11 @@ func init() {
 			ParseToolCallUpdate: claude.ParseACPToolCallUpdate,
 			ExtractMeta:         claude.ExtractMeta,
 		},
-		ModelSource: model.PluginSource("qoder", discoverQoderModels),
+		// No ModelSource: the only local source was Qoder's localized
+		// dynamic-texts table, which is a UI string table rather than a model
+		// list — ids were reverse-engineered from widget labels and came out as
+		// internal codenames (gmodel, q35model). The ACP adapter reports the
+		// real list, so discovery is left to it.
 		// Deliberately empty: login-based, and the CLI binary contains no
 		// provider variables.
 		ProviderEnv: &model.ProviderEnvSpec{},

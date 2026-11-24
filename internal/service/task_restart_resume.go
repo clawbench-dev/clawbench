@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"strings"
@@ -240,12 +239,20 @@ func validateResumeTarget(execID int64) *resumeTarget {
 	return &resumeTarget{task: task, agent: agent, sessionID: sessionID, triggerType: triggerType}
 }
 
+// resumeAbandonReason is the cancel reason handed to FinalizeOrphanedMessages
+// for the previous attempt's streaming row when a resumed run adopts the
+// session. Anything but cancelReasonUser makes the finalizer stamp the partial
+// reply as interrupted instead of asking the user to retry it by hand.
+const resumeAbandonReason = "restart"
+
 // resumeExecution continues a run that a restart cut short.
 //
 // The run is NOT replayed: the original prompt is already in the timeline and
 // may have changed files. The agent is told the previous attempt was
 // interrupted and asked to check the current state and carry on — the same
-// instruction the interactive resume and the abnormal-end retry use.
+// instruction the interactive restart resume sends (RestartResumePrompt, NOT
+// AutoContinuePrompt's bare "continue": a scheduled run may already have written
+// half of its effects, so it must re-read the current state before acting).
 //
 // Everything that belongs to the run rather than to one attempt is preserved:
 // the session (so the agent keeps its context), the execution row (so the task
@@ -275,6 +282,96 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 		return err
 	}
 
+	// Claim the session as running, exactly as executeTask does. Two things
+	// depend on it and neither happens anywhere else on this path:
+	//
+	//   - the session registry now holds a context this run answers to, so the
+	//     shutdown path can reach it again. A resumed run used to be claimed by
+	//     nobody, so the NEXT restart could not cancel it: CancelAllRunning
+	//     found no entry, wrote no restart marker, and the run stayed "running"
+	//     in the DB with a dead goroutine — never resumed again.
+	//   - losing the claim means something is already driving that session, and
+	//     two turns writing to one session interleave their blocks.
+	ctx, claimed := tryClaimSessionRun(sessionID)
+	if !claimed {
+		slog.Info("task restart resume: session is already running, leaving the interruption recorded",
+			slog.Int64("task_id", task.ID),
+			slog.String("session_id", sessionID))
+		// The marker is deliberately NOT consumed: this run never got to
+		// continue, so the interruption is still unaccounted for and the next
+		// startup should try again. Undo the "running" write above so the row
+		// keeps describing the interrupted run.
+		if _, err := store.WriteExec(
+			"UPDATE task_executions SET status = ?, restart_interrupted = 1 WHERE id = ?", statusCancelled, execID,
+		); err != nil {
+			slog.Warn("task restart resume: could not restore the interrupted marker",
+				slog.Int64("execution", execID), slog.String("err", err.Error()))
+		}
+		return nil
+	}
+	// Own the claimed context: the run below gets cancelled exactly when someone
+	// calls CancelSession / CancelAllRunning on this session, and the claim is
+	// released (cancelling that context) when the run is over.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	// Close the previous attempt's half-written reply before this attempt opens
+	// its own row. The restart interrupted that attempt in the middle of a
+	// stream, so its assistant row is still streaming=1; every "did this session
+	// finish?" check reads those rows, and leaving one behind left a row that
+	// nothing would ever close. The cancel path does the same thing in
+	// abandonTurn — this path simply never ran it.
+	//
+	// AFTER the claim on purpose: finalizing closes whatever is streaming in the
+	// session, and before the claim that could be the OTHER run's live row when
+	// the claim is about to fail. Only the owner may close it.
+	FinalizeOrphanedMessages(sessionID, resumeAbandonReason)
+	// FinishClaimedSessionRun — not FinishSessionRun — so a run that retires
+	// just before a fresh prompt claims the session does not cancel the new
+	// owner's context.
+	defer FinishClaimedSessionRun(ctx, sessionID)
+	defer SetSessionRunning(sessionID, false, true)
+
+	// Register the run so it shows as running for this task — in the task list
+	// AND, more importantly, in CancelAllRunning's sweep. Without this entry a
+	// shutdown finds nothing to cancel for a resumed run: it wrote no restart
+	// marker, so the run was left "running" in the DB with a dead goroutine and
+	// never came back. executeTask registers exactly the same shape.
+	//
+	// Keyed by session id like every AI-phase entry (executeTask does the same);
+	// CancelExecution looks it up by that key.
+	running := &RunningExecution{
+		ID:          sessionID,
+		TaskID:      task.ID,
+		CancelFunc:  cancelRun,
+		StartedAt:   time.Now(),
+		TriggerType: triggerType,
+		Phase:       RunningPhaseAI,
+		ExecID:      execID,
+	}
+	s.runningExecutions.Store(sessionID, running)
+	defer s.runningExecutions.Delete(sessionID)
+
+	s.runResumedExecution(runCtx, execID, task, agent, sessionID, triggerType)
+	return nil
+}
+
+// runResumedExecution is the body that continues an interrupted execution. It
+// runs INSIDE the session claim taken by resumeExecution, which is what makes
+// the run cancellable by the shutdown path and keeps a second turn off the
+// session while this one is in flight.
+func (s *Scheduler) runResumedExecution(ctx context.Context, execID int64, task *model.ScheduledTask,
+	agent *model.Agent, sessionID, triggerType string,
+) {
+	// Killed ≠ cancelled, and resumeExecution did not check: closing the
+	// previous process may have left the claim cancelled before this body even
+	// started (claimRelease runs after the body returns).
+	if ctx.Err() != nil {
+		slog.Info("task restart resume: aborted before starting, server is shutting down",
+			slog.Int64("execution", execID))
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("task restart resume: panic during resumed run",
@@ -283,7 +380,6 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 				slog.Any("panic", r),
 				slog.String("stack", string(debug.Stack())))
 			_ = UpdateExecutionStatusByID(execID, statusFailed)
-			SetSessionRunning(sessionID, false, true)
 		}
 	}()
 
@@ -301,7 +397,7 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 			slog.Int64("execution", execID),
 		)
 		_ = UpdateExecutionStatusByID(execID, statusFailed)
-		return fmt.Errorf("task restart resume: agent %q has no backend", task.AgentID)
+		return
 	}
 	// A scheduled run has nobody to approve permission requests; the session
 	// already carries this flag, but re-asserting it costs one UPDATE and keeps
@@ -312,9 +408,6 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 				slog.String("session_id", sessionID), slog.String("err", err.Error()))
 		}
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// One row for the user ("the run was interrupted, continuing"), the
 	// imperative instruction goes to the agent as the turn's prompt and is never
@@ -335,7 +428,7 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 	effectiveThinking := EffectiveThinkingEffortForModel(agent, effectiveModel, agent.SupportsACP())
 
 	req := BuildChatRequest(
-		AutoContinuePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
+		RestartResumePrompt(), sessionID, task.ProjectPath, backendName, task.AgentID,
 		effectiveModel, effectiveThinking, "", task.ProjectPath, false,
 	)
 	// BuildChatRequest is the interactive builder; a resumed task run is still a
@@ -362,5 +455,4 @@ func (s *Scheduler) resumeExecution(execID int64) error {
 		// the cancel path); this turn finishes that same run.
 		CountRun: false,
 	})
-	return nil
 }

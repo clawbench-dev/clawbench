@@ -678,7 +678,7 @@ func ServeForgeTest(w http.ResponseWriter, r *http.Request) {
 // raw column: a binding whose remote could not state a scheme is still reached
 // over some scheme, and showing "" would leave the user unable to tell which.
 func bindingView(pf *service.ProjectForge) map[string]any {
-	return map[string]any{
+	view := map[string]any{
 		jsonPlatform: pf.Platform,
 		jsonHost:     pf.Host,
 		jsonScheme:   forgecore.ResolveScheme(pf.Scheme, model.ConfigInstance.ForgeScheme(pf.Host)),
@@ -687,6 +687,16 @@ func bindingView(pf *service.ProjectForge) map[string]any {
 		jsonSlug:     pf.Slug(),
 		"source":     pf.Source,
 	}
+	// Poll health. A repository whose polling is failing still serves live
+	// reads, so without this the panel looks perfectly healthy while event
+	// tasks never fire — the failure is invisible by construction.
+	if failure, err := service.GetForgeSyncFailure(pf.RepoKey()); err == nil && failure != nil {
+		view["syncError"] = map[string]any{
+			strReqError:  failure.Message,
+			"occurredAt": failure.At,
+		}
+	}
+	return view
 }
 
 // normalizeForgeState clamps the state query to the values the providers accept.

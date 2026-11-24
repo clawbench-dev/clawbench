@@ -138,20 +138,25 @@ func modelListStateForAgent(agent *model.Agent) *ai.ModelListState {
 	if agent == nil {
 		return nil
 	}
-	current := agent.DefaultModelID()
-	models := model.WithPrices(agent.ProviderPickerModels())
+	current := scopedCurrentModel(agent)
+	models := model.WithPrices(agent.SelectableProviderModels())
 	if len(models) == 0 {
-		// A provider with no curated list can still have an explicit pick (the
-		// "custom…" escape hatch). Echo that single model back: it is what the
-		// next turn sends, so the chip must name it instead of "Default", and
-		// withholding the list would leave the drawer empty for the one model
-		// the user deliberately chose.
+		// No provider qualifies (unbound, or nothing curated) — the old
+		// single-provider list is deliberately NOT a fallback: a provider that
+		// did not qualify here is one this backend cannot call, so listing its
+		// models would offer choices that fail on the first turn.
+		//
+		// What is left is the "custom…" escape hatch: a provider with no curated
+		// list can still have an explicit pick. Echo that single model back — it
+		// is what the next turn sends, so the chip must name it instead of
+		// "Default", and withholding the list would leave the drawer empty for
+		// the one model the user deliberately chose.
 		if current == "" || agent.Provider() == nil {
 			return nil
 		}
 		models = model.WithPrices([]model.AgentModel{{
 			ID:      current,
-			Name:    current,
+			Name:    model.ProviderModelName(current),
 			Default: true,
 		}})
 	}
@@ -161,12 +166,56 @@ func modelListStateForAgent(agent *model.Agent) *ai.ModelListState {
 		out[i].Default = out[i].ID == current
 	}
 	if current != "" && !hasModelID(out, current) {
-		// The pick is outside the provider's list (typed by hand). Keep it first
-		// and flagged: it IS the model running, and the picker groups by
-		// "what this agent can run" before "what the endpoint also offers".
-		out = append([]model.AgentModel{{ID: current, Name: current, Default: true}}, out...)
+		// A bare pick (an agent default written before the picker scoped ids, or
+		// a hand-typed one) may name the same model as a scoped entry. Adopt that
+		// entry instead of prepending a duplicate the turn cannot run — a bare id
+		// resolves to the agent's binding, which may not even exist.
+		//
+		// Only an UNAMBIGUOUS match counts: two providers serving the same name
+		// means the bare pick cannot say which one was meant, and guessing would
+		// silently switch providers. That case keeps the old prepend.
+		bare := model.ProviderModelName(current)
+		adoptedIdx := -1
+		ambiguous := false
+		for i := range out {
+			if model.ProviderModelName(out[i].ID) == bare {
+				if adoptedIdx >= 0 {
+					ambiguous = true
+					break
+				}
+				adoptedIdx = i
+			}
+		}
+		if adoptedIdx >= 0 && !ambiguous {
+			current = out[adoptedIdx].ID
+			for i := range out {
+				out[i].Default = out[i].ID == current
+			}
+		} else {
+			out = append([]model.AgentModel{{
+				ID: current, Name: model.ProviderModelName(current), Default: true,
+			}}, out...)
+		}
 	}
 	return &ai.ModelListState{CurrentModelID: current, Models: out}
+}
+
+// scopedCurrentModel renders the model a turn would run in the same form the
+// picker entries use (provider-scoped). Without this the "default" flag never
+// matched: DefaultModelID answers with the bound provider's bare id while every
+// row now carries its provider prefix.
+func scopedCurrentModel(agent *model.Agent) string {
+	current := agent.DefaultModelID()
+	if current == "" {
+		return ""
+	}
+	if _, _, ok := model.ParseProviderScopedModelID(current); ok {
+		return current
+	}
+	if p := agent.Provider(); p != nil && p.ID > 0 {
+		return model.ProviderScopedModelID(p.ID, current)
+	}
+	return current
 }
 
 func hasModelID(models []model.AgentModel, id string) bool {
@@ -420,17 +469,25 @@ func summarizer(client llm.Client) func(context.Context, string) (string, error)
 
 // buildClient resolves the model endpoint for one turn.
 //
-// The agent's own provider binding wins. When it has none, the shared summary
-// model is used and the UI is told which model is running — a silent fallback
-// to "some model" is how a user ends up debugging answers produced by an
-// endpoint they never configured.
+// The agent's own provider binding wins, UNLESS the model id names a provider
+// (the picker offers models from every configured provider, see
+// model.SelectableProviderModels). A scoped id is the user's explicit pick, so
+// the turn follows it: the endpoint, credential and wire protocol all come from
+// that provider rather than from the agent's binding.
+//
+// When the agent has no binding, the shared summary model is used and the UI is
+// told which model is running — a silent fallback to "some model" is how a user
+// ends up debugging answers produced by an endpoint they never configured.
 func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, error) {
 	modelID := modelOverride
 	if modelID == "" {
 		modelID = agent.DefaultModelID()
 	}
 
-	provider := agent.Provider()
+	// A scoped id that names a provider which no longer exists falls back to the
+	// binding: the row was deleted between the pick and the turn, and running
+	// the bound provider's default is better than refusing the whole turn.
+	provider, modelID := agent.ResolveProviderForModel(modelID)
 	if provider == nil {
 		return nil, "", newNoProviderError()
 	}

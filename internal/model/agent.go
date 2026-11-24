@@ -24,6 +24,16 @@ type AgentModel struct {
 	// Empty means the agent does not publish one — the picker then shows the
 	// price tag instead (or nothing).
 	Credits string `json:"credits,omitempty"`
+	// Provider is the display name of the model provider this entry came from.
+	//
+	// Only set for a backend that offers models from SEVERAL providers at once
+	// (the built-in agent, see SelectableProviderModels). Empty means the model
+	// belongs to the backend's own discovery or to its single bound provider —
+	// the picker renders those without a group heading.
+	Provider string `json:"provider,omitempty"`
+	// ProviderID is the row behind Provider. The picker echoes it back when the
+	// user picks one of these models; the id in ID carries the same number.
+	ProviderID int64 `json:"providerId,omitempty"`
 }
 
 // Agent represents an AI agent with its own system prompt, backend, and models.
@@ -291,6 +301,15 @@ type Agent struct {
 // ids, like "openai/gpt-4o", stores the namespaced one) — comparing a single
 // form silently ignores the user's pick and falls back to the provider default.
 func (a *Agent) DefaultModelID() string {
+	// A provider-scoped pin names its own provider. Only the built-in agent
+	// produces these (it can run several providers), and its preference must
+	// survive a rebind: comparing the scoped form against the bound provider's
+	// bare list would drop the pick and silently fall back to a default.
+	if pid, bare, ok := ParseProviderScopedModelID(a.PreferredModel); ok {
+		if p := GetProvider(pid); p != nil && containsString(p.Models, bare) {
+			return a.PreferredModel
+		}
+	}
 	if p := a.Provider(); p != nil && len(p.Models) > 0 {
 		if pref := a.PreferredModel; pref != "" && a.providerAcceptsPin(p, pref) {
 			return a.providerModelID(p, pref)
@@ -306,7 +325,12 @@ func (a *Agent) DefaultModelID() string {
 		return a.providerModelID(p, a.PreferredModel)
 	}
 	if a.PreferredModel != "" {
-		return a.PreferredModel
+		// A scoped pin whose provider is gone (or no longer serves it) cannot
+		// run. Returning it would put a dead id on the chip and mark it as the
+		// current model, while the turn actually falls back to the binding.
+		if _, _, scoped := ParseProviderScopedModelID(a.PreferredModel); !scoped {
+			return a.PreferredModel
+		}
 	}
 	return a.BaseModelID()
 }
@@ -783,6 +807,48 @@ When you produce a media file (image / audio / video):
 3. The image form ![alt](src) renders ONLY for real image files (.png .jpg .jpeg .gif .webp .svg). To point at anything else — an .html page, a .pdf, a directory — use a normal link [label](path). An image embed aimed at a non-image file renders as a "failed to load" placeholder.
 4. A path relative to the project root is preferred; an absolute path also works. No external URLs. No spaces or special characters in paths.`
 
+// builtinRulesTemplate is the base prompt for the in-process agent only.
+//
+// It exists because the mechanical sections agentcore appends (<tools>,
+// <rules>, <environment>) say what is available, not how to behave: an agent
+// with no identity, no working method and no boundaries reads every rule as
+// optional. The wording follows the two reference CLIs' prompts (tone, look
+// before you change, verify, never claim an action that never happened) but is
+// cut down to what this agent can actually do — no plan mode, no permission
+// prompts, no slash commands, no sub-agent recursion.
+//
+// It must NOT go into commonRulesTemplate: that prefix is prepended to every
+// agent, including the ACP ones whose own prompt already covers this ground.
+var builtinRulesTemplate = `You are the ClawBench built-in agent, a coding assistant running on the user's own computer. You can read files, change code, search code and run commands, and you report the results directly to the user. The working directory is all you have: do not pretend to capabilities you do not have.
+
+## Talking to the user
+- Lead with the conclusion or the action, then only the explanation that is needed. Do not restate the user's message, do not warm up, and do not summarize what you just did.
+- Say what you did, what you found, and where you are stuck. Never narrate the process.
+- Name file paths when you refer to files; use file:line when you can point at a line.
+- No emojis unless the user asks for them. Answer in the user's language.
+
+## Doing the work
+- Look before you change: read a file and the places that call it before editing; search before assuming a path.
+- Do only what was asked. Do not refactor on the side, do not add options nobody asked for, and do not write defensive code for situations that cannot happen.
+- Keep the change small. Three straightforward lines beat a new abstraction. Edit an existing file rather than creating a new one.
+- Verify your own work: run the tests, and the lint or build, when the project has them. If you cannot, say why instead of claiming it should be fine.
+- Do not commit, push, open a PR or delete a branch unless the user explicitly asks.
+- Do not give time estimates.
+
+## Using tools
+- Use read for files, glob to find files, grep to find content, and bash only to actually run a command. Do not use cat, sed or grep in the shell in place of these tools.
+- Send independent calls together; wait for the result before a call that depends on it.
+- Do not repeat a call you already made. Take the result and move on.
+- Always write the bash description as one plain sentence: that line is what the user sees in the chat.
+
+## Judgment
+- Never claim to have read, run or changed something you did not actually call a tool for.
+- When a tool fails, say so. Do not pretend it succeeded and do not invent file contents or command output.
+- Ask the user before anything irreversible: deleting, overwriting, force-pushing, or changing shared configuration.
+- When something looks unfamiliar (an unknown file, branch or lock), investigate it instead of deleting it to get past it.
+- When the user has to decide, ask with the question card, one question at a time.
+- The project's rules file (AGENTS.md) is already in your context. Follow it; when it conflicts with what the user just said, the user wins.`
+
 // mediaRulesTemplate is injected into the system prompt only when the user
 // message carries file attachments (uploaded files or attached project files).
 // Uses same «» placeholder convention as commonRulesTemplate.
@@ -803,6 +869,12 @@ func bt(s string) string {
 // from the built-in rules template.
 func BuildCommonPrompt() string {
 	return strings.TrimSpace(bt(commonRulesTemplate))
+}
+
+// BuildBuiltinPrompt generates the base prompt that only the in-process agent
+// gets (see builtinRulesTemplate for why it is not part of the shared prefix).
+func BuildBuiltinPrompt() string {
+	return strings.TrimSpace(builtinRulesTemplate)
 }
 
 // BuildMediaPrompt generates the media handling rules injected only when
@@ -835,6 +907,16 @@ func (a *Agent) PreferredModelForProvider(p *Provider) string {
 			return ""
 		}
 		return a.PreferredModel
+	}
+	// A scoped pin names its own provider (the built-in agent can run several).
+	// Rebinding does not invalidate it: the pick still names a live provider
+	// that still serves the model, and for this backend the pin — not the
+	// binding — is what decides which endpoint a turn uses. Rewriting it to the
+	// newly bound provider's default would silently discard the user's choice.
+	if pid, bare, ok := ParseProviderScopedModelID(a.PreferredModel); ok {
+		if target := GetProvider(pid); target != nil && containsString(target.Models, bare) {
+			return a.PreferredModel
+		}
 	}
 	if a.providerAcceptsPin(p, a.PreferredModel) {
 		return a.PreferredModel

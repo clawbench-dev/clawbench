@@ -147,11 +147,22 @@ func TestBackendRegistry_ModelDiscoveryConfig(t *testing.T) {
 		specs[s.ID] = s
 	}
 
-	// Only backends that read a local cache/static catalog keep a discovery
-	// source; the ones that used to shell out for a model list now rely on ACP.
+	// Only backends that read a real account-level cache keep a discovery
+	// source; the ones that used to shell out, scan a binary, or reverse a UI
+	// string table now rely on ACP.
 	assert.False(t, model.CanDiscoverModels(specs["opencode"]), "opencode no longer probes a command")
 	assert.False(t, model.CanDiscoverModels(specs["deepseek"]), "deepseek no longer probes a command")
-	assert.True(t, model.CanDiscoverModels(specs["qoder"]), "qoder reads its cached catalog")
+	assert.False(t, model.CanDiscoverModels(specs["qoder"]),
+		"qoder's only local source was its dynamic-texts UI table, which is not a model list")
+	assert.False(t, model.CanDiscoverModels(specs["qodercn"]), "same source as qoder")
+	assert.False(t, model.CanDiscoverModels(specs["antigravity"]),
+		"agy models needs a sign-in and only ever fell through to a stale catalog")
+	assert.False(t, model.CanDiscoverModels(specs["claude"]),
+		"claude was string-scanning its own binary; ACP is the authority")
+	assert.True(t, model.CanDiscoverModels(specs["codex"]),
+		"codex keeps models_cache.json, the list its account fetched from the API")
+	assert.True(t, model.CanDiscoverModels(specs["grok"]),
+		"grok models answers without a sign-in, unlike its ACP handshake")
 
 	// Backend with no registered discovery function does not support model discovery
 	assert.False(t, model.CanDiscoverModels(model.BackendSpec{Backend: "nonexistent_xyz"}), "nonexistent backend should not support model discovery")

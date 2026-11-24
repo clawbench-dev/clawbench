@@ -8,6 +8,12 @@ plugins {
  * Uses `git describe --tags --always` to match the format used by build.sh
  * for the Go backend, so APK and server versions are directly comparable.
  * Examples: v1.0.0, v0.30.0-30-g830bb6c, a0f87a96
+ *
+ * The leading "v" is part of the name — `VersionCompare.isVersionedBuild()`
+ * (and its JS/Go counterparts) requires it, and a name it cannot parse makes
+ * the app-vs-server mismatch gate fail open. Callers must therefore pass
+ * exactly one leading "v"; build.sh and release.yml both derive the value
+ * from `git describe`, which already supplies it.
  */
 def autoVersionName() {
     if (project.hasProperty('versionName')) return project.property('versionName')

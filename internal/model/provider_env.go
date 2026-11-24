@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -1111,6 +1112,138 @@ func (a *Agent) ProviderPickerModels() []AgentModel {
 		})
 	}
 	return out
+}
+
+// Provider-scoped model ids.
+//
+// A backend that calls the endpoint itself (the built-in agent) can offer
+// models from SEVERAL providers at once, so a bare model id stops being
+// unambiguous: two providers may serve the same name, and the turn has to know
+// which endpoint and credential to use. The picker therefore hands out
+// "<pN>:<model>" and every reader resolves the provider from that prefix.
+//
+// A plain id stays valid: it means "the agent's bound provider", which is what
+// every session created before this existed holds, and what a single-provider
+// backend keeps using.
+const providerScopedModelPrefix = "p"
+
+// ProviderScopedModelID renders the picker form of a model that belongs to a
+// provider. Empty or non-positive provider ids leave the model id untouched.
+func ProviderScopedModelID(providerID int64, modelID string) string {
+	if providerID <= 0 || modelID == "" {
+		return modelID
+	}
+	return providerScopedModelPrefix + strconv.FormatInt(providerID, 10) + ":" + modelID
+}
+
+// ParseProviderScopedModelID splits a provider-scoped id into its provider and
+// the bare model id. ok=false for a plain id, so callers can fall back to the
+// agent's binding without treating the whole string as a model name.
+func ParseProviderScopedModelID(id string) (providerID int64, modelID string, ok bool) {
+	if !strings.HasPrefix(id, providerScopedModelPrefix) {
+		return 0, id, false
+	}
+	rest := id[len(providerScopedModelPrefix):]
+	sep := strings.IndexByte(rest, ':')
+	if sep <= 0 {
+		return 0, id, false
+	}
+	n, err := strconv.ParseInt(rest[:sep], 10, 64)
+	if err != nil || n <= 0 {
+		return 0, id, false
+	}
+	bare := rest[sep+1:]
+	if bare == "" {
+		return 0, id, false
+	}
+	return n, bare, true
+}
+
+// ProviderModelName is the display form of a model id: the provider scope is
+// stripped, so a chip or a list row shows the model's own name.
+func ProviderModelName(id string) string {
+	if _, bare, ok := ParseProviderScopedModelID(id); ok {
+		return bare
+	}
+	return id
+}
+
+// ResolveProviderForModel answers the two things a turn needs from a model id:
+// which provider serves it, and the bare name to put on the wire.
+//
+// A scoped id names its own provider — that is the user's explicit pick, so it
+// wins over the agent's binding. A plain id (or a scoped one whose provider was
+// deleted) falls back to the binding, which is what every pre-existing session
+// and every single-provider backend relies on.
+func (a *Agent) ResolveProviderForModel(modelID string) (*Provider, string) {
+	if pid, bare, ok := ParseProviderScopedModelID(modelID); ok {
+		if p := GetProvider(pid); p != nil {
+			return p, bare
+		}
+		return a.Provider(), bare
+	}
+	return a.Provider(), modelID
+}
+
+// SelectableProviderModels lists the models of EVERY configured provider this
+// agent's backend can actually talk to.
+//
+// Only for backends that call the endpoint themselves (ProviderEnvSpec.
+// InProcess): an external CLI is spawned with one endpoint, so offering it a
+// second provider would hand the user a choice that cannot take effect. For
+// those the bound provider's list stays the only one (see ProviderPickerModels).
+//
+// A provider is skipped when the backend has no slot for its protocol, or when
+// its credential cannot be sent the way the provider demands. Private-protocol
+// providers (a backend's own service token) are never offered to another
+// backend: the token is issued for that service alone.
+//
+// Empty when nothing qualifies — the caller then keeps the agent's existing
+// list rather than replacing it with an empty one.
+func (a *Agent) SelectableProviderModels() []AgentModel {
+	if a == nil {
+		return nil
+	}
+	spec, ok := providerEnvSpec(a.Backend)
+	if !ok || !spec.InProcess {
+		return nil
+	}
+	var out []AgentModel
+	for _, p := range ListProviders() {
+		if p == nil || len(p.Models) == 0 {
+			continue
+		}
+		if !selectableProvider(a.Backend, spec, p) {
+			continue
+		}
+		for _, id := range p.Models {
+			out = append(out, AgentModel{
+				ID:         ProviderScopedModelID(p.ID, id),
+				Name:       id,
+				Default:    id == p.DefaultModel,
+				Provider:   p.Name,
+				ProviderID: p.ID,
+			})
+		}
+	}
+	return out
+}
+
+// selectableProvider reports whether this backend can run a provider's models.
+//
+// It mirrors the checks the binding endpoint applies, so a model offered in the
+// picker is one the turn can actually use: same protocol slot, and an auth mode
+// the client can send.
+func selectableProvider(backendID string, spec ProviderEnvSpec, p *Provider) bool {
+	if p.Protocol == ProviderProtocolPrivate {
+		// An own-service credential belongs to one backend's service. Only that
+		// backend may use it, and only when the provider names it.
+		return p.Backend != "" && p.Backend == backendID
+	}
+	if !providerEnvSupportsProtocol(spec, p.Protocol) {
+		return false
+	}
+	return ProviderAuthModeError(backendID, p.Protocol, p.AuthMode) == nil
 }
 
 // MergeProviderModels prepends this agent's provider models to a resolved list,

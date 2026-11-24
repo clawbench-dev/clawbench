@@ -1462,13 +1462,26 @@ func EnrichModelListWith(agent *model.Agent, modelList *ModelListState) *ModelLi
 	// nothing (a freshly added ACP backend, or a CLI probe that failed). Bailing
 	// out on an empty CLI list would ship no provider models over exactly the
 	// channel the chat drawer reads.
-	if len(agent.Models) == 0 && len(agent.ProviderPickerModels()) == 0 {
+	if len(agent.Models) == 0 && len(agent.ProviderPickerModels()) == 0 && !agent.BuiltinBackend {
 		return nil
 	}
 	enriched := *modelList
 	// Prices are attached here so every channel that ships this state over WS
 	// (model_list_update, session bootstrap) carries them; see model.WithPrices.
 	enriched.Models = model.WithPrices(modelList.Models)
+	if agent.BuiltinBackend {
+		// The built-in agent's list ALREADY spans every provider it can run, and
+		// each entry names the provider it belongs to (issue #753). Merging the
+		// bound provider's list into it would re-add bare ids with no provider,
+		// and the client writes ResolvedModels straight onto the agent — the
+		// drawer would then lose its provider headings the moment a session
+		// opened. Ship the list as-is.
+		if len(modelList.Models) == 0 {
+			return nil
+		}
+		enriched.ResolvedModels = model.WithPrices(modelList.Models)
+		return &enriched
+	}
 	// The provider's models ride along on the resolved list. This state is what
 	// GET /api/ai/chat and WS model_list_update ship, and the client writes
 	// `resolvedModels` straight onto the agent — building it from the agent's own

@@ -1384,9 +1384,12 @@
     loadServerList();
 
     // Version
+    // The versionName already carries its leading "v" (git describe supplies
+    // it, and VersionCompare refuses a name without one), so it is shown as
+    // returned. Prepending another "v" is what produced "vv0.147.0-…".
     try {
       var ver = ClawBenchNative.getAppVersion();
-      if (ver) document.getElementById('version').textContent = 'v' + ver;
+      if (ver) document.getElementById('version').textContent = ver;
     } catch(e) {}
 
     // Event: connect to existing server

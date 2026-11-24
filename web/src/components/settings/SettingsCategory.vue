@@ -162,6 +162,7 @@ import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { managedByEmbedder as upgradeManagedByEmbedder } from '@/composables/useUpgrade'
 import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
+import { copyText } from '@/utils/clipboard'
 import { PROJECT_FEEDBACK_URL, PROJECT_GITHUB_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig, type CardBody, type CardBodyEmit } from './settingsFieldMap'
 import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
@@ -837,6 +838,17 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'checkUpgrade') {
     upgradeDialogRef.value?.show()
+  }
+  if (item.key === 'registerService') {
+    // Copy only. Registering the unit needs sudo (system scope) or the user's
+    // own systemctl --user (user scope), and this process is neither — driving
+    // either from here would mean storing a sudo password or shelling out on
+    // the user's behalf. Handing over the command is the honest version.
+    copyText(
+      'clawbench service install',
+      () => toast.show(t('settings.items.registerServiceCopied'), { icon: 'success', type: 'success', duration: 3000 }),
+      () => toast.show(t('settings.saveFailed'), { icon: 'warning', type: 'error', duration: 3000 }),
+    )
   }
   if (item.key === 'uiScaleAutoFit') {
     // Computes the factor once from the current screen and stores it, so the

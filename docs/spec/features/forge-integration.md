@@ -111,6 +111,7 @@ sequenceDiagram
 - **引用到对话**：详情页 header 的引用按钮（消息图标）把 issue/PR 变成聊天内容——复用全站共享的引用输入框，issue/PR 地址作为 **URL 附件**（chip 文案 `owner/repo#123`）进入输入框，用户可再划取文本补充，最终消息为 URL 附件 + 选中文本 fence + 用户输入。当前项目无活跃会话则新建并切到聊天 tab。详情正文也支持双击复制 + 划取引用（与 Markdown 预览同一链路）
 - **凭据按 host 隔离**：token 存储键为 `(platform, host)`，不再是单一全局 token。自建 GitLab 实例各自独立凭据，一个 host 被控不影响其他 host。`GET /api/config` 不回传密钥明文，改为回传 host 存在性标记（write-only 语义，与密码字段一致），另附各 host 的**协议**（非密钥，仅"怎么连"而非"怎么认证"，用于区分只有 http 的实例）；`config.yaml` 权限为 `0600`。自建实例支持「跳过 TLS 校验」开关（默认关，用于自签名证书）。凭据主机字段接受 `http://h` / `https://h` / `h:port` / `h` 等写法，由**同一个归一化器**切分（避免两个归一化器漂移），加载时迁移历史脏键——旧版本把 URL 原样存为 key，导致凭据查不到、删不掉、界面却显示已配置
 - **事件任务护栏**：全局 kill-switch「暂停所有事件触发」；识别 AI 自身账号产生的写操作事件并**抑制**（防递归）；per-repo 同类型事件 debounce 合并；事件队列（任务忙时入队退避重试而非丢弃）
+- **排查「事件不触发」**：第一次同步只建基线（不派发历史），之后状态每 60s、评论每 5min 各轮询一次，所以新建 issue 到任务开跑至少隔一轮轮询。真排不动时按顺序看：①存在事件任务却无一匹配时，日志会以 **INFO** 打一行 `forge event task not triggered: no active task subscribed to this event`，带 `event` / `kind` / `subscriptions`（每个任务实际订阅了什么，如 `9:pr.opened`）/ `bindings`（该项目没绑定此仓库时这里是空的）；一个事件任务都没配时同一情形只打 DEBUG，不刷屏；②「暂停事件触发任务」开关是否被打开；③`forge poller: sync failed`（令牌失效、自签证书要开「跳过 TLS 校验」）；④窗口语义——绑定前就已存在的老 issue 首次见到只记快照不派发，但它此后被更新（新评论、改标题、状态变化）会像平常一样派发 `commented` 等事件，所以"老 issue 后来又出现在动态里"是正常的，不是漏报。通知与未读角标不受 ①②门控，所以「能看到 issue 但没跑任务」不等于没收到事件
 
 ### 设计要点
 

@@ -9,12 +9,14 @@ var Forge = &Feature{
 		"forge.enabled":           true,
 		"forge.insecure_tls":      true, // 自建 GitLab 常用自签证书，必须能关掉校验
 		"forge.pause_event_tasks": true, // 事件触发任务的总暂停
-		"forge.notify.opened":     true,
-		"forge.notify.closed":     true,
-		"forge.notify.merged":     true,
-		"forge.notify.reopened":   true,
-		"forge.notify.commented":  true,
-		"forge.notify.pipeline":   true,
+		// 放过凭据账号自己产生的事件（默认关，见 model.ForgeConfig 的说明）
+		"forge.allow_self_authored_events": true,
+		"forge.notify.opened":              true,
+		"forge.notify.closed":              true,
+		"forge.notify.merged":              true,
+		"forge.notify.reopened":            true,
+		"forge.notify.commented":           true,
+		"forge.notify.pipeline":            true,
 	},
 	Defaults: defaultForge,
 	Apply:    applyForge,
@@ -33,6 +35,9 @@ func applyForge(cfg *model.Config, patch map[string]any) {
 	}
 	if v, ok := forgeMap["pause_event_tasks"].(bool); ok {
 		cfg.Forge.PauseEventTasks = v
+	}
+	if v, ok := forgeMap["allow_self_authored_events"].(bool); ok {
+		cfg.Forge.AllowSelfAuthoredEvents = v
 	}
 	if notify, ok := forgeMap["notify"].(map[string]any); ok {
 		applyBool := func(key string, target *bool) {

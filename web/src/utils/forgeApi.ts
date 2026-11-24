@@ -19,6 +19,14 @@ export interface ForgeBinding {
     repo: string
     slug: string
     source?: string
+    /**
+     * Why this repository's most recent background poll failed, if it did.
+     *
+     * Absent after a successful poll. Surfaced because live reads keep working
+     * during an outage, so without it a broken poll is invisible: the lists
+     * look fine and only the event-triggered tasks stop firing.
+     */
+    syncError?: { error: string; occurredAt?: string }
 }
 
 export interface ForgeItem {

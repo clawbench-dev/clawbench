@@ -48,11 +48,11 @@ vi.mock('@/utils/attachDrag', () => ({
 const toastShowMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useToast', () => ({ useToast: () => ({ show: toastShowMock }) }))
 // The record mirrors the reader's own lines by matching the stored speaker name
-// against the local nickname; pin that nickname so the test is not dependent on
-// whatever this machine's config says.
+// against 参会称呼 (meeting.attendee_name — NOT the chat nickname); pin it so the
+// test is not dependent on whatever this machine's config says.
 vi.mock('@/composables/useSettingsConfig', () => ({
   useSettingsConfig: () => ({
-    serverConfig: { value: { user: { nickname: 'Alex' } } },
+    serverConfig: { value: { meeting: { attendee_name: 'Alex' } } },
     // The transcript rows mount the shared markdown interaction layer, whose
     // inline preview card reads this preference (the card itself is stubbed
     // below — only the flag has to exist).

@@ -63,6 +63,13 @@ const i18n = createI18n({
   },
 })
 
+/** Every fetch the login flow itself made, with the /api/health version probe
+ *  filtered out — that probe is unrelated to the add-server assertions and
+ *  would otherwise shift every call index. */
+function loginFetches() {
+  return vi.mocked(fetch).mock.calls.filter(c => !String(c[0]).includes('/api/health'))
+}
+
 function mountLogin() {
   return mount(LoginView, {
     global: {
@@ -107,7 +114,7 @@ describe('LoginView — add server (ISS-268)', () => {
     await submitAddServer(wrapper, 'Home', 'http://new:8080')
 
     // The duplicate must be rejected before any network attempt...
-    expect(fetch).not.toHaveBeenCalled()
+    expect(loginFetches()).toHaveLength(0)
     // ...and the user must see why. Before the fix the handler threw at the
     // guard, so no error element existed at all (the reported symptom).
     const errorEl = wrapper.find('.error')
@@ -127,8 +134,8 @@ describe('LoginView — add server (ISS-268)', () => {
     await submitAddServer(wrapper, 'Lab', 'new.example.com')
 
     // Guard must return null for a free name and let the flow continue.
-    expect(fetch).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('https://new.example.com:20000/login')
+    expect(loginFetches()).toHaveLength(1)
+    expect(loginFetches()[0][0]).toBe('https://new.example.com:20000/login')
 
     // The server (with its name) is persisted under the normalized URL.
     const stored = JSON.parse(localStorage.getItem('clawbench-servers')!) as Array<{
@@ -162,7 +169,7 @@ describe('LoginView — add server (ISS-268)', () => {
 
     await submitAddServer(wrapper, 'V6', 'http://[240e:390:1234:5678::123]:20000')
 
-    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('http://[240e:390:1234:5678::123]:20000/login')
+    expect(loginFetches()[0][0]).toBe('http://[240e:390:1234:5678::123]:20000/login')
     const stored = JSON.parse(localStorage.getItem('clawbench-servers')!) as Array<{ url: string }>
     expect(stored).toContainEqual(
       expect.objectContaining({ url: 'http://[240e:390:1234:5678::123]:20000' }),
@@ -177,7 +184,7 @@ describe('LoginView — add server (ISS-268)', () => {
 
     await submitAddServer(wrapper, 'V6', '240e:390:1234:5678::123')
 
-    expect(fetch).not.toHaveBeenCalled()
+    expect(loginFetches()).toHaveLength(0)
     expect(localStorage.getItem('clawbench-servers')).toBeNull()
     expect(wrapper.find('.error').text()).toContain('Enter a valid address')
   })
@@ -193,7 +200,7 @@ describe('LoginView — add server (ISS-268)', () => {
 
       await submitAddServer(wrapper, 'V6', address)
 
-      expect(fetch).not.toHaveBeenCalled()
+      expect(loginFetches()).toHaveLength(0)
       expect(localStorage.getItem('clawbench-servers')).toBeNull()
       expect(wrapper.find('.error').text()).toContain('Enter a valid address')
     })
@@ -205,7 +212,7 @@ describe('LoginView — add server (ISS-268)', () => {
 
     await submitAddServer(wrapper, 'Bad', 'http://[240e::123:20000')
 
-    expect(fetch).not.toHaveBeenCalled()
+    expect(loginFetches()).toHaveLength(0)
     expect(localStorage.getItem('clawbench-servers')).toBeNull()
     expect(wrapper.find('.error').text()).toContain('Enter a valid address')
   })

@@ -2046,3 +2046,40 @@ describe('ForgePanelContent — header labels', () => {
     expect(header.find('.clear-unread-btn .action-label').exists()).toBe(true)
   })
 })
+
+describe('ForgePanelContent — poll health', () => {
+  // A failing background poll is invisible by construction: the lists come from
+  // live reads and keep working, so without this banner the panel looks healthy
+  // while event-triggered tasks silently never fire.
+  it('shows the recorded poll failure', async () => {
+    state.binding.value = {
+      platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets',
+      syncError: { error: 'list issue page 1: 502 Bad Gateway', occurredAt: '2026-11-20T10:00:00Z' },
+    }
+    state.isBound.value = true
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.forge-sync-error').exists()).toBe(true)
+    expect(wrapper.find('.forge-sync-error-reason').text()).toContain('502 Bad Gateway')
+  })
+
+  it('hides it when the last poll succeeded', async () => {
+    state.binding.value = {
+      platform: 'github', host: 'github.com', owner: 'acme', repo: 'widgets', slug: 'acme/widgets',
+    }
+    state.isBound.value = true
+
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: globalOpts,
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.forge-sync-error').exists()).toBe(false)
+  })
+})

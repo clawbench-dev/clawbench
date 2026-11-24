@@ -1,21 +1,11 @@
 package claude
 
-import "clawbench/internal/model"
-
-// ClaudeCatalog is the fallback for binary string scanning of the claude CLI,
-// which has no --list-models command. The claude binary is commonly stripped,
-// so this path is reached often.
+// ClaudeModelNames maps a model family to its display label.
 //
-// A fallback list like this DOES go stale. When the CLI gains a real list
-// command, migrate the backend to model.NewCLISource and delete this file
-// rather than editing the list.
-var ClaudeCatalog = []model.AgentModel{
-	{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet 4"},
-	{ID: "claude-opus-4-20250514", Name: "Claude Opus 4"},
-	{ID: "claude-haiku-3-5-20241022", Name: "Claude 3.5 Haiku"},
-}
-
-// ClaudeModelNames maps model family to display label.
+// Display naming only: which models exist is never decided here. The Claude
+// ACP adapter reports tier aliases (`sonnet` / `opus` / `haiku`) and
+// model.ResolveModels resolves them against whatever the runtime reports, so a
+// local list would only add a stale copy of the same answer.
 var ClaudeModelNames = map[string]string{
 	"sonnet": "Sonnet",
 	"opus":   "Opus",

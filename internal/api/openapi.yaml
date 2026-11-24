@@ -135,6 +135,9 @@ paths:
                     type: string
                   version:
                     type: string
+                    description: |
+                      服务端版本号。登录页在用户登录前就展示它，因此该接口是
+                      页面上唯一可用的版本来源（`/api/config` 需要登录）。
                   protocol:
                     type: integer
                     description: |

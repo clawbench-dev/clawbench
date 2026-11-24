@@ -41,28 +41,6 @@ func TestCodebuddyBackendPlugin_SpawnHooksOnly(t *testing.T) {
 
 // --- CLI backend functionality ---
 
-// --- DiscoverCodebuddyModels edge cases ---
-
-func TestParseCodebuddyModels_EmptyCommaSeparated(t *testing.T) {
-	// Edge case: "Currently supported: (, , )" — empty parts
-	output := "Currently supported: (, , )"
-	models := ParseCodebuddyModels(output)
-	// Should skip empty parts
-	for _, m := range models {
-		assert.NotEmpty(t, m.ID, "model ID should not be empty")
-	}
-}
-
-func TestParseCodebuddyModels_NameFallback(t *testing.T) {
-	// Verify Name equals ID for parsed models
-	output := "Currently supported: (model-a, model-b)"
-	models := ParseCodebuddyModels(output)
-	require.Len(t, models, 2)
-	for _, m := range models {
-		assert.Equal(t, m.ID, m.Name)
-	}
-}
-
 func TestCodebuddyBackendSpec_SortOrder(t *testing.T) {
 	plugin := backends.Lookup("codebuddy")
 	require.NotNil(t, plugin)

@@ -81,7 +81,7 @@ interface AgentRecord {
   backend: string
   command?: string
   specialty?: string
-  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
+  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }>
   preferredModel?: string
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
@@ -226,8 +226,8 @@ interface AcpState {
   thinkingEffortState?: { availableLevels?: Array<{ id: string; name: string }>; currentId?: string }
   commands?: Array<{ name: string; description: string; inputHint?: string }>
   modelListState?: {
-    models?: Array<{ id: string; name: string; price?: ModelPrice; credits?: string }>
-    resolvedModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
+    models?: Array<{ id: string; name: string; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }>
+    resolvedModels?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }>
     currentModelId?: string
   }
   planState?: { entries?: Array<Record<string, unknown>> }
@@ -425,7 +425,7 @@ function getDefaultModelId(agentId: string): string {
 }
 
 /** Get the models list for an agent. */
-function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }[] {
+function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }[] {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.models || []
 }
@@ -657,7 +657,7 @@ async function setDefaultAgent(agentId: string): Promise<void> {
  * Falls back to the raw ACP list when the backend could not resolve it (no CLI
  * list available at emit time) — better to show the ACP list alone than nothing.
  */
-export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string; price?: ModelPrice; credits?: string }>, currentModelId?: string): void {
+export function updateACPModelList(agentId: string, models: Array<{ id: string; name: string; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }>, currentModelId?: string): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return
     if (models.length === 0) return
@@ -682,7 +682,7 @@ export function updateACPModelList(agentId: string, models: Array<{ id: string; 
  */
 export function applyResolvedModelList(
     agentId: string,
-    resolved: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>,
+    resolved: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }>,
 ): void {
     const agent = agents.value.find(a => a.id === agentId)
     if (!agent) return

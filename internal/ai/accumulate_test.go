@@ -52,6 +52,30 @@ func TestAccumulateBlock_ThinkingMintsStableID(t *testing.T) {
 	assert.Len(t, blocks, 3)
 }
 
+// TestAccumulateBlock_NotFoundFlagReachesBlock pins that the not-found fact
+// survives accumulation, on BOTH paths: the opening frame creates the block and
+// the closing frame updates an existing one. A flag lost here is a flag the
+// cleanup can never act on, and the failed call reappears in the transcript.
+func TestAccumulateBlock_NotFoundFlagReachesBlock(t *testing.T) {
+	// Path 1: the completion opens the block (no start frame seen).
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+		Name: "AskUserQuestion", ID: "t1", Status: "error", Done: true, NotFoundThisRun: true,
+	}})
+	require.Len(t, blocks, 1)
+	assert.True(t, blocks[0].NotFoundThisRun)
+
+	// Path 2: the completion updates a block the start frame already opened.
+	var updated []model.ContentBlock
+	AccumulateBlock(&updated, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "AskUserQuestion", ID: "t2"}})
+	assert.False(t, updated[0].NotFoundThisRun)
+	AccumulateBlock(&updated, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+		Name: "AskUserQuestion", ID: "t2", Status: "error", Done: true, NotFoundThisRun: true,
+	}})
+	require.Len(t, updated, 1)
+	assert.True(t, updated[0].NotFoundThisRun)
+}
+
 func TestAccumulateBlock_NonThinkingEventsReportNoID(t *testing.T) {
 	// Only thinking carries an identity; everything else must leave the event's
 	// ThinkID empty so it is not stamped onto unrelated frames.

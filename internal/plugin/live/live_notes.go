@@ -1649,7 +1649,11 @@ func (c *artifactChain) refreshSegments() {
 	c.segments = segments
 	c.self = service.LiveNotesSpeaker{
 		Label: service.LiveNotesSelfLabel(segments),
-		Name:  model.UserNickname,
+		// 参会称呼, NOT user.nickname: the minutes name the person the way this
+		// meeting showed them, which is what the transcript and the host row
+		// said. An unconfigured value falls back to the nickname so an install
+		// that never set one keeps naming the initiator.
+		Name: meetingAttendeeName(),
 	}
 }
 
@@ -2481,4 +2485,17 @@ func capInt64(v, hi int64) int64 {
 		return hi
 	}
 	return v
+}
+
+// meetingAttendeeName resolves the name a meeting uses for the user.
+//
+// 参会称呼 is the intended source; an install that never set one falls back to
+// the account nickname, which is what every meeting used before the two were
+// split. Both are only READ here — nothing about a meeting writes back into the
+// account identity.
+func meetingAttendeeName() string {
+	if name := model.SanitizeMeetingAttendeeName(model.ConfigInstance.Meeting.AttendeeName); name != "" {
+		return name
+	}
+	return model.UserNickname
 }

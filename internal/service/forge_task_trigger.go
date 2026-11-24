@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -198,7 +199,11 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 	// Anti-recursion: an event authored by the credential's own account is
 	// almost certainly a side effect of a previous AI action. Firing on it would
 	// let the AI's own write re-trigger itself indefinitely.
-	if t.isSelfAuthored(repo, item, change) {
+	//
+	// The user can opt out (allow_self_authored_events) when they act under that
+	// same account themselves. The flag is surfaced on the event either way, so
+	// a task's prompt still knows (see ACTOR_IS_SELF).
+	if !cfg.Forge.AllowSelfAuthoredEvents && t.isSelfAuthored(repo, item, change) {
 		slog.Info("forge event suppressed as self-authored",
 			slog.String("repo", repo.Key()),
 			slog.Int("number", item.Number),
@@ -208,6 +213,34 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 
 	tasks := t.matchingTasks(repo, item, change)
 	if len(tasks) == 0 {
+		// Silence here is what issue #754 hit: the repository list shows the new
+		// issue, so the event plainly arrived, yet nothing runs and the log has
+		// nothing to look at. Name the reason (which events the active tasks do
+		// subscribe to) — "my task listens to pr.opened, not issue.opened" is a
+		// one-glance answer, while "the feature is broken" is the guess that
+		// silence produces.
+		//
+		// Level depends on whether anyone could have expected this to fire:
+		//   - no active event task at all → Debug. Every event of every bound
+		//     repository lands here whenever automation is unused; at Info a busy
+		//     repository would fill the log with it.
+		//   - tasks exist, none matches → Info. It is rare (one line per distinct
+		//     event type), and the default log level hides Debug entirely, so a
+		//     Debug line there would not help the person troubleshooting.
+		subscriptions := t.activeEventSubscriptions()
+		attrs := []any{
+			slog.String("repo", repo.Key()),
+			slog.String("event", string(change.Type)),
+			slog.String("kind", forgeEventKindForItem(item.Type)),
+			slog.String("bindings", t.bindingSummary(repo)),
+		}
+		if subscriptions == "" {
+			slog.Debug("forge event task not triggered: no active event task",
+				append(attrs, slog.String("subscriptions", ""))...)
+			return
+		}
+		slog.Info("forge event task not triggered: no active task subscribed to this event",
+			append(attrs, slog.String("subscriptions", subscriptions))...)
 		return
 	}
 
@@ -252,6 +285,46 @@ func (t *ForgeTaskTrigger) HandleChange(_ context.Context, repo ForgeRepoRef, it
 	for _, task := range tasks {
 		t.enqueueAndDrain(task.ID, ev)
 	}
+}
+
+// activeEventSubscriptions renders the subscriptions of every active event task
+// as "taskID:types" joined by ", ". It is diagnostic only (see the no-match log
+// in HandleChange): it makes "nothing was subscribed" self-evident from a single
+// line instead of requiring a look at the task table.
+func (t *ForgeTaskTrigger) activeEventSubscriptions() string {
+	tasks, err := t.listTasks()
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(tasks))
+	for i := range tasks {
+		task := &tasks[i]
+		if !task.IsEventTriggered() || task.Status != store.SessionArchiveFilterActive {
+			continue
+		}
+		parts = append(parts, strconv.FormatInt(task.ID, 10)+":"+task.EventTypes)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// bindingSummary lists which projects are bound to the event's repository, as
+// "projectPath". It answers the other half of "why did nothing fire": a task
+// whose project is not bound to this repository can never match, and from the
+// task list alone that is invisible.
+func (t *ForgeTaskTrigger) bindingSummary(repo ForgeRepoRef) string {
+	bindings, err := ListProjectForges()
+	if err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(bindings))
+	for _, pf := range bindings {
+		if pf.Platform != repo.Platform || pf.Host != repo.Host ||
+			pf.Owner != repo.Owner || pf.Repo != repo.Repo {
+			continue
+		}
+		parts = append(parts, pf.ProjectPath)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // isSelfAuthored reports whether the event was produced by the credential's own

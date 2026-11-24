@@ -2154,3 +2154,40 @@ func TestEnrichModelList_ProviderModelsWithoutCLIList(t *testing.T) {
 	}
 	assert.Contains(t, ids, "clawbench-openai/glm-5.3-flash")
 }
+
+// The built-in agent's list already spans every provider it can run, and each
+// entry names its provider. Enrichment must ship it unchanged: the client writes
+// ResolvedModels straight onto the agent, so rebuilding the list from
+// MergeProviderModels (bare ids, no provider) dropped every provider heading the
+// moment a session opened — the list looked flat in the drawer even though
+// GET /api/agents carried the groups (issue #753).
+func TestEnrichModelList_BuiltinKeepsProviderScopedEntries(t *testing.T) {
+	const agentID = "enrich-builtin"
+	orig := model.Agents
+	model.Agents = map[string]*model.Agent{
+		agentID: {
+			ID:             agentID,
+			Backend:        "builtin",
+			BuiltinBackend: true,
+			Models:         []model.AgentModel{{ID: "stale", Name: "Stale"}},
+		},
+	}
+	t.Cleanup(func() { model.Agents = orig })
+
+	raw := &ModelListState{
+		CurrentModelID: "p6:deepseek-v4.1-flash",
+		Models: []model.AgentModel{
+			{ID: "p2:MiniMax-M3", Name: "MiniMax-M3", Provider: "MiniMax", ProviderID: 2},
+			{ID: "p6:deepseek-v4.1-flash", Name: "deepseek-v4.1-flash", Provider: "cbproxy", ProviderID: 6, Default: true},
+		},
+	}
+
+	got := EnrichModelList(agentID, raw)
+
+	require.NotNil(t, got)
+	require.Len(t, got.ResolvedModels, 2, "no bare-id entry may be merged in")
+	assert.Equal(t, "p2:MiniMax-M3", got.ResolvedModels[0].ID)
+	assert.Equal(t, "MiniMax", got.ResolvedModels[0].Provider, "the provider survives so the drawer can group")
+	assert.Equal(t, "cbproxy", got.ResolvedModels[1].Provider)
+	assert.Equal(t, "p6:deepseek-v4.1-flash", got.CurrentModelID)
+}

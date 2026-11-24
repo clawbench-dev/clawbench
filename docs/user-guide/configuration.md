@@ -195,7 +195,7 @@
 | `doubao.enable_itn` / `enable_punc` | `true` | 数字日期规范化 / 自动标点 |
 | `doubao.enable_ddc` | `false` | 顺滑处理，去口头语和重复 |
 | `doubao.output_zh_variant` | 空 | 输出简繁：空 / `traditional` / `tw` / `hk` |
-| `doubao.end_window_size` | `800` | 流式判停的静音阈值（毫秒） |
+| `doubao.end_window_size` | `800` | 流式判停的静音阈值（毫秒）。松手后引擎也要等够这段静音才交出最后一句，所以值越大松手到出字越慢 |
 | `doubao.streaming` | `false` | 边录边传 |
 | `alibaba.api_key` | 空 | 百炼的 Key |
 | `alibaba.base_url` | `https://dashscope.aliyuncs.com` | 新加坡地域填 `https://dashscope-intl.aliyuncs.com` |
@@ -204,7 +204,7 @@
 | `alibaba.language` | `zh` | 识别语言提示，留空自动判断 |
 | `alibaba.enable_itn` / `enable_punc` | `true` | 数字日期规范化 / 自动标点 |
 | `alibaba.enable_ddc` | `false` | 顺滑处理 |
-| `alibaba.end_window_size` | `800` | 流式判停的静音阈值（毫秒） |
+| `alibaba.end_window_size` | `800` | 流式判停的静音阈值（毫秒）。松手后引擎也要等够这段静音才交出最后一句，值越大出字越慢 |
 | `alibaba.streaming` | `false` | 边录边传 |
 | `tencent.secret_id` | 空 | 腾讯云 API 密钥的 SecretId |
 | `tencent.secret_key` | 空 | 与 SecretId 配对的 SecretKey |
@@ -212,7 +212,7 @@
 | `tencent.model` | `16k_zh` | 引擎型号，同时决定语种（`16k_en`、`16k_zh_dialect` 等） |
 | `tencent.enable_itn` | `true` | 数字规范化（`convert_num_mode`） |
 | `tencent.enable_ddc` | `false` | 顺滑处理，去口头语（`filter_modal`） |
-| `tencent.end_window_size` | `1000` | 流式判停的静音阈值，500–2000 毫秒（`vad_silence_time`） |
+| `tencent.end_window_size` | `1000` | 流式判停的静音阈值，500–2000 毫秒（`vad_silence_time`）。松手后引擎也要等够这段静音，值越大出字越慢 |
 | `tencent.streaming` | `true` | 边录边传。**默认开**；关掉后浏览器把录音转成 WAV 上传（整段识别单次最多 60 秒） |
 
 > 界面入口：设置 → 语音识别。麦克风处理与「安静时不送」这几项，会议听记也共用同一份。
@@ -241,6 +241,7 @@
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
+| `attendee_name` | 空 | 参会称呼：会议里别人看到你的名字，成员列表、转写稿发言人、聊天记录都用它。空＝进入会议时临时填写。**与 `user.nickname`（智能体在对话里怎么称呼你）互不影响**，改一个不会动另一个。不能含控制字符 |
 | `auto_minutes` | `true` | 散会后自动生成纪要（由主持人客户端发起） |
 | `proofread` | `true` | 生成纪要前先校对转写稿。关掉省一次模型调用 |
 | `language` | 空 | 纪要语言：空＝跟随转写，`zh`＝简体中文，`en`＝英文 |
@@ -249,7 +250,7 @@
 | `agent_minutes` | `false` | 纪要**和校对**改由内置智能体（ClawBench Agent）来做。它会自己翻项目文件核对专有名词，而不是只用拼好的那段文本。需要内置智能体已绑定模型提供商；不满足时自动退回原来的摘要模型路径 |
 | `agent_minutes_max_rounds` | `0` | 智能体每份产物的模型往返上限。`0`＝用内置默认值 |
 
-> 界面入口：设置 → 视频会议。这里只是**新会议的默认值**，每场会议在创建页和「会议管理」里还能各改各的。
+> 界面入口：设置 → 视频会议。除 `attendee_name` 外，这里只是**新会议的默认值**，每场会议在创建页和「会议管理」里还能各改各的。
 
 > **`agent_minutes` 打开后有什么不同**：转写稿、分块、语言、上下文块、提示词全都不变，只有「调模型」那一层换成了智能体。差别在**工具**——智能体可以读工作目录里的文件。所以一场讲「配置加载器」的会，纪要学会写成项目里真实的文件名，而不是照抄语音识别的结果。代价是多了工具调用的开销，所以默认关闭。
 
@@ -350,6 +351,7 @@
 | `insecure_tls` | `false` | 跳过 TLS 校验，自建实例用自签证书时才开 |
 | `notify.opened` / `closed` / `merged` / `reopened` / `commented` / `pipeline` | 全 `true` | 哪几类事件要推送。**不影响未读角标**（角标记的是变化，不是通知） |
 | `pause_event_tasks` | `false` | 临时停掉所有事件触发的任务。事件照常通知，只是不跑任务 |
+| `allow_self_authored_events` | `false` | 让自己账号发起的操作也能触发任务。默认关，因为 AI 自己写的东西会再触发同一个 AI，可能无限循环；你确实要用自己的账号驱动自动化时才开 |
 
 > 界面入口：设置 → 代码托管集成。令牌只写不回显，界面只告诉你「已配置」。自建 Gitea / Forgejo 要在「平台」里明确选，否则按 GitLab 对待。
 

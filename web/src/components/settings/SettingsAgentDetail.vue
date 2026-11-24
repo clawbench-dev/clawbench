@@ -230,6 +230,7 @@ import CopyAgentDialog from './CopyAgentDialog.vue'
 import AgentAvatarPicker from './AgentAvatarPicker.vue'
 import AgentInstallDialog from '@/components/AgentInstallDialog.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import { bareModelId } from '@/utils/modelSelection'
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { patchAgentField, patchAgentFields } from '@/composables/useSettingsConfig'
 import type { AvatarSaveSpec } from '@/utils/avatarPolicy'
@@ -501,7 +502,11 @@ const items = computed<AgentItem[]>(() => {
       description: usingCatalogModels ? t('settings.items.agentCatalogModelsDesc') : undefined,
       note: usingCatalogModels ? t('settings.items.agentCatalogModelsNote') : undefined,
       type: 'select',
-      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string }) => ({
+      options: modelChoices.map((m: { name: string; id: string; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }) => ({
+        // One heading per provider (the built-in agent lists models from all of
+        // them), so the row itself carries only the model's own name. A
+        // single-provider backend keeps a flat list, where the id line below the
+        // name is what separates two models sharing a display name.
         label: m.name || m.id,
         value: m.id,
         modelName: m.name || m.id,
@@ -512,12 +517,18 @@ const items = computed<AgentItem[]>(() => {
         // the only way to tell them apart in the picker. Some ACP agents carry
         // a JSON-shaped wire id; the shared ModelRow shows it readably on a
         // second line (the value stays untouched).
-        modelId: m.id,
+        modelId: bareModelId(m.id),
         // Grouped rendering requires the key on every option: SettingsItem only
         // switches to grouped mode when at least one option carries it.
-        ...(hasProviderModels
-          ? { groupKey: providerModelIds.has(m.id) ? 'settings.items.agentModelsGroupProvider' : 'settings.items.agentModelsGroupAgent' }
-          : {}),
+        //
+        // A named provider becomes its own heading (a literal label — it is not
+        // an i18n key). Without one, the old two-bucket split (provider vs the
+        // agent's own models) still applies.
+        ...(m.provider
+          ? { groupKey: `provider:${m.providerId ?? m.provider}`, groupLabel: m.provider }
+          : hasProviderModels
+            ? { groupKey: providerModelIds.has(m.id) ? 'settings.items.agentModelsGroupProvider' : 'settings.items.agentModelsGroupAgent' }
+            : {}),
       })),
       // A provider-backed agent may serve an id neither list knows about, so
       // the picker always keeps a free-form escape.
@@ -531,33 +542,41 @@ const items = computed<AgentItem[]>(() => {
   // ask for consent because they modify a file outside ClawBench.
   // Key-only backends advertise no protocols yet still take a provider, so the
   // gate cannot be "has protocols" alone (it hid the picker for cursor).
-  if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly) {
-    result.push({
-      key: 'provider_id',
-      label: t('settings.items.agentProvider'),
-      description: t('settings.items.agentProviderHint'),
-      type: 'select',
-      options: [
-        { label: t('settings.items.agentProviderNone'), value: '' },
-        ...providerOptions.value.map((p) => ({
-          // The provider list marks a keyless row in orange; without carrying
-          // that into this picker the user binds it and only finds out on the
-          // next turn ("provider has no API key").
-          label: p.hasKey === false
-            ? `${p.name} · ${protocolLabel(p)} · ${t('settings.items.providerNoKey')}`
-            : `${p.name} · ${protocolLabel(p)}`,
-          value: p.id,
-        })),
-      ],
-      patchField: 'provider_id',
-    })
-  } else {
-    result.push({
-      key: 'provider_id',
-      label: t('settings.items.agentProvider'),
-      description: t('settings.items.agentProviderUnsupported'),
-      type: 'info',
-    })
+  //
+  // The built-in agent gets NO provider option at all: it calls the endpoint
+  // itself and its model picker already lists every configured provider's
+  // models (issue #753), so the model id — not a binding — decides which
+  // endpoint a turn uses. Offering a binding here would only suggest a
+  // restriction that does not exist.
+  if (!a.builtinBackend) {
+    if ((a.providerProtocols && a.providerProtocols.length > 0) || a.providerKeyOnly) {
+      result.push({
+        key: 'provider_id',
+        label: t('settings.items.agentProvider'),
+        description: t('settings.items.agentProviderHint'),
+        type: 'select',
+        options: [
+          { label: t('settings.items.agentProviderNone'), value: '' },
+          ...providerOptions.value.map((p) => ({
+            // The provider list marks a keyless row in orange; without carrying
+            // that into this picker the user binds it and only finds out on the
+            // next turn ("provider has no API key").
+            label: p.hasKey === false
+              ? `${p.name} · ${protocolLabel(p)} · ${t('settings.items.providerNoKey')}`
+              : `${p.name} · ${protocolLabel(p)}`,
+            value: p.id,
+          })),
+        ],
+        patchField: 'provider_id',
+      })
+    } else {
+      result.push({
+        key: 'provider_id',
+        label: t('settings.items.agentProvider'),
+        description: t('settings.items.agentProviderUnsupported'),
+        type: 'info',
+      })
+    }
   }
 
   // Preferred Thinking Effort

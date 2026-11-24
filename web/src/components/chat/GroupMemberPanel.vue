@@ -164,6 +164,7 @@ import SessionDrawer from './SessionDrawer.vue'
 import { getAgentAvatar, useAgents } from '@/composables/useAgents'
 import { formatRelativeTime } from '@/utils/format'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
+import { bareModelId } from '@/utils/modelSelection'
 import { usagePct as usagePctOf, usageColor as usageColorOf } from '@/utils/usageDisplay'
 import { collectGroupMemberStatus, type GroupMemberRoundStatus } from '@/utils/groupMemberStatus'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
@@ -231,7 +232,7 @@ function avatarOf(m: GroupMemberInfo): string {
 function modelLabel(m: GroupMemberInfo): string {
   const id = m.model || getDefaultModelId(m.agentId)
   if (!id) return ''
-  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(id)
+  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(bareModelId(id))
 }
 
 /** Whether the row has any extra identity detail (real agent name and/or model).

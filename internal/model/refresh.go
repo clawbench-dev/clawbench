@@ -677,7 +677,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		agent.ProviderConfigDirBackend = ProviderUsesConfigDir(agent.Backend)
 		agent.ProviderConfigSecretInFile = ProviderConfigSecretInFile(agent.Backend)
 		agent.ProviderConfigPath = ProviderConfigDisplayPath(agent.Backend, agent.ID)
-		agent.RuntimeSystemPrompt = ComposeSystemPrompt(agent.CustomSystemPrompt)
+		agent.RuntimeSystemPrompt = ComposeSystemPrompt(agent.CustomSystemPrompt, agent.BuiltinBackend)
 		newAgentsMap[agent.ID] = agent
 	}
 
@@ -685,24 +685,32 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 	return nil
 }
 
-// ComposeSystemPrompt builds the runtime prompt from the shared prefix and the
-// user-editable portion.
+// ComposeSystemPrompt builds the runtime prompt from the built-in agent base,
+// the shared prefix and the user-editable portion, in that order.
+//
+// builtin selects the base prompt: only the in-process agent gets it, because
+// an ACP agent brings its own prompt and a second set of behavioral rules
+// would fight it.
 //
 // The stored prompt column is deliberately ignored. It used to hold a composed
 // prompt from an earlier scheme, which meant a frozen copy of the shared prompt
 // was appended after the freshly composed one and silently overrode it. Only
 // custom_system_prompt holds user text now, and the shared prefix is always
 // applied here, so a change to the built-in prompt takes effect on every read.
-func ComposeSystemPrompt(customPrompt string) string {
-	commonPrompt := BuildCommonPrompt()
-	switch {
-	case commonPrompt != "" && customPrompt != "":
-		return commonPrompt + "\n\n" + customPrompt
-	case commonPrompt != "":
-		return commonPrompt
-	default:
-		return customPrompt
+func ComposeSystemPrompt(customPrompt string, builtin bool) string {
+	parts := make([]string, 0, 3)
+	if builtin {
+		if s := BuildBuiltinPrompt(); s != "" {
+			parts = append(parts, s)
+		}
 	}
+	if s := BuildCommonPrompt(); s != "" {
+		parts = append(parts, s)
+	}
+	if customPrompt != "" {
+		parts = append(parts, customPrompt)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // loadAgentsFromDBRows reads every agent row.

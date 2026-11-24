@@ -7,6 +7,7 @@ import { appLog } from '@/utils/appLog'
 import { listAudioInputs, listCaptureSources } from '@/composables/useLiveShare'
 import { _resetCaptureSources } from '@/utils/captureSourceCache'
 import { useMeetingOptions } from '@/composables/useMeetingOptions'
+import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { LIVE_CHAT_MAX } from '@/share/liveControl'
 import MeetingStage from '../MeetingStage.vue'
 
@@ -249,6 +250,9 @@ beforeEach(() => {
   ;(shareApi.micRecovering as { value: boolean }).value = false
   // The chosen input is a module singleton shared with the create form.
   useMeetingOptions().micChoice.value = 'default'
+  // Server config is a module singleton too; a test that names the host would
+  // otherwise leak that name into every later mount.
+  useSettingsConfig().serverConfig.value = {}
 })
 
 describe('MeetingStage tabs', () => {
@@ -481,6 +485,27 @@ describe('MeetingStage tabs', () => {
     expect(frame.messages.map((m: { text: string }) => m.text)).toEqual(['早', '开会了'])
     // The sender is carried along so the receiver can tell its own lines apart.
     expect(frame.messages[0]).toMatchObject({ id: 'm1', from: 'v1' })
+  })
+
+  it("signs the host's own chat lines with 参会称呼, not the account nickname", async () => {
+    // The record detail decides "this line is mine" by comparing the speaker
+    // against 参会称呼, and the participant list shows the same value. Signing
+    // the host's chat with user.nickname put one person under two names and
+    // left their own lines unmirrored in the archived record.
+    const wrapper = mountPanel()
+    await flushPromises()
+    useSettingsConfig().serverConfig.value = {
+      user: { nickname: 'chat-name' },
+      meeting: { attendee_name: 'meeting-name' },
+    }
+    await tab(wrapper, 'chat').trigger('click')
+    wrapper.findComponent({ name: 'LiveChatPanel' }).vm.$emit('send', 'hi')
+    await nextTick()
+
+    const sent = (shareApi.sendControl as ReturnType<typeof vi.fn>).mock.calls
+      .map(c => c[0] as Record<string, unknown>)
+      .find(m => m.t === 'chat')
+    expect(sent).toMatchObject({ t: 'chat', from: 'host', name: 'meeting-name', text: 'hi' })
   })
 
   it('does not replay to a viewer whose request carries no id', async () => {

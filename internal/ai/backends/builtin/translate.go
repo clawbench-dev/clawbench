@@ -129,6 +129,7 @@ func (t *translator) translate(ev agentcore.Event) []ai.StreamEvent {
 				Output:           ev.ToolOutput,
 				Status:           status,
 				Done:             true,
+				NotFoundThisRun:  ev.ToolNotFound,
 				DurationMs:       int(ev.ToolDuration / time.Millisecond),
 				ParentToolCallID: ev.ParentToolCallID,
 			},

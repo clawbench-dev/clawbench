@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickDefaultModelId, resolveModelSelection } from '@/utils/modelSelection'
+import { bareModelId, pickDefaultModelId, resolveModelSelection } from '@/utils/modelSelection'
 
 const list = [
   { id: 'claude-4', name: 'Claude 4', default: true },
@@ -93,5 +93,61 @@ describe('resolveModelSelection', () => {
       modelName: 'bare',
       retired: false,
     })
+  })
+})
+
+describe('provider-scoped ids (issue #753)', () => {
+  // The built-in agent lists models from several providers, so its ids carry a
+  // `p<providerId>:` scope. A session created before that holds the bare name.
+  const scoped = [
+    { id: 'p1:gpt-4o', name: 'gpt-4o', default: true },
+    { id: 'p2:qwen3', name: 'qwen3', default: false },
+  ]
+
+  it('adopts the scoped entry for a bare id when exactly one provider serves it', () => {
+    // Otherwise the first reload after the upgrade "retires" a model that is
+    // still perfectly runnable and silently moves the session to the default.
+    expect(resolveModelSelection(scoped, '', 'gpt-4o')).toEqual({
+      modelId: 'p1:gpt-4o',
+      modelName: 'gpt-4o',
+      retired: false,
+    })
+  })
+
+  it('does not guess when two providers serve the same name', () => {
+    const ambiguous = [
+      { id: 'p1:gpt-4o', name: 'gpt-4o', default: true },
+      { id: 'p2:gpt-4o', name: 'gpt-4o', default: false },
+    ]
+    const got = resolveModelSelection(ambiguous, '', 'gpt-4o')
+    // Guessing would silently move the session to another provider's endpoint.
+    expect(got.retired).toBe(true)
+    expect(got.modelId).toBe('p1:gpt-4o')
+  })
+
+  it('keeps a scoped candidate that is still listed', () => {
+    expect(resolveModelSelection(scoped, '', 'p2:qwen3')).toEqual({
+      modelId: 'p2:qwen3',
+      modelName: 'qwen3',
+      retired: false,
+    })
+  })
+
+  it('retires a scoped candidate whose provider is gone instead of remapping it', () => {
+    // p9 is not in the list at all: the provider was deleted. Falling back to
+    // the default is honest; matching by bare name would send the turn to a
+    // different provider than the one the user picked.
+    const got = resolveModelSelection(scoped, '', 'p9:gpt-4o')
+    expect(got.retired).toBe(true)
+    expect(got.modelId).toBe('p1:gpt-4o')
+  })
+
+  it('leaves an opaque id with a colon alone', () => {
+    // A gateway may namespace its own ids with a colon; only `p<digits>:` is
+    // our scope.
+    expect(bareModelId('openai:gpt-4o')).toBe('openai:gpt-4o')
+    expect(bareModelId('p12:model')).toBe('model')
+    expect(bareModelId('plain')).toBe('plain')
+    expect(bareModelId('')).toBe('')
   })
 })

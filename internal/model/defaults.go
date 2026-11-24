@@ -249,6 +249,12 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	// config.yaml; the mention parser trims each target, so an untrimmed
 	// nickname would be unreachable.
 	cfg.User.Nickname = strings.TrimSpace(cfg.User.Nickname)
+	// 参会称呼 is an independent field with its own trimming rule: it is written
+	// verbatim into the member list, the transcript and the archived chat,
+	// where a stray newline forges a whole extra line. Control characters
+	// become spaces here so a hand-edited config.yaml cannot do that; the PATCH
+	// path rejects such a value with a 400 instead.
+	cfg.Meeting.AttendeeName = SanitizeMeetingAttendeeName(cfg.Meeting.AttendeeName)
 	// The profile is injected into every agent system prompt, so a hand-edited
 	// value is clamped rather than allowed to grow without bound. The PATCH
 	// path rejects an over-long value with a 400 instead of silently trimming.
