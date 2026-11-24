@@ -1298,6 +1298,31 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			}
 		}
 	}
+	// forge_sync_state.last_error / last_error_at: why the last poll of this
+	// repository failed, if it did. Written by the poller and cleared on the
+	// next successful pass, so the panel can say "this repository has not been
+	// read since X, because Y" instead of showing a repository whose polling
+	// is broken as if nothing were wrong. Without it a failing poll is
+	// indistinguishable from "nothing changed": live reads still work, so the
+	// user sees their issues while event tasks never fire.
+	{
+		var exists int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='last_error'").Scan(&exists)
+		if exists == 0 {
+			if _, err := store.WriteExec("ALTER TABLE forge_sync_state ADD COLUMN last_error TEXT NOT NULL DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add forge_sync_state.last_error column: %w", err)
+			}
+		}
+	}
+	{
+		var exists int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='last_error_at'").Scan(&exists)
+		if exists == 0 {
+			if _, err := store.WriteExec("ALTER TABLE forge_sync_state ADD COLUMN last_error_at DATETIME"); err != nil {
+				return fmt.Errorf("failed to add forge_sync_state.last_error_at column: %w", err)
+			}
+		}
+	}
 	// forge_items.comments_baselined: distinguishes "comments fetched, none
 	// exist" from "comments never fetched". Without it, a first pass that
 	// skipped comments leaves a zero baseline and the next pass replays every

@@ -220,6 +220,39 @@ func TestForgePoller_SyncNowSurvivesProviderError(t *testing.T) {
 	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
 
 	assert.NotPanics(t, poller.SyncNow)
+
+	// The failure is recorded, not just logged: a poll that fails silently is
+	// indistinguishable from one that found nothing, because live reads keep
+	// working and event tasks simply never fire.
+	failure, err := service.GetForgeSyncFailure(service.ForgeRepoKey{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, failure, "a failed cycle must be recorded for the user to see")
+	assert.Contains(t, failure.Message, "unreachable")
+}
+
+// TestForgePoller_SyncNowClearsRecordedFailure verifies a later success removes
+// the stale failure, so the panel stops warning about an outage that ended.
+func TestForgePoller_SyncNowClearsRecordedFailure(t *testing.T) {
+	setupTestDBForForgeSync(t)
+	require.NoError(t, service.UpsertProjectForge(service.ProjectForge{
+		ProjectPath: t.TempDir(), Platform: "github", Host: "github.com",
+		Owner: "acme", Repo: "widgets", Source: "manual",
+	}))
+	repoKey := service.ForgeRepoKey{
+		Platform: "github", Host: "github.com", Owner: "acme", Repo: "widgets",
+	}
+	service.RecordForgeSyncFailure(repoKey, assert.AnError)
+
+	syncer := service.NewForgeSyncer(
+		func(service.ProjectForge) (forge.Provider, error) { return &recordingProvider{}, nil }, nil)
+	poller := service.NewForgePoller(syncer, forge.NewLimiter(1000, 1000, 4), forgeEnabledCfg)
+	poller.SyncNow()
+
+	failure, err := service.GetForgeSyncFailure(repoKey)
+	require.NoError(t, err)
+	assert.Nil(t, failure, "a successful cycle must clear the recorded failure")
 }
 
 // TestForgePoller_SyncNowSurvivesFactoryError verifies a provider-construction

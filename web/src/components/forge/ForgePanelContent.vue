@@ -135,6 +135,17 @@
           </button>
         </PopupMenu>
 
+        <!-- Poll health. A repository whose polling is failing still serves
+             live reads, so without this line the panel looks healthy while
+             event tasks never fire — the failure is otherwise invisible. -->
+        <div v-if="syncError" class="forge-sync-error" role="status">
+          <AlertTriangle :size="14" />
+          <span class="forge-sync-error-text">
+            {{ t('forge.syncError.label', { time: syncErrorTime }) }}
+            <span class="forge-sync-error-reason">{{ syncError }}</span>
+          </span>
+        </div>
+
         <!-- Type switch: page tabs, matching the stats panel tab bar
              (connected rectangular tabs with a bottom accent underline).
              State/mine below are independent filters, so they stay as chips.
@@ -463,7 +474,7 @@ import { useForgeBinding, forgeDockIconKind, forgeTabTitleKey } from '@/composab
 import { forgeBrandIcon } from '@/components/forge/forgeBrandIcon'
 import { useFeatureBackHandler, PRIORITY_PAGE } from '@/composables/useEdgeSwipeBack'
 import { fetchForgeRemotes, setForgeBinding, deleteForgeBinding, markForgeRead, type ForgeRemote, type ForgePipelineRun, type ForgeItem, ForgeApiError } from '@/utils/forgeApi'
-import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
+import { isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl, forgeSyncErrorText } from '@/utils/forgeHost'
 import { useForgeUnread } from '@/composables/useForgeUnread'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion'
 import ActionBar from '@/components/common/ActionBar.vue'
@@ -608,6 +619,22 @@ const repoBadgeRef = ref<HTMLElement | null>(null)
  * so the entry can never lead to a 404.
  */
 const repoWebUrl = computed(() => forgeRepoWebUrl(items.binding.value))
+
+/**
+ * Last recorded poll failure for the bound repository, or null when its last
+ * poll succeeded.
+ *
+ * Surfaced because a broken poll is invisible otherwise: the panel's lists come
+ * from live reads and keep working, so the only symptom is that event-triggered
+ * tasks never fire.
+ */
+const syncError = computed(() => forgeSyncErrorText(items.binding.value) || null)
+const syncErrorTime = computed(() => {
+  const at = items.binding.value?.syncError?.occurredAt
+  if (!at) return ''
+  const d = new Date(at)
+  return Number.isNaN(d.getTime()) ? at : d.toLocaleString()
+})
 
 /** Switch tabs, loading the target view's data on first use. */
 function setActiveTab(key: ForgeTabKey) {
@@ -1190,6 +1217,34 @@ function formatTime(iso: string): string {
   align-items: center;
   justify-content: center;
   transition: background var(--duration-base) ease, color var(--duration-base) ease;
+}
+
+/* ── Sync-failure banner. Amber rather than red: the repository is reachable
+   for live reads, only the background poll is failing, and the consequence is
+   "tasks will not fire" rather than "the panel is broken". ── */
+.forge-sync-error {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(6 * var(--dp));
+  flex-shrink: 0;
+  padding: calc(7 * var(--dp)) calc(12 * var(--dp));
+  background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-yellow) 30%, transparent);
+  color: var(--color-yellow);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+}
+.forge-sync-error > svg {
+  flex-shrink: 0;
+  margin-top: calc(2 * var(--dp));
+}
+.forge-sync-error-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.forge-sync-error-reason {
+  font-family: var(--font-mono, monospace);
+  opacity: 0.85;
 }
 
 /* ── Type tabs — same treatment as the stats panel tab bar (connected

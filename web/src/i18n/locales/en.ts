@@ -516,6 +516,11 @@ export default {
     loading: 'Loading…',
     emptyList: 'No matching issues or PRs',
     emptyListDesc: 'Try another filter, or refresh.',
+    // Shown above the list when this repository's last poll failed. Live reads
+    // keep working during an outage, so this is the only visible symptom.
+    syncError: {
+      label: 'This repository has not synced since {time}, so new activity will not fire tasks. Reason: ',
+    },
     markAllRead: 'Mark all read',
     unreadItem: 'New activity',
     retry: 'Retry',

@@ -515,6 +515,11 @@ export default {
     loading: '加载中…',
     emptyList: '没有匹配的议题 / 合并请求',
     emptyListDesc: '换个筛选条件，或刷新试试。',
+    // Shown above the list when this repository's last poll failed. Live reads
+    // keep working during an outage, so this is the only visible symptom.
+    syncError: {
+      label: '这个仓库自 {time} 起没能同步，这段时间的新动态不会触发任务。原因：',
+    },
     markAllRead: '全部标为已读',
     unreadItem: '有新动态',
     retry: '重试',

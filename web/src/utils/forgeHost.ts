@@ -114,3 +114,18 @@ export function forgeRepoWebUrl(
         .join('/')
     return `${scheme}://${host}/${path}`
 }
+
+/**
+ * forgeSyncErrorText returns the poll-failure message for a binding, or '' when
+ * its last poll succeeded.
+ *
+ * It exists because a broken poll is INVISIBLE by construction: the panel's
+ * lists come from live reads and keep working during an outage, so the only
+ * symptom the user can observe is that event-triggered tasks stop firing. The
+ * cause has to be stated somewhere, and the panel header is where they look.
+ */
+export function forgeSyncErrorText(
+    binding: { syncError?: { error?: string } } | null | undefined,
+): string {
+    return (binding?.syncError?.error ?? '').trim()
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractRemoteHost, isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl } from '@/utils/forgeHost'
+import { extractRemoteHost, isOfficialForgeHost, isNonOfficialRemote, forgeRepoWebUrl, forgeSyncErrorText } from '@/utils/forgeHost'
 
 /**
  * These helpers decide whether the bind dialog warns before sending a
@@ -147,5 +147,22 @@ describe('forgeRepoWebUrl', () => {
     expect(forgeRepoWebUrl({ host: 'github.com', owner: '', repo: 'widgets' })).toBe('')
     expect(forgeRepoWebUrl({ host: 'github.com', owner: 'acme', repo: '' })).toBe('')
     expect(forgeRepoWebUrl({ host: 'github.com', owner: '  ', repo: 'widgets' })).toBe('')
+  })
+})
+
+describe('forgeSyncErrorText', () => {
+  it('returns the recorded failure so the panel can explain a silent outage', () => {
+    // A failing poll is invisible otherwise: live reads keep working, so the
+    // only symptom is that event tasks stop firing.
+    expect(forgeSyncErrorText({ syncError: { error: 'list issue page 1: 502 Bad Gateway' } }))
+      .toBe('list issue page 1: 502 Bad Gateway')
+  })
+
+  it('returns empty after a successful poll', () => {
+    expect(forgeSyncErrorText({})).toBe('')
+    expect(forgeSyncErrorText({ syncError: { error: '' } })).toBe('')
+    expect(forgeSyncErrorText({ syncError: { error: '   ' } })).toBe('')
+    expect(forgeSyncErrorText(null)).toBe('')
+    expect(forgeSyncErrorText(undefined)).toBe('')
   })
 })

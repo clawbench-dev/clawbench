@@ -179,9 +179,19 @@ func (p *ForgePoller) syncAll(opts SyncOptions) {
 			classified := p.limiter.WrapError(pf.Host, err)
 			slog.Warn("forge poller: sync failed",
 				slog.String("repo", key), slog.String("err", classified.Error()))
+			// Record the failure so it is visible outside the server log. A
+			// silently failing poll is indistinguishable from "nothing
+			// happened": the panel keeps serving live reads, so the user sees
+			// their issues while event tasks never fire.
+			RecordForgeSyncFailure(ForgeRepoKey{
+				Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo,
+			}, classified)
 			continue
 		}
 		p.limiter.ObserveSuccess(pf.Host)
+		ClearForgeSyncFailure(ForgeRepoKey{
+			Platform: pf.Platform, Host: pf.Host, Owner: pf.Owner, Repo: pf.Repo,
+		})
 
 		// Drop snapshot rows for items this repo no longer returns. Without
 		// this the forge_items table grows forever, since nothing else deletes

@@ -3,6 +3,7 @@ package service
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 
 	"clawbench/internal/store"
@@ -274,11 +275,91 @@ func GetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType) (time.Time, er
 	return time.Time{}, nil
 }
 
+// ForgeSyncFailure is the recorded outcome of the last FAILED poll of a
+// repository.
+type ForgeSyncFailure struct {
+	// Message is the classified error text shown to the user.
+	Message string
+	// At is when that failure was observed.
+	At time.Time
+}
+
+// RecordForgeSyncFailure stores why a poll failed, so the failure outlives the
+// server log line that recorded it.
+//
+// The row is created on first write: a repository can fail before it ever
+// succeeds (bad token, unreachable host), and that is precisely the case where
+// the user most needs to be told.
+func RecordForgeSyncFailure(repo ForgeRepoKey, err error) {
+	if !store.DBReady() || err == nil {
+		return
+	}
+	if _, werr := store.WriteExec(
+		`INSERT INTO forge_sync_state (platform, host, owner, repo, last_error, last_error_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		 ON CONFLICT(platform, host, owner, repo) DO UPDATE SET
+		   last_error = excluded.last_error,
+		   last_error_at = excluded.last_error_at,
+		   updated_at = CURRENT_TIMESTAMP`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo, err.Error(),
+	); werr != nil {
+		slog.Warn("forge: record sync failure failed", slog.String("err", werr.Error()))
+	}
+}
+
+// ClearForgeSyncFailure drops the recorded failure after a successful poll.
+func ClearForgeSyncFailure(repo ForgeRepoKey) {
+	if !store.DBReady() || !store.ReadDBReady() {
+		return
+	}
+	// Nothing to clear for a repository that never failed, and the UPDATE would
+	// otherwise touch a row that does not exist yet. Cheap enough to check.
+	if f, err := GetForgeSyncFailure(repo); err != nil || f == nil {
+		return
+	}
+	if _, werr := store.WriteExec(
+		`UPDATE forge_sync_state SET last_error = '', last_error_at = NULL, updated_at = CURRENT_TIMESTAMP
+		  WHERE platform = ? AND host = ? AND owner = ? AND repo = ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+	); werr != nil {
+		slog.Warn("forge: clear sync failure failed", slog.String("err", werr.Error()))
+	}
+}
+
+// GetForgeSyncFailure returns the recorded failure for a repository, or nil when
+// the last poll succeeded (or none was ever recorded).
+func GetForgeSyncFailure(repo ForgeRepoKey) (*ForgeSyncFailure, error) {
+	if !store.ReadDBReady() {
+		return nil, nil
+	}
+	var msg string
+	var at sql.NullTime
+	err := store.ReadDB().QueryRow(
+		`SELECT last_error, last_error_at FROM forge_sync_state
+		  WHERE platform = ? AND host = ? AND owner = ? AND repo = ?`,
+		repo.Platform, repo.Host, repo.Owner, repo.Repo,
+	).Scan(&msg, &at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if msg == "" {
+		return nil, nil
+	}
+	return &ForgeSyncFailure{Message: msg, At: at.Time}, nil
+}
+
 // ForgeSyncStateDDL creates the per-repo sync watermark table.
 //
 // One row per repository holding one cursor PER ITEM TYPE. They are separate
 // columns rather than separate rows so the row's identity stays the repository,
 // which is what the ON CONFLICT target and every reader assume.
+//
+// last_error / last_error_at record WHY the most recent poll failed, and are
+// cleared by the next success. They live here rather than in a table of their
+// own because the row's identity is already exactly right: one repository.
 const ForgeSyncStateDDL = `
 CREATE TABLE IF NOT EXISTS forge_sync_state (
 	platform        TEXT NOT NULL,
@@ -287,6 +368,8 @@ CREATE TABLE IF NOT EXISTS forge_sync_state (
 	repo            TEXT NOT NULL,
 	issue_watermark DATETIME,
 	pr_watermark    DATETIME,
+	last_error      TEXT NOT NULL DEFAULT '',
+	last_error_at   DATETIME,
 	updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
 	PRIMARY KEY (platform, host, owner, repo)
 );
