@@ -329,7 +329,11 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		// the summary decide what leaves the context. Only an unknown window
 		// needs the local token budget as a last-resort guard.
 		budget := builtinHistoryFallbackTokens
-		if model.ModelContextWindow(agentModel) > 0 {
+		// The catalog is keyed by the model's own name, not by the provider-
+		// scoped form the picker hands out (issue #753). Looking up the scoped
+		// id would answer "unknown window" and silently fall back to the local
+		// token budget instead of letting the engine compact.
+		if model.ModelContextWindow(model.ProviderModelName(agentModel)) > 0 {
 			budget = 0
 		}
 		req.History = buildBuiltinHistoryWithBudget(sessionID, reqOpts.currentMessageID, prior, budget)

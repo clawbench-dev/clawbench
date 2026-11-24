@@ -244,6 +244,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useToast } from '@/composables/useToast'
 import { formatModelIdForDisplay } from '@/utils/modelDisplay'
+import { bareModelId } from '@/utils/modelSelection'
 import { appLog } from '@/utils/appLog'
 import { store } from '@/stores/app.ts'
 
@@ -519,7 +520,7 @@ async function removeMember(m: GroupMemberInfo) {
 function modelLabel(m: GroupMemberInfo): string {
   const id = m.model || getDefaultModelId(m.agentId)
   if (!id) return t('chat.sessionInfo.default')
-  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(id)
+  return getAgentModel(m.agentId, id)?.name || formatModelIdForDisplay(bareModelId(id))
 }
 
 /** Tooltip: which model, and whether it is the member's own pick or inherited. */

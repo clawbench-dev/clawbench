@@ -81,7 +81,7 @@ interface AgentRecord {
   backend: string
   command?: string
   specialty?: string
-  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }>
+  models?: Array<{ id: string; name: string; default: boolean; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }>
   preferredModel?: string
   thinkingEffort?: string
   thinkingEffortLevels?: string[]
@@ -425,7 +425,7 @@ function getDefaultModelId(agentId: string): string {
 }
 
 /** Get the models list for an agent. */
-function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice; credits?: string }[] {
+function getAgentModels(agentId: string): { id: string; name: string; default: boolean; price?: ModelPrice; credits?: string; provider?: string; providerId?: number }[] {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.models || []
 }
