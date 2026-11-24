@@ -375,7 +375,7 @@ import {
 } from '@/composables/useMeetingViewState'
 import { cleanupDragGhost } from '@/utils/attachDrag'
 import { formatClockTime } from '@/utils/format'
-import { resolveUserNickname } from '@/utils/userNickname'
+import { resolveMeetingAttendeeName } from '@/share/meetingNickname'
 import { meetingDragPayload, startQuoteDrag } from '@/utils/quoteDrag'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { parseVttCues, vttToPlainText, type VttCue } from '@/utils/vtt'
@@ -418,11 +418,13 @@ const { serverConfig } = useSettingsConfig()
 
 /**
  * The record has no "self" flag — it stores the speaker NAME the sender used.
- * Matching it against the local nickname is what puts our own lines on the
- * right, the way every other chat does. No nickname configured means we cannot
- * tell, and then nothing is mirrored rather than guessing wrong.
+ * Matching it against our OWN 参会称呼 is what puts our lines on the right, the
+ * way every other chat does. It must be 参会称呼 and not user.nickname: the
+ * speaker in the record is whichever name the meeting was joined (or hosted)
+ * under. No name configured means we cannot tell, and then nothing is mirrored
+ * rather than guessing wrong.
  */
-const myName = computed(() => resolveUserNickname(serverConfig.value?.user))
+const myName = computed(() => resolveMeetingAttendeeName(serverConfig.value?.meeting))
 
 function isMine(m: MeetingChatMessage): boolean {
   return myName.value !== '' && m.speaker === myName.value

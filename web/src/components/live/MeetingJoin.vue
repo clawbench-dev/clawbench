@@ -43,13 +43,12 @@
 
 <script setup lang="ts">
 /**
- * 加入会议: the user's nickname (required) and a share link.
+ * 加入会议: the user's 参会称呼 (required) and a share link.
  *
- * The nickname is NOT a meeting-local field: it is the account identity
- * (user.nickname), the same value group chat uses. Reading it from the server
- * config and writing it back through the settings API is what makes "one
- * nickname" true — the page used to keep its own localStorage copy, which
- * drifted from the group-chat name and was lost on another device.
+ * 参会称呼 is the MEETING's own name for the user (`meeting.attendee_name`),
+ * stored server-side so it follows the account across devices. It is
+ * deliberately NOT `user.nickname` (how agents address the user in a chat):
+ * editing one never changes the other.
  *
  * The value is still mirrored into localStorage before the link opens, so the
  * share page's gate (which is unauthenticated and cannot read the server
@@ -89,7 +88,7 @@ async function join(): Promise<void> {
     return
   }
   error.value = ''
-  // Editing the name here edits the same setting group chat uses.
+  // Editing the name here edits only 参会称呼; the chat identity is untouched.
   try {
     await persist()
   } catch (e) {

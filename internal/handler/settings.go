@@ -181,6 +181,9 @@ var hotReloadFields = map[string]bool{
 	"ai_summary.provider_id":    true,
 	// Meeting minutes — read at generation time from ConfigInstance, so a
 	// changed default takes effect on the next meeting without a restart.
+	// attendee_name is 参会称呼: read when a meeting starts and when the minutes
+	// name their initiator.
+	"meeting.attendee_name":            true,
 	"meeting.auto_minutes":             true,
 	"meeting.proofread":                true,
 	"meeting.language":                 true,
@@ -726,6 +729,10 @@ type configAISummary struct {
 // no model fields on purpose: minutes reuse the shared ai_summary model — unless
 // AgentMinutes is on, in which case they run on the built-in agent.
 type configMeeting struct {
+	// AttendeeName is 参会称呼: the name a meeting shows for the user. It is
+	// separate from user.nickname (how agents address the user) on purpose —
+	// editing one never changes the other.
+	AttendeeName     string `json:"attendee_name"`
 	AutoMinutes      bool   `json:"auto_minutes"`
 	Proofread        bool   `json:"proofread"`
 	Language         string `json:"language"`
@@ -1284,6 +1291,7 @@ var PatchableConfigPaths = map[string]bool{
 	"summarize.auto_junk_ratio":              true,
 	"ai_summary.model":                       true,
 	"ai_summary.provider_id":                 true,
+	"meeting.attendee_name":                  true,
 	"meeting.auto_minutes":                   true,
 	"meeting.proofread":                      true,
 	"meeting.language":                       true,
@@ -1611,6 +1619,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Model:      cfg.AISummary.Model,
 		},
 		Meeting: configMeeting{
+			AttendeeName:     cfg.Meeting.AttendeeName,
 			AutoMinutes:      cfg.Meeting.AutoMinutes,
 			Proofread:        cfg.Meeting.Proofread,
 			Language:         cfg.Meeting.Language,
@@ -2147,6 +2156,23 @@ func validUserNickname(s string) bool {
 	return true
 }
 
+// validMeetingAttendeeName reports whether s is a usable 参会称呼. An EMPTY
+// value is valid: it means "not configured". The value is rendered verbatim as
+// a member-list row and as the speaker of a transcript line, so control
+// characters are rejected; every other character is allowed, because this name
+// never enters the group-routing protocol.
+func validMeetingAttendeeName(s string) bool {
+	if utf8.RuneCountInString(strings.TrimSpace(s)) > model.MaxMeetingAttendeeRunes {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
 // validUserProfile reports whether s fits the prompt-injection budget. The
 // profile is optional, so an empty value is valid.
 func validUserProfile(s string) bool {
@@ -2399,6 +2425,22 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 	if meeting, ok := patch["meeting"].(map[string]any); ok {
+		// 参会称呼: an empty value means "not configured" (the UI applies its own
+		// fallback). Anything else must survive being written verbatim into the
+		// member list, a transcript label and chat.md, so control characters are
+		// refused — a newline there forges an extra line in a document that is
+		// later read as the record of the meeting. Unlike user.nickname, the
+		// group-routing delimiters and agent-name uniqueness do not apply: a
+		// meeting name is only ever read.
+		if v, ok := meeting["attendee_name"].(string); ok {
+			if !validMeetingAttendeeName(v) {
+				return &configValueError{
+					MsgKey: "InvalidMeetingAttendeeName",
+					Field:  "meeting.attendee_name",
+					Data:   map[string]any{"Max": model.MaxMeetingAttendeeRunes},
+				}
+			}
+		}
 		// Empty means "follow the transcript"; anything else must be a locale
 		// the prompt builder knows how to instruct the model in.
 		if v, ok := meeting["language"].(string); ok && v != "" && v != "zh" && v != "en" {
@@ -3453,6 +3495,11 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if meeting, ok := patch["meeting"].(map[string]any); ok {
+		if v, ok := meeting["attendee_name"].(string); ok {
+			// Sanitized like the value the live-share room itself applies, so
+			// the stored name and the name a viewer sees are the same string.
+			cfg.Meeting.AttendeeName = model.SanitizeMeetingAttendeeName(v)
+		}
 		if v, ok := meeting["auto_minutes"].(bool); ok {
 			cfg.Meeting.AutoMinutes = v
 		}

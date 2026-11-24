@@ -89,6 +89,9 @@ describe('settingsFieldMap', () => {
       .map(e => (e as { spec: { key: string } }).spec.key)
 
     expect(keys).toEqual([
+      // 参会称呼 leads the page: it is the meeting's OWN name for the user, not
+      // the chat nickname in 设置 → 身份.
+      'meeting.attendee_name',
       'summaryModel',
       'meeting.auto_minutes',
       'meeting.proofread',

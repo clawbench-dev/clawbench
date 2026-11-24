@@ -15,6 +15,11 @@ export const category = 'meeting'
  * plugin graph.
  */
 export default [
+    // 参会称呼. Its own section, FIRST on the page: it is the one field here
+    // that every meeting uses (it names you in the member list, the transcript
+    // and the chat), and it is deliberately independent of
+    // 设置 → 身份 → 我的称谓, which is how agents address you in a chat.
+    { type: 'item', spec: { labelKey: 'settings.items.meetingAttendeeName', descriptionKey: 'settings.items.meetingAttendeeNameDesc', key: 'meeting.attendee_name', type: 'text', source: 'server', maxLength: 32, sectionHeader: 'settings.items.meetingAttendeeSection' } },
     // AI 纪要. The model row reuses the shared ai_summary config on purpose:
     // meeting minutes, proofreading, auto-title, voice summary, recommendations,
     // session auto-title and /btw all share one model, so a meeting-specific

@@ -832,6 +832,8 @@ const serverDefaults: Record<string, unknown> = {
   'ai_summary.provider_id': 0,
   // Mirrors model.ApplyDefaults: the three switches default ON, the language
   // follows the transcript, and the cap matches the backend constant.
+  // 参会称呼 is empty = not configured (an empty field, not a shared "User").
+  'meeting.attendee_name': '',
   'meeting.auto_minutes': true,
   'meeting.proofread': true,
   'meeting.language': '',

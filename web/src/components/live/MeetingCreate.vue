@@ -39,10 +39,11 @@
           @keydown.enter="start"
         />
 
-        <!-- Identity second, and the only required field. Pre-filled from the
-             account nickname when set, but the host may use a different name for
-             this meeting. Empty is a blocked state, not a silent one: the hint
-             under the field says why the footer button is disabled. -->
+        <!-- Identity second, and the only required field. Pre-filled from
+             参会称呼 (meeting.attendee_name) when set — NOT from the account
+             nickname agents use in a chat; the two are independent. Empty is a
+             blocked state, not a silent one: the hint under the field says why
+             the footer button is disabled. -->
         <div class="meeting-section">{{ t('meeting.join.nick') }}</div>
         <input
           v-model="nickname"
@@ -564,10 +565,10 @@ async function start(): Promise<void> {
   if (!canStart.value) return
   starting.value = true
   try {
-    // The nickname is the account identity (user.nickname), not a per-meeting
-    // field: persist an edit before the room exists, so the name viewers see in
-    // chat is the one saved here. A rejected name (e.g. collides with an agent)
-    // must stop the meeting rather than start it under a different label.
+    // 参会称呼 (meeting.attendee_name), persisted before the room exists so the
+    // name viewers see in chat is the one saved here. It never touches
+    // user.nickname. A rejected name must stop the meeting rather than start it
+    // under a different label.
     try {
       await persist()
     } catch (e) {

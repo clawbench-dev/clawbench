@@ -1,24 +1,25 @@
 import { computed, ref } from 'vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { readMeetingNick } from '@/share/meetingNickname'
-import { resolveUserNickname } from '@/utils/userNickname'
+import { readMeetingNick, resolveMeetingAttendeeName } from '@/share/meetingNickname'
 
 /**
- * The nickname shared by both meeting entry points (创建 and 加入).
+ * 参会称呼 — the name shared by both meeting entry points (创建 and 加入).
  *
- * Single source: the account's `user.nickname`. The fallback literal counts as
- * "not configured", so the field starts empty and the user must choose a real
- * name — otherwise every unconfigured account would enter as "User" and be
- * indistinguishable in the publisher's audience list.
+ * Single source: `meeting.attendee_name`. It is deliberately SEPARATE from
+ * `user.nickname` (how agents address you in a chat): editing one here never
+ * changes the other, and the group-chat name is not even used as a fallback.
+ * The fallback literal counts as "not configured", so the field starts empty
+ * and the user must choose a real name — otherwise every unconfigured account
+ * would enter as "User" and be indistinguishable in the audience list.
  *
  * Edits stay local until `persist()` runs on submit, so typing does not PATCH
- * the account on every keystroke. The device's remembered guest name is the
+ * the server on every keystroke. The device's remembered guest name is the
  * last fallback: a returning user should not have to retype it.
  */
 export function useMeetingNickname() {
   const { serverConfig, setServerValue } = useSettingsConfig()
 
-  const configured = computed(() => resolveUserNickname(serverConfig.value?.user))
+  const configured = computed(() => resolveMeetingAttendeeName(serverConfig.value?.meeting))
   const edited = ref<string | null>(null)
   const nickname = computed({
     get: () => edited.value ?? (configured.value || readMeetingNick()),
@@ -27,11 +28,11 @@ export function useMeetingNickname() {
     },
   })
 
-  /** Save the typed name to the account. No-op when unchanged or empty. */
+  /** Save the typed name to meeting.attendee_name. No-op when unchanged or empty. */
   async function persist(): Promise<void> {
     const nick = nickname.value.trim()
     if (!nick || nick === configured.value) return
-    await setServerValue('user.nickname', nick)
+    await setServerValue('meeting.attendee_name', nick)
     edited.value = nick
   }
 

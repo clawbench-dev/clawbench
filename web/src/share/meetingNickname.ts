@@ -22,6 +22,24 @@ export const MEETING_NICK_KEY = 'clawbench_meeting_nick'
 export const MEETING_NICK_MAX = 32
 
 /**
+ * Resolve 参会称呼 from the `meeting` config section.
+ *
+ * This is the meeting's OWN name for the user — independent of
+ * `user.nickname` (the name agents address you by). Neither reads or writes the
+ * other. An empty value means "not configured": the fallback literal counts as
+ * unset for the same reason as `resolveUserNickname` below, or every
+ * unconfigured account would enter as "User" and be indistinguishable in the
+ * publisher's audience list.
+ */
+export function resolveMeetingAttendeeName(meeting: unknown): string {
+  const v = meeting && typeof meeting === 'object'
+    ? (meeting as Record<string, unknown>).attendee_name
+    : undefined
+  const name = typeof v === 'string' ? v.trim() : ''
+  return name === GROUP_USER_TARGET_NAME ? '' : name
+}
+
+/**
  * Read the remembered nickname, or '' when storage is unavailable.
  *
  * A remembered value equal to the fallback literal is treated as unset: that
