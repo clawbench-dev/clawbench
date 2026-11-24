@@ -15,6 +15,18 @@ import (
 	"clawbench/internal/platform"
 )
 
+// The few OS calls this command depends on are indirected here so the
+// install/uninstall/status flows can be exercised without root, without a real
+// systemd and without touching /etc. Same idea as runCommand and
+// findStableEntry below.
+var (
+	geteuid                  = os.Geteuid
+	executablePath           = os.Executable
+	userHomeDir              = os.UserHomeDir
+	serviceStdin   io.Reader = os.Stdin
+	isContainer              = platform.IsContainer
+)
+
 // RunServiceCommand handles the "clawbench service" subcommand.
 //
 // Everything here is done by running systemctl and writing a unit file — there
@@ -254,7 +266,7 @@ func resolveServiceBinary(args []string) (exe, stableEntry string, code int) {
 			overrideBin = strings.TrimPrefix(args[i], "--binary=")
 		}
 	}
-	exe, err := os.Executable()
+	exe, err := executablePath()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "读不到当前程序路径: %v\n", err)
 		return "", "", 1
@@ -313,7 +325,7 @@ func pickServiceScope(isRoot bool) (system bool, code int) {
 
 // resolveServiceIdentity answers which HOME and User= the unit gets.
 func resolveServiceIdentity(system bool) (home, user string, code int) {
-	home, homeErr := os.UserHomeDir()
+	home, homeErr := userHomeDir()
 	if homeErr != nil || home == "" {
 		fmt.Fprintln(os.Stderr, "读不到 HOME，无法写服务文件。")
 		return "", "", 1
@@ -344,12 +356,12 @@ func runServiceInstall(args []string) int {
 	}
 	dataDir := model.DataDir
 	if dataDir == "" {
-		home, _ := os.UserHomeDir()
+		home, _ := userHomeDir()
 		dataDir = filepath.Join(home, ".clawbench")
 	}
-	isRoot := os.Geteuid() == 0
+	isRoot := geteuid() == 0
 
-	exeResolved, outcome := decideServiceInstall(exe, stableEntry, platform.IsContainer(), model.ManagedByEmbedder)
+	exeResolved, outcome := decideServiceInstall(exe, stableEntry, isContainer(), model.ManagedByEmbedder)
 	if !outcome.ok {
 		fmt.Fprintln(os.Stderr, "无法注册为服务：")
 		fmt.Fprintln(os.Stderr, outcome.reason)
@@ -419,7 +431,7 @@ func runServiceInstall(args []string) int {
 func enableServiceUnit(system bool) int {
 	prefix := []string{}
 	if system {
-		if os.Geteuid() != 0 {
+		if geteuid() != 0 {
 			// 用户选了系统级但不是 root：只能靠 sudo，而 sudo 需要密码，
 			// 本进程没有终端密码框。把命令交出去，让用户自己执行。
 			fmt.Println()
@@ -442,12 +454,12 @@ func enableServiceUnit(system bool) int {
 
 func runServiceUninstall() int {
 	system := false
-	if os.Geteuid() == 0 {
+	if geteuid() == 0 {
 		system = true
 	} else if _, err := os.Stat("/etc/systemd/system/" + serviceUnitName); err == nil {
 		system = true
 	}
-	home, _ := os.UserHomeDir()
+	home, _ := userHomeDir()
 	unitPath := filepath.Join(home, ".config", "systemd", "user", serviceUnitName)
 	prefix := []string{"--user"}
 	if system {
@@ -469,7 +481,7 @@ func runServiceUninstall() int {
 }
 
 func runServiceStatus() int {
-	home, _ := os.UserHomeDir()
+	home, _ := userHomeDir()
 	found := false
 	for _, u := range []struct {
 		label    string
@@ -530,7 +542,7 @@ func promptBool(question string, def bool) bool {
 		defText = "y/N"
 	}
 	fmt.Printf("%s [%s] ", question, defText)
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	line, err := bufio.NewReader(serviceStdin).ReadString('\n')
 	if err != nil && err != io.EOF {
 		return def
 	}

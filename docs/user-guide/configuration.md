@@ -351,6 +351,7 @@
 | `insecure_tls` | `false` | 跳过 TLS 校验，自建实例用自签证书时才开 |
 | `notify.opened` / `closed` / `merged` / `reopened` / `commented` / `pipeline` | 全 `true` | 哪几类事件要推送。**不影响未读角标**（角标记的是变化，不是通知） |
 | `pause_event_tasks` | `false` | 临时停掉所有事件触发的任务。事件照常通知，只是不跑任务 |
+| `allow_self_authored_events` | `false` | 让自己账号发起的操作也能触发任务。默认关，因为 AI 自己写的东西会再触发同一个 AI，可能无限循环；你确实要用自己的账号驱动自动化时才开 |
 
 > 界面入口：设置 → 代码托管集成。令牌只写不回显，界面只告诉你「已配置」。自建 Gitea / Forgejo 要在「平台」里明确选，否则按 GitLab 对待。
 

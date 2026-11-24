@@ -65,11 +65,13 @@ describe('session settings drawer: default badge is right-aligned in every tab',
     expect(modelItem, 'model tab must use the shared ModelRow').toContain('<ModelRow')
     // The default badge / star are direct children of `.model-item`, after the
     // ModelRow element (which is self-closing, so they are not its slot content).
+    // The model tab renders grouped rows, so the fields are reached through
+    // `row.m` — the guard is about nesting, not about the variable's name.
     expect(modelItem, 'default badge must be a direct child of the row').toMatch(
-      /<ModelRow[^>]*\/>\s*<span v-if="m\.id === defaultModelId" class="default-label">/,
+      /<ModelRow[^>]*\/>\s*<span v-if="row\.m\.id === defaultModelId" class="default-label">/,
     )
     expect(modelItem, 'set-default star must be a direct child of the row').toMatch(
-      /<button v-if="m\.id !== defaultModelId" class="set-default-btn"/,
+      /<button v-if="row\.m\.id !== defaultModelId" class="set-default-btn"/,
     )
   })
 })
