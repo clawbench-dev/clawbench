@@ -1,12 +1,13 @@
 package qodercn
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"clawbench/internal/ai/backends"
-	"clawbench/internal/model"
+	// Blank import for its init(): two tests below compare the CN spec
+	// against the international build, which only exists once that package
+	// registers itself.
+	_ "clawbench/internal/ai/backends/qoder"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,94 +93,4 @@ func TestQoderCNBackendPlugin_DeclaresCNSkillsDirs(t *testing.T) {
 
 	assert.True(t, plugin.Spec.AutoLoadsNativeSkills)
 	assert.Equal(t, []string{".qoder-cn/skills", ".agents/skills"}, plugin.Spec.NativeSkillsDirs)
-}
-
-// --- CLI backend ---
-
-// --- Model discovery ---
-
-// discoveryConfigRoot points the CN discovery at a temp dir by overriding HOME
-// (the root is "~/.qoder-cn").
-func withTempHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	return home
-}
-
-func writeCNTexts(t *testing.T, home, payload string) {
-	t.Helper()
-	dir := filepath.Join(home, ".qoder-cn", ".auth")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "dynamic-texts.json"), []byte(payload), 0o600))
-}
-
-// The CN catalog must be read from ~/.qoder-cn, NOT ~/.qoder. Both files are
-// written here with different model sets so the test distinguishes them.
-func TestQoderCNDiscovery_ReadsCNRootOnly(t *testing.T) {
-	home := withTempHome(t)
-
-	writeCNTexts(t, home, `{"schemaVersion":3,"locales":{"en":{
-		"modelSelector.item.cnmodel":"CN Model"
-	}}}`)
-
-	intlDir := filepath.Join(home, ".qoder", ".auth")
-	require.NoError(t, os.MkdirAll(intlDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(intlDir, "dynamic-texts.json"),
-		[]byte(`{"schemaVersion":3,"locales":{"en":{"modelSelector.item.intlmodel":"Intl Model"}}}`), 0o600))
-
-	src, ok := model.LookupModelSource("qodercn")
-	require.True(t, ok, "qodercn must register a model source")
-	require.Equal(t, model.SourceKindPlugin, src.Kind())
-
-	models, detail := src.Discover()
-	assert.Empty(t, detail)
-	require.Len(t, models, 1)
-	assert.Equal(t, "cnmodel", models[0].ID, "must read the CN catalog, not the international one")
-	assert.Equal(t, "CN Model", models[0].Name)
-}
-
-func TestQoderCNDiscovery_MissingFileNamesCNPath(t *testing.T) {
-	home := withTempHome(t)
-
-	src, ok := model.LookupModelSource("qodercn")
-	require.True(t, ok)
-	models, detail := src.Discover()
-
-	assert.Nil(t, models)
-	assert.Contains(t, detail, ".qoder-cn", "the reason must name the CN config root")
-	assert.Contains(t, detail, "not found")
-	assert.Contains(t, detail, "qodercn", "the reason must name the CN CLI so the user runs the right login")
-	_ = home
-}
-
-// A schemaVersion 3 file (locales.<lang>) must parse — the pre-fix parser only
-// read the legacy top-level "texts" key and reported "contains no texts"
-// against every real install.
-func TestQoderCNDiscovery_ParsesCurrentLocaleSchema(t *testing.T) {
-	home := withTempHome(t)
-	writeCNTexts(t, home, `{
-		"schemaVersion": 3,
-		"version": "1.0.320",
-		"namespace": "qoder-ide",
-		"locales": {
-			"en": {
-				"modelSelector.item.qmodel": "Qwen3.7-Plus",
-				"modelSelector.item.qmodel.description": "desc",
-				"modelSelector.item.auto": "Auto",
-				"modelSelector.item.experts-auto": "Auto",
-				"modelSelector.item.qmodel_preview": "Preview",
-				"modelSelector.item.kmodel.functionSwitch.highspeed.description": "6x speed"
-			},
-			"zh-CN": { "modelSelector.item.qmodel": "通义千问" }
-		}
-	}`)
-
-	src, _ := model.LookupModelSource("qodercn")
-	models, detail := src.Discover()
-	assert.Empty(t, detail)
-	require.Len(t, models, 1, "tier aliases, experts entries, previews and metadata must be filtered out")
-	assert.Equal(t, "qmodel", models[0].ID)
-	assert.Equal(t, "Qwen3.7-Plus", models[0].Name, "English locale wins when present")
 }

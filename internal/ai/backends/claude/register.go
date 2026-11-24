@@ -40,8 +40,13 @@ func init() {
 			ParseToolCallUpdate: ParseACPToolCallUpdate,
 			ExtractMeta:         ExtractMeta,
 		},
-		ModelSource: model.PluginSource("claude", discoverClaudeModels),
-		MidTurn:     midTurn,
+		// No ModelSource: the only local source was string-scanning the claude
+		// binary, which finds nothing on stripped builds and otherwise yields a
+		// stale list. The ACP adapter is the authority for this backend — it
+		// reports tier aliases, and model.ResolveModels turns them into the
+		// models the runtime actually offers. The picker is empty (with a
+		// refresh button) until the agent first answers.
+		MidTurn: midTurn,
 		// Only reached when the CLAWBENCH_CHILD marker is unreadable.
 		OrphanCmdline: ai.OrphanCmdlinePattern{Binary: "claude", Arg: "--acp"},
 		ProviderEnv: &model.ProviderEnvSpec{

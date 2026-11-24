@@ -25,12 +25,16 @@ func TestCapabilities_RepresentativeBackends(t *testing.T) {
 		{
 			// ACP + mid-turn steering; the endpoint is delivered through both
 			// env variables and a private settings.json.
+			//
+			// HasModelSource is false on purpose: the only local source was
+			// string-scanning the claude binary, which was removed. Its ACP
+			// adapter is the authority for the model list.
 			backend: "claude",
 			want: model.BackendCapabilities{
 				HasACP:               true,
 				SupportsMidTurn:      true,
 				MidTurnSplitsReply:   false,
-				HasModelSource:       true,
+				HasModelSource:       false,
 				CanBindProvider:      true,
 				ProviderProtocols:    []string{model.ProviderProtocolAnthropic},
 				ProviderMethods:      []string{model.ProviderMethodEnv, model.ProviderMethodConfigDir},
