@@ -3,6 +3,7 @@ package codex
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"clawbench/internal/model"
@@ -119,10 +120,16 @@ func TestCodexSource_MarksDefaultAtTheBoundary(t *testing.T) {
 }
 
 // mockCodexOnPath puts an executable named codex on PATH without the vendor/
-// tree the removed binary scan used to look for.
+// tree the removed binary scan used to look for. The name has to be the OS's
+// own spelling: `exec.LookPath` consults PATHEXT on Windows, so a bare `codex`
+// file there is invisible and the "CLI not found" branch would answer instead.
 func mockCodexOnPath(t *testing.T) {
 	t.Helper()
 	binDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	name, body := "codex", "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		name, body = "codex.bat", "@echo off\r\nexit /b 0\r\n"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755))
 	t.Setenv("PATH", binDir)
 }
