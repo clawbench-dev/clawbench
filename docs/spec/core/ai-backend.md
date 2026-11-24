@@ -184,6 +184,7 @@ sequenceDiagram
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent。自动发现只更新基础设施字段（`acp_command`），用户自定义的 `name`、`command` 不被覆盖。ACP 相关字段（`acp_command`、可用模式、思考深度、命令等）持久化在 `agents` 表中，重启后无需重新发现；`transport` 不落库，由命令推导
 - **ListSessions 使用磁盘回退而非降级**：磁盘扫描不是降级，而是补充——ACP 协议的 `session/list` 是可选能力，后端可以不实现，磁盘扫描保证功能完整性
 - **CodeBuddy MCP 注入是两条路，不是一条**：协议字段可用后仍保留 `--mcp-config`，理由不是技术债而是用户数据——`.mcp.json` 里已有用户自己配的服务。以「全局列表为空」为切换条件，让老用户不动配置就继续能用，新用户在 ClawBench 里配了就统一走协议字段，不会出现两个来源同时生效。
+- **CodeBuddy 的模型列表只有两个来源，其余一律不用**：① 运行缓存 `~/.codebuddy/local_storage/*.info`（CLI 按本账号的 deployment 从服务器拉下后写盘，base64(gzip(JSON))，多条时取根配置优先、同组取最新日期）；② ACP 自报（见 `model.ResolveModels`，成员资格以它为准，命中时缓存那份被它过滤）。曾经还有安装包自带的 `product.*.json` 与 `ACC_PRODUCT_CONFIG*` 环境变量两条兜底，**已整体删除**：前者是出厂默认值，与账号的实际可用模型可以完全不相交（issue #539）；后者只服务于企业部署的参数注入。删掉它们的代价是**全新安装、CLI 从未登录时列表为空**——这是刻意的，空列表配「点刷新」比一份对不上账号的假列表诚实。裸 `codebuddy` 的 `--help` 文本解析同样不再使用。`discovery_test.go` 里有两条测试专门钉住「这两条来源即使存在也绝不使用」，别再加回来
 - **CodeBuddy Plugin Skills 竞态是 ACP 协议的时序问题**：ACP NewSession 时 Agent 尚未完成初始化，后续的 `AvailableCommandsUpdate` 才包含完整命令——这不是 CodeBuddy 的 bug，而是 ACP 单次握手模型与异步初始化的固有矛盾。预扫描 + 延迟重发是在协议约束下的务实补偿
 
 ### 后端专属点归谁：插件表与钩子集合

@@ -471,6 +471,49 @@ describe('SessionDrawer', () => {
     expect(wrapper.find('.model-empty').text()).toContain('chat.sessionSetting.noModels')
   })
 
+  // A fresh CodeBuddy install has no runtime cache until the CLI has signed in
+  // once, so the picker is empty and the refresh is the ONLY way out. The empty
+  // state therefore carries the button itself instead of a sentence pointing at
+  // the header.
+  it('offers the refresh button inside the empty state when the agent can refresh', () => {
+    // Empty the list for an agent that CAN refresh: this is the CodeBuddy
+    // first-install shape (no runtime cache, so discovery finds nothing).
+    const claude = mockAgents.agents.value.find(a => a.id === 'claude')!
+    const saved = claude.models
+    claude.models = []
+    try {
+      const wrapper = mountDrawer({ agentId: 'claude' })
+      const empty = wrapper.find('.model-empty')
+      expect(empty.exists()).toBe(true)
+      expect(empty.find('.model-empty-refresh').exists()).toBe(true)
+      expect(empty.text()).toContain('chat.sessionSetting.noModels')
+    } finally {
+      claude.models = saved
+    }
+  })
+
+  it('empty-state refresh button triggers the same refresh as the header', async () => {
+    const claude = mockAgents.agents.value.find(a => a.id === 'claude')!
+    const saved = claude.models
+    claude.models = []
+    try {
+      const wrapper = mountDrawer({ agentId: 'claude' })
+      await wrapper.find('.model-empty-refresh').trigger('click')
+      await new Promise(r => setTimeout(r, 10))
+      expect(apiPost).toHaveBeenCalledWith('/api/agents/claude/refresh-models', {}, { timeoutMs: 180000 })
+    } finally {
+      claude.models = saved
+    }
+  })
+
+  it('does not offer the empty-state refresh for an agent that cannot refresh', () => {
+    const wrapper = mountDrawer({ agentId: 'kimi' })
+    const empty = wrapper.find('.model-empty')
+    expect(empty.exists()).toBe(true)
+    expect(empty.find('.model-empty-refresh').exists()).toBe(false)
+    expect(empty.text()).toContain('chat.sessionSetting.noModels')
+  })
+
   // --- Close drawer ---
 
   it('emits close when close is triggered', async () => {

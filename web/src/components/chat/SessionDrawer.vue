@@ -113,7 +113,23 @@
           <div v-if="idx < filteredModels.length - 1" class="model-divider"></div>
         </div>
         <div v-if="filteredModels.length === 0" class="model-empty">
-          {{ searchQuery ? t('chat.sessionSetting.noSearchResults') : t('chat.sessionSetting.noModels') }}
+          <!-- No models and not searching: the list is simply unknown yet (a
+               fresh CodeBuddy install has no runtime cache until the CLI has
+               signed in once). The only useful action is the refresh in the
+               header, so the empty state IS that button rather than a sentence
+               telling the user to go find it. -->
+          <RefreshButton
+            v-if="!searchQuery && canRefresh"
+            class="model-empty-refresh"
+            :loading="refreshing"
+            :disabled="refreshing"
+            :title="t('chat.sessionSetting.refresh')"
+            @click.stop="handleRefresh"
+          />
+          <span v-if="!searchQuery && canRefresh">{{ t('chat.sessionSetting.noModels') }}</span>
+          <template v-if="searchQuery || !canRefresh">
+            {{ searchQuery ? t('chat.sessionSetting.noSearchResults') : t('chat.sessionSetting.noModels') }}
+          </template>
         </div>
       </div>
     </div>
@@ -1352,6 +1368,33 @@ defineExpose({
   text-align: center;
   color: var(--text-muted, #999);
   font-size: var(--font-size-md);
+}
+
+/* The empty state's refresh affordance. Sized as a real target rather than a
+   24dp header icon: it is the ONLY way out of an empty picker, so it must be
+   comfortable to hit on a phone. */
+.model-empty-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(36 * var(--dp));
+  height: calc(36 * var(--dp));
+  margin: 0 auto calc(8 * var(--dp));
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: var(--radius-sm, 6px);
+  background: none;
+  color: var(--accent-color, #0066cc);
+  cursor: pointer;
+  transition: background var(--duration-base);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.model-empty-refresh:hover {
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 8%, transparent);
+}
+
+.model-empty > span {
+  display: block;
 }
 
 .tab-empty-hint {
