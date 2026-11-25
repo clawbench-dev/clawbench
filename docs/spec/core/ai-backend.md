@@ -1,6 +1,6 @@
 # AI 后端抽象
 
-ClawBench 支持多种 AI 工具，每种工具的调用方式、输出格式各不相同。AI 后端抽象层将这种差异封装为统一的 `AIBackend` 接口——handler 只需调用 `ExecuteStream()`，不关心背后是 Claude 还是 Kimi。只有一种传输模式：ACP stdio（Agent Client Protocol，通过 JSON-RPC 双向通信，提供模式切换、斜杠命令和权限管理等结构化能力）。每个会启动外部进程的后端都必须声明 `AcpCommand`；唯一的例外是内置智能体，它在本进程内实现（`BackendPlugin.Implementation`），不走任何子进程。历史上的 CLI shell-out 传输（自己解析 stdout 的 stream-json）已整体移除：支持 ACP 的智能体不再提供 CLI 通道，也不再保留对应的解析器、参数构造与前端传输切换。两个只跑通过 CLI 的后端（vecli、copilot）随之移除，升级时连同它们的智能体一起删除。每个后端在 `BackendRegistry` 中声明规格（二进制名、ACP 命令），ACP 连接由共享的 `ACPBackend` 承载；**模型发现不再属于后端规格**，而是各后端注册一个独立的 `ModelSource`（见[配置与自动发现](../infra/config-and-discovery.md)）。传输选择在 factory 层决定（有 ACP 命令就走 ACP），调用方完全透明；`Transport` 列由命令推导，仅供客户端区分「ACP 智能体」与「进程内智能体」。
+ClawBench 支持多种 AI 工具，每种工具的调用方式、输出格式各不相同。AI 后端抽象层将这种差异封装为统一的 `AIBackend` 接口——handler 只需调用 `ExecuteStream()`，不关心背后是 Claude 还是 Kimi。只有一种传输模式：ACP stdio（Agent Client Protocol，通过 JSON-RPC 双向通信，提供模式切换、斜杠命令和权限管理等结构化能力）。每个会启动外部进程的后端都必须声明 `AcpCommand`；唯一的例外是内置智能体，它在本进程内实现（`BackendPlugin.Implementation`），不走任何子进程。历史上的 CLI shell-out 传输（自己解析 stdout 的 stream-json）已整体移除：支持 ACP 的智能体不再提供 CLI 通道，也不再保留对应的解析器、参数构造与前端传输切换。只跑通过 CLI 的后端 vecli 随之移除（对应的清理迁移也已删除，老库里残留的 vecli 智能体不会自动消失，需要手动删除）；copilot 后来以 `copilot --acp` 重新接入。每个后端在 `BackendRegistry` 中声明规格（二进制名、ACP 命令），ACP 连接由共享的 `ACPBackend` 承载；**模型发现不再属于后端规格**，而是各后端注册一个独立的 `ModelSource`（见[配置与自动发现](../infra/config-and-discovery.md)）。传输选择在 factory 层决定（有 ACP 命令就走 ACP），调用方完全透明；`Transport` 列由命令推导，仅供客户端区分「ACP 智能体」与「进程内智能体」。
 
 ## ACP 后台任务与自动续答
 

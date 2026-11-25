@@ -177,3 +177,14 @@ OPENAI_API_KEY=dummy  OPENAI_BASE_URL=http://127.0.0.1:18081/v1  OPENAI_MODEL=te
 - 每轮结束 `session/prompt` 返回 `{"stopReason":"end_turn","_meta":{"qwen.branchPoint":{...}}}`。
 - 默认模式 `auto`（LLM 分类自动批准），与 ClawBench 的权限卡片是两套机制；权限请求未在本次
   探测中出现（假端点不触发工具执行链的授权）。
+
+## 实跑（2026-11-24，真实模型）
+
+用 MiniMax 的 OpenAI 兼容端点跑通一整轮（`OPENAI_BASE_URL=https://api.minimax.cn/v1`、
+`OPENAI_API_KEY=<MiniMax token>`、`OPENAI_MODEL=MiniMax-M3.1-Flash`）：
+
+`session/new` → `session/prompt` → 模型调 `run_shell_command`（工具输出含 `CLAWBENCH_QWEN_OK`）
+→ `agent_message_chunk` 回 `DONE` → `stopReason:"end_turn"`。
+
+工具帧形状与 §3 一致：起手 `tool_call` 只有 `_meta.toolName`、`rawInput:{}`，参数在随后的
+`tool_call_update` 才到。说明本后端自定义的 update 解析器在真实流量下也生效。

@@ -142,5 +142,15 @@ tool_call_update   {… rawInput:{"command":"echo done","description":"Echo done
 - 未验证 `session/set_model`、`session/set_config_option(model)` 的取值形式（编码 id）；切换模型依赖 config option 通道。
 - 未验证 `session/load` / `session/resume` 的恢复：能力位都广告了，但未在进程重启后实测。
 - 未验证图片输入（`promptCapabilities.image = true` 已广告）。
-- `~/.minimax/skills` 确实是它的技能目录，但整个数据目录可被 `MINIMAX_DATA_DIR` 重定位，
-  所以 `NativeSkillsDirs`（家目录相对）**没有声明**。
+- `~/.minimax/skills` 确实是它的技能目录（bundle 里按 `<home>/.minimax/skills` 解析），
+  且用户自己的技能会出现在 `availableCommands` 里，因此声明
+  `NativeSkillsDirs: [".minimax/skills"]` + `AutoLoadsNativeSkills: true`。
+  `MINIMAX_DATA_DIR` 能整体重定位时这条声明会指向默认位置——与 pi（`PI_CODING_AGENT_DIR`）
+  同一取舍：默认安装占绝大多数，先按默认目录声明，避免重复注入。
+
+## 实跑（2026-11-24，真实模型）
+
+先用 `mcode provider add --name … --base-url https://api.minimax.cn/v1 --api-format
+openai-completions --model MiniMax-M3.1-Flash --api-key-env MINIMAX_API_KEY --use` 配好提供商，
+再跑 `mcode acp` 一整轮：模型调 `bash`（输出含 `CLAWBENCH_MCODE_OK`）、回 `DONE`、
+`stopReason:"end_turn"`，`_meta` 里带 provider/model/usage（`providerId=custom_provider:…`）。

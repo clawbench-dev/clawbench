@@ -22,6 +22,9 @@
 ## 2. 登录门禁
 
 - 未登录：`session/new` → `-32000 "Authentication required: Call authenticate before starting a session"`。
+- 带一个非 Cline 的 key（实测：`CLINE_API_KEY` 设为 MiniMax token）：门禁放行、`session/new` **能建成功**，
+  但第一轮 prompt 仍回 `-32000 "Unauthorized: … re-authenticate your Cline account"`。所以「能建会话」
+  不等于「能跑」，BYOK 依然无效——这也是 `ProviderEnv` 留空表的直接证据。
 - 门禁判定在 CLI 里写作 `if(!this.authResult && !process.env.CLINE_API_KEY)`，`authResult` 由
   `tryRestoreAuth()` 从 `settings/providers.json` 里 **cline / cline-pass / openai-codex** 三个
   账号 provider 的凭据恢复。所以：

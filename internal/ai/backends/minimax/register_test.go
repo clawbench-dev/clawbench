@@ -149,3 +149,15 @@ func TestMiniMaxCatalog(t *testing.T) {
 	}
 	assert.True(t, ids["MiniMax-M3.1-Flash"], "M3.1-Flash is the shipped default")
 }
+
+// The runtime loads <home>/.minimax/skills itself; declaring it is what keeps
+// ClawBench from injecting a second copy of the same skill table.
+func TestRegistration_LoadsNativeSkills(t *testing.T) {
+	p := backends.Lookup("minimax")
+	if !p.Spec.AutoLoadsNativeSkills {
+		t.Fatal("mcode loads its own skills; AutoLoadsNativeSkills must stay true")
+	}
+	if len(p.Spec.NativeSkillsDirs) != 1 || p.Spec.NativeSkillsDirs[0] != ".minimax/skills" {
+		t.Fatalf("NativeSkillsDirs = %v, want [.minimax/skills]", p.Spec.NativeSkillsDirs)
+	}
+}

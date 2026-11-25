@@ -211,4 +211,14 @@ Gemini:    &model.ProtocolEnv{...same vars..., Extra: map[string]string{"COPILOT
 3. **权限弹窗**：路径/URL 类审批是否走 `session/request_permission` 未验证（本轮 5 次工具调用都没弹）。
 4. **会话内换模型**：BYOK 下候选集在建会话时就定死了（`auto` + `COPILOT_PROVIDER_MODEL_ID`），换到别的 id 一律 `-32602`，换 `auto` 是 `-32603`。所以"每会话选模型"在 Copilot BYOK 上等于"每次换模型要重建连接"——`ModelEnv` 是进程级默认值，不是会话级切换的替代。
 5. **provider 不声明模型时**：`ModelEnv` 什么都不加，CLI 会用自己的报错（"BYOK providers require an explicit model"）失败。这比随手编一个端点没服务过的 id 好。
-6. 老数据：`internal/service/transport_migrate.go` 的 `MigrateRemoveRetiredBackends` 已由 lead 改为只删 `vecli`，copilot 的旧 agent 会在下次发现刷新时补上 `acp_command`；老行里的裸模型 id（如 `gpt-5`）在 BYOK 下无意义，需要用户重新选模型。
+6. 老数据：`MigrateRemoveRetiredBackends` 已整体删除（vecli 的清理代码不再保留），所以老库里的 copilot agent 不会被任何迁移删除，下次发现刷新会补上 `acp_command`；老行里的裸模型 id（如 `gpt-5`）在 BYOK 下无意义，需要用户重新选模型。
+
+## 实跑（2026-11-24，BYOK + 真实模型）
+
+`COPILOT_PROVIDER_BASE_URL=https://api.minimax.cn/v1`、`_TYPE=openai`、
+`_MODEL_ID=MiniMax-M3.1-Flash` 跑通一整轮：模型调 shell（输出含 `CLAWBENCH_COPILOT_OK`）、
+回 `DONE`、`stopReason:"end_turn"`，并上报 `usage`（input/output/total）。
+
+`session/new` 的 configOptions 里另有 `allow_all`（`category:"permissions"`，默认 `off`）。
+它和 `mode` 里的 Autopilot 是权限弹窗的开关；本轮 `off` 下工具仍直接执行了，说明
+「不弹 `session/request_permission`」可能不只由这两个开关决定——权限弹窗仍未验证。

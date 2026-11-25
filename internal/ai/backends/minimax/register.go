@@ -48,12 +48,20 @@ func init() {
 			// so a static list would surface a control that is dead for most
 			// models. The frontend picks it up at runtime, like cursor/hermes.
 			//
-			// NativeSkillsDirs / AutoLoadsNativeSkills are left unset: the
-			// runtime does load its own skills (~/.minimax/skills plus the
-			// builtin set), but that directory is not under the user's home as
-			// ".minimax/skills" alone would suggest (MINIMAX_DATA_DIR /
-			// MAVIS_DATA_DIR relocate the whole tree), so a home-relative
-			// declaration would point at the wrong place for relocated installs.
+			// The runtime loads its own skills from <home>/.minimax/skills
+			// (the bundle resolves that path next to the data dir) and also
+			// registers them as slash commands — measured: the user's own
+			// skills appeared in availableCommands. Declaring the directory is
+			// what keeps ClawBench from injecting a second copy of the same
+			// table.
+			//
+			// Same relocation caveat as pi (.pi/agent/skills with
+			// PI_CODING_AGENT_DIR): MINIMAX_DATA_DIR moves the tree, and a
+			// home-relative declaration then points at the default location.
+			// The default is what almost every install uses, so it is declared
+			// rather than leaving the common case duplicated.
+			NativeSkillsDirs:      []string{".minimax/skills"},
+			AutoLoadsNativeSkills: true,
 		},
 		// No ACP mapping data: every tool frame observed names the tool in both
 		// `name` and `title` as a lowercase word ("read"/"write"/"bash"), which

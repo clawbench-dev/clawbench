@@ -35,7 +35,7 @@ func TestResolve(t *testing.T) {
 		{"api v3 anthropic", "https://gw.example.com/api/v3", "/v1/messages", "https://gw.example.com/api/v3/messages"},
 		{"v3 anthropic complete preserved", "https://gw.example.com/api/v3/messages", "/v1/messages", "https://gw.example.com/api/v3/messages"},
 		// A vendor namespace that merely starts with "v" is not a version.
-		{"vendor name with v", "https://host/vecli", "/v1/messages", "https://host/vecli/v1/messages"},
+		{"vendor name with v", "https://host/vendor", "/v1/messages", "https://host/vendor/v1/messages"},
 
 		// Anthropic equivalents.
 		{"Anthropic bare host", "https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
@@ -70,10 +70,10 @@ func TestResolve(t *testing.T) {
 }
 
 // TestResolve_IsNotFooledByVendorNamespace pins the boundary of the version
-// rule: "/vecli" starts with "v" but carries no digits, so it is a mount point
+// rule: "/vendor" starts with "v" but carries no digits, so it is a mount point
 // and must not have its segment replaced by the endpoint path.
 func TestResolve_IsNotFooledByVendorNamespace(t *testing.T) {
-	if got := Resolve("https://host/vecli", "/v1/messages"); got != "https://host/vecli/v1/messages" {
+	if got := Resolve("https://host/vendor", "/v1/messages"); got != "https://host/vendor/v1/messages" {
 		t.Fatalf("got %q", got)
 	}
 }

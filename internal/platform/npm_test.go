@@ -258,9 +258,9 @@ func TestCmdEntryRe(t *testing.T) {
 			expected: `@openai\codex\bin\codex`,
 		},
 		{
-			name:     "vecli style",
-			input:    `  node  "%dp0%\node_modules\@volcengine\vecli\bin\vecli" %*`,
-			expected: `@volcengine\vecli\bin\vecli`,
+			name:     "scoped package style",
+			input:    `  node  "%dp0%\node_modules\@acme\tool\bin\tool" %*`,
+			expected: `@acme\tool\bin\tool`,
 		},
 		{
 			name:     "dp0 with tilde",

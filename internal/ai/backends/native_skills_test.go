@@ -61,9 +61,8 @@ var skillAwareBackends = map[string]bool{
 	// when skills are disabled globally) — which is why this is false and not
 	// a "no directory" case with special handling.
 	"builtin": false,
-	// minimax: the CLI has no skill directory of its own (its data dir is
-	// relocatable via MINIMAX_DATA_DIR and carries no skills tree).
-	"minimax": false,
+	"minimax": true, // <home>/.minimax/skills (the bundle resolves it beside the data dir); skills also surface as slash commands
+
 	// trae: UNVERIFIED — no binary could be obtained (enterprise-only). No
 	// skill directory is declared, so ClawBench injects; if a real run shows
 	// traecli reading its own skills, flip this to true with the directory.
