@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>ClawBench — 从掌心到桌面，同一个 AI 工作台</title>
-<meta name="description" content="ClawBench 把 CodeBuddy、Claude Code、Codex 等 19 个 AI 编程智能体封装成一个 Web 工作台。服务端执行，客户端呈现，一个会话在手机、平板和桌面之间无缝继续。单文件部署，MIT 开源。">
+<meta name="description" content="ClawBench 把 CodeBuddy、Claude Code、Codex 等 25 个 AI 编程智能体封装成一个 Web 工作台。服务端执行，客户端呈现，一个会话在手机、平板和桌面之间无缝继续。单文件部署，MIT 开源。">
 <meta name="theme-color" content="#0a0806">
 <!-- 本页有两处部署：Cloudflare Pages（主域）与 GitHub Pages（项目页副本）。
      canonical 固定指向主域，副本靠它归并，否则同一份内容在两个域名下互相稀释信号。
@@ -12,7 +12,7 @@
 <link rel="canonical" href="https://clawbench.pages.dev/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="ClawBench — 从掌心到桌面，同一个 AI 工作台">
-<meta property="og:description" content="19 个 AI 编程智能体，一块屏幕就够。服务端执行，客户端呈现，单文件部署。">
+<meta property="og:description" content="25 个 AI 编程智能体，一块屏幕就够。服务端执行，客户端呈现，单文件部署。">
 <meta property="og:url" content="https://clawbench.pages.dev/">
 <meta property="og:image" content="https://clawbench.pages.dev/img/og-2026-11.jpg">
 <meta property="og:image:width" content="1200">
@@ -132,7 +132,7 @@
         </h1>
 
         <p class="hero-sub" data-i18n-html="hero.sub">
-          把 CodeBuddy、Claude Code、Codex 等 <strong>19 个</strong> AI 编程智能体封装成一个 Web 工作台。执行在服务端，呈现于任意客户端——<strong>一个会话</strong>，在手机、平板和桌面之间无缝继续。
+          把 CodeBuddy、Claude Code、Codex 等 <strong>25 个</strong> AI 编程智能体封装成一个 Web 工作台。执行在服务端，呈现于任意客户端——<strong>一个会话</strong>，在手机、平板和桌面之间无缝继续。
         </p>
 
         <div class="hero-cta">
@@ -844,7 +844,7 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
       <div class="gal" id="gal">
         <figure class="gal-item"><img src="img/g-chat.webp" alt="AI 对话与工具调用" loading="lazy" decoding="async"><figcaption data-i18n="gal.chat">AI 对话 · 工具调用可视化</figcaption></figure>
         <figure class="gal-item"><img src="img/g-office.webp" alt="Excel 预览" loading="lazy" decoding="async"><figcaption data-i18n="gal.office">文档 · Office 原生渲染</figcaption></figure>
-        <figure class="gal-item"><img src="img/g-agents.webp" alt="智能体选择" loading="lazy" decoding="async"><figcaption data-i18n="gal.agents">智能体 · 19 个后端</figcaption></figure>
+        <figure class="gal-item"><img src="img/g-agents.webp" alt="智能体选择" loading="lazy" decoding="async"><figcaption data-i18n="gal.agents">智能体 · 25 个后端</figcaption></figure>
         <figure class="gal-item"><img src="img/g-ppt.webp" alt="PPT 幻灯片预览" loading="lazy" decoding="async"><figcaption data-i18n="gal.ppt">文档 · 幻灯片原生渲染</figcaption></figure>
         <figure class="gal-item"><img src="img/g-git.webp" alt="Git 提交历史与分支图" loading="lazy" decoding="async"><figcaption data-i18n="gal.git">Git · 分支图与提交历史</figcaption></figure>
         <figure class="gal-item"><img src="img/g-mermaid.webp" alt="Mermaid 图表" loading="lazy" decoding="async"><figcaption data-i18n="gal.mermaid">Markdown · Mermaid 图表</figcaption></figure>
@@ -882,7 +882,7 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
 
       <details class="faq-item">
         <summary><span data-i18n="faq.q4">支持哪些 AI 智能体？</span><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5 8 10.5l4-4"/></svg></summary>
-        <div class="faq-body"><p data-i18n-html="faq.a4">共 19 个后端：ClawBench Agent（进程内）、CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw。另外可以添加<strong>自定义 ACP 智能体</strong>——任何以 stdio 说 ACP 的工具，填一条启动命令就能接入。</p></div>
+        <div class="faq-body"><p data-i18n-html="faq.a4">共 25 个后端：ClawBench Agent（进程内）、CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw、Qwen Code、Cline、GitHub Copilot、MiniMax Code、Kiro、TRAE。另外可以添加<strong>自定义 ACP 智能体</strong>——任何以 stdio 说 ACP 的工具，填一条启动命令就能接入。</p></div>
       </details>
 
       <details class="faq-item">
