@@ -119,7 +119,7 @@ func Walk(ctx context.Context, root string, opts Options, visit func(Entry) Resu
 	if err != nil {
 		rootReal = filepath.Clean(root)
 	}
-	w.descend(root, true, map[string]bool{rootReal: true}, 0)
+	w.descend(root, rootReal, true, map[string]bool{rootReal: true}, 0)
 	w.out.Visited = w.visited
 	return w.out
 }
@@ -136,8 +136,9 @@ type walker struct {
 }
 
 // descend walks one directory whose real path is already in ancestry. isRoot
-// only affects error reporting, not traversal.
-func (w *walker) descend(dirPath string, isRoot bool, ancestry map[string]bool, depth int) {
+// only affects error reporting, not traversal. dirReal is the resolved form of
+// dirPath, passed down so children can be identified without another syscall.
+func (w *walker) descend(dirPath, dirReal string, isRoot bool, ancestry map[string]bool, depth int) {
 	if w.halted() {
 		return
 	}
@@ -152,13 +153,13 @@ func (w *walker) descend(dirPath string, isRoot bool, ancestry map[string]bool, 
 		if w.halted() {
 			return
 		}
-		w.handleEntry(dirPath, d, ancestry, depth)
+		w.handleEntry(dirPath, dirReal, d, ancestry, depth)
 	}
 }
 
 // handleEntry reports one entry to the visitor and descends into it when the
 // visitor allows and it is a directory the walk may enter.
-func (w *walker) handleEntry(dirPath string, d fs.DirEntry, ancestry map[string]bool, depth int) {
+func (w *walker) handleEntry(dirPath, dirReal string, d fs.DirEntry, ancestry map[string]bool, depth int) {
 	fullPath := filepath.Join(dirPath, d.Name())
 	info, isLink, ok := FollowInfo(fullPath, d)
 	if !ok {
@@ -172,7 +173,7 @@ func (w *walker) handleEntry(dirPath string, d fs.DirEntry, ancestry map[string]
 		return
 	}
 
-	isDir, realPath, blocked := w.classify(fullPath, info, isLink)
+	isDir, realPath, blocked := w.classify(dirReal, d.Name(), fullPath, info, isLink)
 	enterable := isDir && depth < w.opts.MaxDepth
 
 	if w.visited >= w.opts.MaxEntries {
@@ -205,7 +206,7 @@ func (w *walker) handleEntry(dirPath string, d fs.DirEntry, ancestry map[string]
 		return
 	}
 	ancestry[realPath] = true
-	w.descend(fullPath, false, ancestry, depth+1)
+	w.descend(fullPath, realPath, false, ancestry, depth+1)
 	delete(ancestry, realPath)
 }
 
@@ -216,12 +217,19 @@ func (w *walker) handleEntry(dirPath string, d fs.DirEntry, ancestry map[string]
 // A directory reached through a link only counts as a directory when the caller
 // accepts its target; one the caller refuses stays a non-directory, so nothing is
 // reported as openable that the caller cannot actually open.
-func (w *walker) classify(fullPath string, info fs.FileInfo, isLink bool) (isDir bool, realPath string, blocked bool) {
+//
+// parentReal is the parent's already-resolved path, so a plain child directory
+// is identified by joining one component — no extra syscall, and no false
+// negative. Cleaning fullPath instead would compare a logical path against the
+// resolved ancestor set: on macOS a temp/project path runs through
+// /var → /private/var, the two spellings never match, and a link back to its
+// own ancestor would be descended one level.
+func (w *walker) classify(parentReal, name, fullPath string, info fs.FileInfo, isLink bool) (isDir bool, realPath string, blocked bool) {
 	if !info.IsDir() {
 		return false, "", false
 	}
 	if !isLink {
-		return true, filepath.Clean(fullPath), false
+		return true, filepath.Join(parentReal, name), false
 	}
 	resolved, err := filepath.EvalSymlinks(fullPath)
 	if err != nil {

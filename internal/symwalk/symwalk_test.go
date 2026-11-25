@@ -99,6 +99,29 @@ func TestWalk_SelfReferentialLinkTerminates(t *testing.T) {
 	}
 }
 
+// The same guard must hold when the walk root is itself reached through a
+// symlink. That is exactly the macOS shape: t.TempDir() is under /var, which is
+// a link to /private/var, so the logical path and the resolved path differ for
+// every entry. Comparing a cleaned logical path against the resolved ancestor
+// set lets the link be descended one level (src/loop/main.go) instead of being
+// skipped, which is what made this fail on macOS only.
+func TestWalk_SelfReferentialLinkUnderSymlinkedRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	root := filepath.Join(t.TempDir(), "link-root")
+	mustSymlink(t, realRoot, root)
+
+	writeFile(t, filepath.Join(realRoot, "src", "main.go"), "x")
+	mustSymlink(t, filepath.Join(realRoot, "src"), filepath.Join(realRoot, "src", "loop"))
+
+	seen, _ := collect(t, root, Options{}, nil)
+	if _, ok := seen["src/loop/main.go"]; ok {
+		t.Fatalf("a link back to its own ancestor must not be descended, got %v", keys(seen))
+	}
+	if _, ok := seen["src/main.go"]; !ok {
+		t.Fatalf("the real file must still be visited, got %v", keys(seen))
+	}
+}
+
 // CanEnter is the security boundary: an entry the caller refuses is still listed
 // but typed as a non-directory, and its subtree is not entered.
 func TestWalk_CanEnterRefusalKeepsTheEntryButDoesNotDescend(t *testing.T) {
