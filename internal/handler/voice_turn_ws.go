@@ -351,6 +351,7 @@ func voiceTurnSpeak(ctx context.Context, conn *websocket.Conn, projectPath strin
 	err := provider.Synthesize(sctx, spoken, mp3Path, lang)
 	scancel()
 	if err != nil {
+		removePartialAudio(mp3Path)
 		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "synthesize failed"})
 		return
 	}

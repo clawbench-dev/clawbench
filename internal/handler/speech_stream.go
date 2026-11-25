@@ -44,10 +44,23 @@ func speakSummary(ctx context.Context, conn *websocket.Conn, provider speech.Spe
 	scancel()
 	if err != nil {
 		slog.Error("speech stream: synthesize failed", slog.String("error", err.Error()))
+		removePartialAudio(mp3Path)
 		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "synthesize failed"})
 		return
 	}
 	streamPCMFile(ctx, conn, mp3Path)
+}
+
+// removePartialAudio deletes the file a failed synthesis left behind.
+//
+// It must go: every reader of this directory treats a non-empty .mp3 as a
+// finished reading, so a half-spoken fragment would be replayed as a success
+// instead of being retried. The decoder here has already consumed part of a
+// truncated stream, so this is the only place that can tell.
+func removePartialAudio(path string) {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		slog.Warn("speech stream: failed to remove partial audio", slog.String("error", err.Error()), slog.String("path", path))
+	}
 }
 
 func writeSpeechFrame(ctx context.Context, conn *websocket.Conn, v any) error {
@@ -106,11 +119,19 @@ func streamPCMSynth(ctx context.Context, conn *websocket.Conn,
 		slog.Error("speech stream: stream decode failed", slog.String("error", err.Error()))
 		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "decode failed"})
 		_ = pr.Close()
+		removePartialAudio(outPath)
 		return
 	}
 	pumpPCM(ctx, conn, dec)
 	_ = pr.Close()
-	<-synthDone
+	if synthErr := <-synthDone; synthErr != nil {
+		// The decoder has already played part of a truncated reading, so the
+		// client must be told it never finished — and the fragment must not
+		// stay on disk as a cache hit for the next click.
+		slog.Error("speech stream: stream synthesize failed", slog.String("error", synthErr.Error()))
+		removePartialAudio(outPath)
+		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "synthesize failed"})
+	}
 }
 
 // downmixFrames averages each stereo frame into mono, in place.

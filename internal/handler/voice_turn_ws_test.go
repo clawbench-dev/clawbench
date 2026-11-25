@@ -267,6 +267,44 @@ func (failingFileProvider) Synthesize(context.Context, string, string, string) e
 	return context.DeadlineExceeded
 }
 
+// partialStreamProvider writes a valid MP3, streams a little of it, and THEN
+// fails — the shape of a reading cut off mid-sentence.
+type partialStreamProvider struct{ fixtureProvider }
+
+func (p *partialStreamProvider) SynthesizeStream(ctx context.Context, _, outputPath, _ string,
+	_ chan<- []byte,
+) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, tinyMP3(), 0o644); err != nil {
+		return err
+	}
+	return context.DeadlineExceeded
+}
+
+// A truncated reading must not be reported as done, and the fragment must not
+// stay on disk: the next read would find a non-empty file and replay it.
+func TestSpeakSummary_TruncatedStreamIsReportedAndDiscarded(t *testing.T) {
+	dir := t.TempDir()
+	mp3Path := filepath.Join(dir, "truncated.mp3")
+
+	srv, cleanup := setupSpeakSummary(t, &partialStreamProvider{}, mp3Path)
+	defer cleanup()
+
+	conn := dialStream(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	frames, _ := drainFrames(t, conn)
+	last := frames[len(frames)-1]
+	if last[ttsWSType] != strError {
+		t.Fatalf("last frame = %v, want an error instead of done", last)
+	}
+	if _, statErr := os.Stat(mp3Path); !os.IsNotExist(statErr) {
+		t.Fatalf("the half-spoken file must be removed, stat err = %v", statErr)
+	}
+}
+
 func TestSpeakSummary_CorruptCacheEmitsDecodeError(t *testing.T) {
 	dir := t.TempDir()
 	mp3Path := filepath.Join(dir, "broken.mp3")

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,6 +57,10 @@ type mockSpeechProvider struct {
 	// stream endpoint has connected (avoids race where the goroutine
 	// finishes and unregisters the job before TTSStream can look it up).
 	synthesizeBlock chan struct{}
+	// partialAudio, if set, is written to outputPath BEFORE synthesizeErr is
+	// returned — the shape of a real truncated synthesis: a half-spoken file on
+	// disk together with a failure.
+	partialAudio []byte
 }
 
 func (m *mockSpeechProvider) Synthesize(ctx context.Context, text string, outputPath string, language string) error {
@@ -63,6 +68,14 @@ func (m *mockSpeechProvider) Synthesize(ctx context.Context, text string, output
 	m.lastSynthText = text
 	m.lastSynthLang = language
 	if m.synthesizeErr != nil {
+		if len(m.partialAudio) > 0 {
+			if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(outputPath, m.partialAudio, 0o644); err != nil {
+				return err
+			}
+		}
 		return m.synthesizeErr
 	}
 	// Create a dummy audio file at outputPath
@@ -85,7 +98,7 @@ func (m *mockSpeechProvider) Synthesize(ctx context.Context, text string, output
 
 // setupTTSTest sets up a test environment with mock provider and summarizer.
 // Returns the test env and a teardown function.
-func setupTTSTest(t *testing.T, mockProvider *mockSpeechProvider, mockSum *mockSummarizer) (*testEnv, func()) {
+func setupTTSTest(t *testing.T, mockProvider speech.SpeechProvider, mockSum *mockSummarizer) (*testEnv, func()) {
 	t.Helper()
 
 	// Use the shared test environment (inits DB, project dir, etc.)
@@ -283,6 +296,89 @@ func TestTTSGenerate_SynthesizeFailure(t *testing.T) {
 
 	assert.True(t, mockSum.called)
 	assert.True(t, mockProvider.synthesizeCalled)
+}
+
+// waitTTSJobDone blocks until the job for cacheKey has finished (or the test
+// would otherwise race the background goroutine).
+func waitTTSJobDone(t *testing.T, cacheKey string) {
+	t.Helper()
+	job, ok := service.GetTTSJob(cacheKey)
+	if !ok {
+		return
+	}
+	select {
+	case <-job.Done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("TTS job did not complete in time")
+	}
+}
+
+// A truncated synthesis leaves a half-spoken file next to a failure. That file
+// must not survive: the cache treats any non-empty file as a finished reading,
+// so it would be served as a success on every later click and never retried.
+func TestTTSGenerate_TruncatedAudioIsDiscarded(t *testing.T) {
+	mockProvider := &mockSpeechProvider{
+		synthesizeErr: errors.New("edge-tts: segment 1/1: truncated: 3000 bytes of audio for 900 runes"),
+		partialAudio:  []byte("half a sentence"),
+	}
+	mockSum := &mockSummarizer{result: "总结文本"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "这段文本合成到一半就断了。"
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	absAudioPath := filepath.Join(env.ProjectDir, ".clawbench", "generated", "tts", cacheKey+".mp3")
+
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	waitTTSJobDone(t, cacheKey)
+	_, statErr := os.Stat(absAudioPath)
+	assert.True(t, os.IsNotExist(statErr), "the half-spoken file must be removed, not cached")
+
+	// Clicking again must synthesize again, not replay the fragment.
+	mockProvider.synthesizeErr = nil
+	mockProvider.partialAudio = nil
+	req2 := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	req2 = withProjectCookie(req2, env.ProjectDir)
+	w2 := httptest.NewRecorder()
+	TTSGenerate(w2, req2)
+	var resp2 map[string]any
+	assert.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
+	assert.NotContains(t, resp2, "cached", "a discarded fragment must not count as a cache hit")
+	assert.Contains(t, resp2, "jobId")
+}
+
+// Same for the streaming path (Edge TTS): the player must be told it failed,
+// and the file written so far must be gone.
+func TestTTSGenerate_StreamingTruncationIsDiscarded(t *testing.T) {
+	mockProvider := &mockStreamingSpeechProvider{
+		streamErr:    errors.New("edge-tts: segment 2/3: truncated: service spoke 40 of 300 runes"),
+		partialAudio: []byte("half a sentence"),
+	}
+	mockSum := &mockSummarizer{result: "总结文本"}
+	env, teardown := setupTTSTest(t, mockProvider, mockSum)
+	defer teardown()
+
+	text := "这段流式文本合成到一半就断了。"
+	hash := sha256.Sum256([]byte(text))
+	cacheKey := hex.EncodeToString(hash[:])[:summarize.CacheKeyHexLen]
+	absAudioPath := filepath.Join(env.ProjectDir, ".clawbench", "generated", "tts", cacheKey+".mp3")
+
+	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]string{"text": text})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := httptest.NewRecorder()
+	TTSGenerate(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	waitTTSJobDone(t, cacheKey)
+	assert.True(t, mockProvider.streamCalled)
+	_, statErr := os.Stat(absAudioPath)
+	assert.True(t, os.IsNotExist(statErr), "the half-spoken file must be removed, not cached")
 }
 
 // --- TTSGenerate: cache hit returns JSON directly ---
@@ -574,6 +670,9 @@ type mockStreamingSpeechProvider struct {
 	lastStreamLang string
 	streamErr      error
 	streamBlock    chan struct{}
+	// partialAudio is written before streamErr is returned, so a test can prove
+	// that a half-spoken stream is discarded rather than left as a cache hit.
+	partialAudio []byte
 }
 
 func (m *mockStreamingSpeechProvider) SynthesizeStream(ctx context.Context, text string, outputPath string, language string, chunkCh chan<- []byte) error {
@@ -581,6 +680,14 @@ func (m *mockStreamingSpeechProvider) SynthesizeStream(ctx context.Context, text
 	m.lastStreamText = text
 	m.lastStreamLang = language
 	if m.streamErr != nil {
+		if len(m.partialAudio) > 0 {
+			if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(outputPath, m.partialAudio, 0o644); err != nil {
+				return err
+			}
+		}
 		return m.streamErr
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {

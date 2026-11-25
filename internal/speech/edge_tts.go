@@ -1,15 +1,18 @@
 package speech
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -38,6 +41,10 @@ type EdgeTTSProvider struct {
 	Voice string
 	// Rate is the speech speed adjustment (e.g. "+0%", "+20%", "-10%").
 	Rate string
+
+	// synthHook replaces the WebSocket request in synthesizeText, so the
+	// segment-level integrity check can be tested without an Edge endpoint.
+	synthHook func(ctx context.Context, ssml string, w io.Writer) (int, error)
 }
 
 // NewEdgeTTSProvider creates an EdgeTTSProvider with sensible defaults.
@@ -101,6 +108,15 @@ const (
 	// text: a long read legitimately takes minutes in total, but a single
 	// request that hangs must fail fast instead of stalling the whole job.
 	edgeSegmentTimeout = 90 * time.Second
+
+	// edgeMinBytesPerRune is the floor for how many MP3 bytes one spoken rune is
+	// worth. Observed speech runs well above this (24 kHz / 48 kbps mono ≈ 12
+	// bytes per character), so a segment below it was cut off: the service
+	// closed the turn after a fragment of the sentence, which is exactly the
+	// half-sentence audio that must never be cached and replayed as a success.
+	// Deliberately a lower bound, so a fast or unusually short reading still
+	// passes; only a fragment is caught.
+	edgeMinBytesPerRune = 6
 )
 
 // synthesizeText splits text into speech-sized segments and sends one Edge TTS
@@ -111,9 +127,64 @@ const (
 // it the failure granularity, which is why a segment that fails aborts the job
 // instead of silently skipping its content.
 func (p *EdgeTTSProvider) synthesizeText(ctx context.Context, text string, w io.Writer) error {
+	synth := p.synthesizeViaWebSocket
+	if p.synthHook != nil {
+		synth = p.synthHook
+	}
 	return p.synthesizeSegments(ctx, text, func(sctx context.Context, ssml string) error {
-		return p.synthesizeViaWebSocket(sctx, ssml, w)
+		// One segment's audio is written to the caller's writer only AFTER the
+		// service has answered for the whole segment. Streaming each frame as it
+		// arrives is what let a half-spoken segment reach the listener and the
+		// cache file before anyone knew it was half.
+		var buf bytes.Buffer
+		spoken, err := synth(sctx, ssml, &buf)
+		if err != nil {
+			return err
+		}
+		if err := checkSegmentAudio(edgeSSMLText(ssml), buf.Len(), spoken); err != nil {
+			return err
+		}
+		_, writeErr := w.Write(buf.Bytes())
+		return writeErr
 	})
+}
+
+// edgeSSMLTextPattern pulls the text back out of the SSML a segment was sent
+// with, so a finished segment can be checked against what it was asked to
+// say. buildSSML only escapes &, < and >, and the whole payload is generated
+// by this package, so this cannot match anything but the segment's own text.
+var edgeSSMLTextPattern = regexp.MustCompile(`(?s)<prosody[^>]*>(.*)</prosody>`)
+
+// edgeSSMLText returns the number of characters of text carried by ssml.
+func edgeSSMLText(ssml string) int {
+	m := edgeSSMLTextPattern.FindStringSubmatch(ssml)
+	if m == nil {
+		return 0
+	}
+	return len([]rune(m[1]))
+}
+
+// checkSegmentAudio rejects a segment whose audio is only a fraction of what its
+// text should take: the service answered, closed the turn, and left the sentence
+// half spoken. Such a fragment is not a short answer — the text it was asked to
+// say is right there — so it must fail the job rather than be played back.
+//
+// runes is what the segment asked the service to say, bytes what came back, and
+// heard how much of it the service reported as spoken. A service that reports
+// word boundaries is the authority: a segment it admitted to covering only part
+// of is rejected at any size. When it reports nothing, only the byte floor
+// applies.
+func checkSegmentAudio(runes, bytes, heard int) error {
+	if runes <= 0 || bytes <= 0 {
+		return fmt.Errorf("no audio received from service")
+	}
+	if heard > 0 && heard < runes {
+		return fmt.Errorf("truncated: service spoke %d of %d runes", heard, runes)
+	}
+	if minBytes := runes * edgeMinBytesPerRune; bytes < minBytes {
+		return fmt.Errorf("truncated: %d bytes of audio for %d runes (below %d)", bytes, runes, minBytes)
+	}
+	return nil
 }
 
 // synthesizeSegments is synthesizeText with the per-segment request lifted out,
@@ -207,8 +278,12 @@ func isSpeechBoundary(r rune) bool {
 // synthesizeViaWebSocket connects to the Edge TTS WebSocket, sends the SSML,
 // and writes the received audio data to w.
 //
+// The return value is how many runes of text the service reported actually
+// speaking (from its sentence/word boundary metadata), or 0 when it reported
+// nothing — 0 means "unknown", never "spoke nothing".
+//
 //nolint:gocognit,gocyclo // WebSocket protocol requires sequential message handling with multiple error paths
-func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml string, w io.Writer) error {
+func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml string, w io.Writer) (int, error) {
 	// Generate DRM token and connection ID.
 	// Sec-MS-GEC-Version "2-<ver>" pairs with the v2 token; a v1 token with a
 	// "1-" version is rejected by the service with HTTP 403.
@@ -240,21 +315,25 @@ func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml strin
 			_ = resp.Body.Close()
 		}
 		if resp != nil {
-			return fmt.Errorf("websocket handshake failed (status %s): %w", resp.Status, err)
+			return 0, fmt.Errorf("websocket handshake failed (status %s): %w", resp.Status, err)
 		}
-		return fmt.Errorf("websocket dial failed: %w", err)
+		return 0, fmt.Errorf("websocket dial failed: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Send speech generation config
+	// Word boundaries are enabled on purpose: the service then reports how much
+	// of the text it actually spoke, which is what tells a complete reading from
+	// a fragment (audio arriving is not the same as the sentence being finished).
+	// A service that ignores the option simply reports nothing — callers treat
+	// that as "unknown" and fall back to the end-only signal.
 	timestamp := currentTimeInMST()
 	configMsg := fmt.Sprintf(
 		"X-Timestamp:%s\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n"+
-			`{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"true","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`,
+			`{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"true","wordBoundaryEnabled":"true"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`,
 		timestamp,
 	)
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(configMsg)); err != nil {
-		return fmt.Errorf("failed to send config: %w", err)
+		return 0, fmt.Errorf("failed to send config: %w", err)
 	}
 
 	// Send SSML
@@ -264,40 +343,45 @@ func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml strin
 		requestID, timestamp, ssml,
 	)
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(ssmlMsg)); err != nil {
-		return fmt.Errorf("failed to send ssml: %w", err)
+		return 0, fmt.Errorf("failed to send ssml: %w", err)
 	}
 
 	// Read audio data from WebSocket
 	audioReceived := false
+	spoken := 0
 	for {
 		select {
 		case <-ctx.Done():
 			if !audioReceived {
-				return fmt.Errorf("context cancelled before audio was received")
+				return spoken, fmt.Errorf("context cancelled before audio was received")
 			}
 			// Report it rather than returning nil: the segment is incomplete, and
 			// the caller must not carry on as if it had been spoken in full.
-			return ctx.Err()
+			return spoken, ctx.Err()
 		default:
 		}
 
 		msgType, message, err := conn.ReadMessage()
 		if err != nil {
 			if audioReceived {
-				// Connection closed after we got audio — that's fine
-				return nil
+				// Connection closed after we got audio. It ended mid-turn, so the
+				// speech may be cut off; the caller judges it by what was spoken.
+				return spoken, nil
 			}
-			return fmt.Errorf("websocket read error: %w", err)
+			return spoken, fmt.Errorf("websocket read error: %w", err)
 		}
 
 		if msgType == websocket.TextMessage {
-			// Text messages contain metadata — check for turn.end
 			msgStr := string(message)
-			if strings.Contains(msgStr, "Path:turn.end") {
+			isTurnEnd := strings.Contains(msgStr, "Path:turn.end")
+			if strings.Contains(msgStr, edgeWordBoundaryPath) {
+				spoken += edgeBoundaryRunes(msgStr)
+			}
+			if isTurnEnd {
 				if !audioReceived {
-					return fmt.Errorf("no audio received from service")
+					return spoken, fmt.Errorf("no audio received from service")
 				}
-				return nil
+				return spoken, nil
 			}
 			// Other text messages (response, turn.start, audio.metadata) — ignore
 			continue
@@ -321,11 +405,48 @@ func (p *EdgeTTSProvider) synthesizeViaWebSocket(ctx context.Context, ssml strin
 				continue
 			}
 			if _, err := w.Write(audioData); err != nil {
-				return fmt.Errorf("failed to write audio data: %w", err)
+				return spoken, fmt.Errorf("failed to write audio data: %w", err)
 			}
 			audioReceived = true
 		}
 	}
+}
+
+// edgeWordBoundaryPath marks a word-boundary metadata frame: the service telling
+// us which characters of the request it has just spoken.
+const edgeWordBoundaryPath = "Path:audio.metadata"
+
+// edgeBoundaryRunes extracts the character span of one boundary frame.
+//
+// The frame is a bare JSON object after the "Path:audio.metadata" header line:
+// {"Metadata":[{"Type":"WordBoundary","Data":{"text":{"Text":"你好","Length":2,"BoundaryType":"WordBoundary"},...}}]}
+// Length is the number of characters spoken; it is what makes the covered span
+// independent of punctuation or of how the service tokenizes.
+func edgeBoundaryRunes(frame string) int {
+	idx := strings.Index(frame, "{")
+	if idx < 0 {
+		return 0
+	}
+	var payload struct {
+		Metadata []struct {
+			Type string `json:"Type"`
+			Data struct {
+				Text struct {
+					Length int `json:"Length"`
+				} `json:"text"`
+			} `json:"Data"`
+		} `json:"Metadata"`
+	}
+	if err := json.Unmarshal([]byte(frame[idx:]), &payload); err != nil {
+		return 0
+	}
+	n := 0
+	for _, m := range payload.Metadata {
+		if m.Type == "WordBoundary" && m.Data.Text.Length > 0 {
+			n += m.Data.Text.Length
+		}
+	}
+	return n
 }
 
 // --- DRM Token Generation ---
