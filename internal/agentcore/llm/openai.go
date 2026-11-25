@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"clawbench/internal/endpointurl"
+	"clawbench/internal/providerhttp"
 )
 
 // openAIClient speaks the OpenAI chat-completions wire format, which nearly
@@ -20,10 +21,13 @@ type openAIClient struct {
 	cfg  Config
 	url  string
 	http *http.Client
+	// sessionID is resolved once so every request in this conversation carries
+	// the same provider routing id.
+	sessionID string
 }
 
 func newOpenAIClient(cfg Config) *openAIClient {
-	return &openAIClient{
+	c := &openAIClient{
 		cfg: cfg,
 		// The chat-completions path is appended unless the configured URL
 		// already names an endpoint. Reusing the summarizer's resolver keeps
@@ -33,6 +37,10 @@ func newOpenAIClient(cfg Config) *openAIClient {
 		url:  resolveEndpoint(cfg.BaseURL, "/v1/chat/completions"),
 		http: &http.Client{Timeout: 0}, // streaming: no overall deadline, ctx governs
 	}
+	if providerhttp.IsOpenCode(cfg.BaseURL, cfg.PresetID) {
+		c.sessionID = providerhttp.SessionID(cfg.SessionID)
+	}
+	return c
 }
 
 func (c *openAIClient) Model() string        { return c.cfg.Model }
@@ -212,6 +220,7 @@ func (c *openAIClient) Stream(ctx context.Context, req Request) (<-chan Event, e
 			httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 		}
 	}
+	providerhttp.Apply(httpReq, c.cfg.BaseURL, c.cfg.PresetID, c.sessionID)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {

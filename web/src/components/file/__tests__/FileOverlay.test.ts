@@ -47,7 +47,7 @@ function setViewportWidth(width: number) {
 
 describe('FileOverlay', () => {
   it('renders when overlayOpen is true', () => {
-    setViewportWidth(800)
+    setViewportWidth(600)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'test.txt' } },
       global: { stubs, plugins: [i18n] },
@@ -56,7 +56,7 @@ describe('FileOverlay', () => {
   })
 
   it('does not render when overlayOpen is false', () => {
-    setViewportWidth(800)
+    setViewportWidth(600)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: false },
       global: { stubs, plugins: [i18n] },
@@ -65,7 +65,7 @@ describe('FileOverlay', () => {
   })
 
   it('exposes pdfScrollToPage and focusSearchInput', () => {
-    setViewportWidth(800)
+    setViewportWidth(600)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: {} },
       global: { stubs, plugins: [i18n] },
@@ -77,7 +77,7 @@ describe('FileOverlay', () => {
 
 describe('FileOverlay — TOC dock vs drawer', () => {
   it('renders the bottom TocDrawer on narrow screens (docked=false)', () => {
-    setViewportWidth(800)
+    setViewportWidth(600)
     const wrapper = mount(FileOverlay, {
       props: { overlayOpen: true, currentFile: { path: 'a.md' }, tocOpen: true },
       global: { stubs, plugins: [i18n] },

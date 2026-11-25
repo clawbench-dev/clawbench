@@ -916,7 +916,7 @@ main {
 .strip {
   position: relative;
   z-index: 1;
-  /* 20 个条目比原来 12 个高不少，上边距收一档，
+  /* 23 个条目比原来 12 个高不少，上边距收一档，
      否则 hero 和横条之间会出现一条空得过分的暗带。 */
   margin-top: 40px;
   padding: 28px 0 30px;

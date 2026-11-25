@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -495,7 +494,11 @@ func ContentSearch(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if params.recursive {
-		walkContentRecursive(ctx, absPath, walkBase, collector.handleFile)
+		if outcome := walkContentRecursive(ctx, absPath, walkBase, collector.handleFile); outcome.Exhausted {
+			// Entry budget ran out: more matching files may exist beyond the
+			// ones found, so the client must not present this as the full set.
+			stats.truncated = true
+		}
 	} else {
 		walkContentFlat(ctx, absPath, collector.handleFile)
 	}
@@ -549,14 +552,13 @@ func newContentSearchCollector(cfg contentSearchCollectorConfig) *contentSearchC
 // handleFile inspects one candidate file, emitting a result event when it has
 // matches. It returns false to signal the walk should stop (the file limit was
 // reached).
-func (c *contentSearchCollector) handleFile(path string, d fs.DirEntry) bool {
+func (c *contentSearchCollector) handleFile(path, name string) bool {
 	relPath, relErr := filepath.Rel(c.cfg.walkBase, path)
 	if relErr != nil {
 		return true
 	}
 	relPathSlash := filepath.ToSlash(relPath)
 
-	name := d.Name()
 	if isBinaryContentExt(name) || !shouldSearchFile(c.cfg.include, c.cfg.exclude, relPathSlash) {
 		return true
 	}
@@ -620,48 +622,34 @@ func writeSSEEvent(w http.ResponseWriter, event string, payload any) {
 	}
 }
 
-// walkContentRecursive walks the tree, handing each regular file to handle.
+// walkContentRecursive walks the tree, handing each candidate file to handle.
 // Directory pruning mirrors /api/dir/search so the two searches agree on which
-// subtrees are worth descending into.
-func walkContentRecursive(ctx context.Context, absPath, basePath string, handle func(string, fs.DirEntry) bool) {
-	_ = filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // skip inaccessible entries
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if path == absPath {
-			return nil
-		}
-
-		relPath, relErr := filepath.Rel(basePath, path)
-		if relErr != nil {
-			return nil //nolint:nilerr // skip entries with invalid relative paths
-		}
-		relPathSlash := filepath.ToSlash(relPath)
-
-		if d.IsDir() {
-			if shouldSkipSearchDir(relPathSlash, d.Name()) {
-				return fs.SkipDir
+// subtrees are worth descending into — and so does symlink handling: links are
+// followed (see walkFollowSymlinks), which is what makes a linked-in file
+// searchable by content instead of silently skipped.
+func walkContentRecursive(ctx context.Context, absPath, basePath string, handle func(path, name string) bool) walkOutcome {
+	return walkFollowSymlinks(ctx, absPath, basePath, func(e walkEntry) walkResult {
+		if e.IsDir {
+			if shouldSkipSearchDir(e.Rel, e.Name) {
+				return walkSkipDir
 			}
-			return nil
+			return walkContinue
 		}
-		if !d.Type().IsRegular() {
-			return nil // symlinks, sockets, devices
+		// A link to a regular file is regular too — statFollowing followed it,
+		// so there is no mode check to make here. Sockets and devices resolve to
+		// their own mode; opening one can block forever, so they stay out.
+		if !e.Info.Mode().IsRegular() {
+			return walkContinue
 		}
-		if !handle(path, d) {
-			return fs.SkipAll
+		if !handle(e.Path, e.Name) {
+			return walkStop
 		}
-		return nil
+		return walkContinue
 	})
 }
 
 // walkContentFlat reads only the top-level files of absPath.
-func walkContentFlat(ctx context.Context, absPath string, handle func(string, fs.DirEntry) bool) {
+func walkContentFlat(ctx context.Context, absPath string, handle func(path, name string) bool) {
 	select {
 	case <-ctx.Done():
 		return
@@ -678,10 +666,12 @@ func walkContentFlat(ctx context.Context, absPath string, handle func(string, fs
 			return
 		default:
 		}
-		if d.IsDir() || !d.Type().IsRegular() {
+		fullPath := filepath.Join(absPath, d.Name())
+		info, _, ok := statFollowing(fullPath, d)
+		if !ok || !info.Mode().IsRegular() {
 			continue
 		}
-		if !handle(filepath.Join(absPath, d.Name()), d) {
+		if !handle(fullPath, d.Name()) {
 			return
 		}
 	}

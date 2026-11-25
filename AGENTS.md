@@ -2,7 +2,7 @@
 
 ## 这是什么
 
-ClawBench 是多端 AI 工作台：把一批 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、Kimi、Cursor 等 19 个）封装成 Web 平台。Go 后端调 CLI，WebSocket 推流，Vue 3 前端实时渲染。另有群聊、会议与 AI 听记、SSH 隧道、任务系统、邮件、RAG 等模块。
+ClawBench 是多端 AI 工作台：把一批 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、Kimi、Cursor 等 25 个）封装成 Web 平台。Go 后端调 CLI，WebSocket 推流，Vue 3 前端实时渲染。另有群聊、会议与 AI 听记、SSH 隧道、任务系统、邮件、RAG 等模块。
 
 **规格文档在 `docs/spec/`（索引：[`docs/spec/README.md`](docs/spec/README.md)）。本文件只写「不写就会做错事」的内容，凡是可以从代码或 spec 查到的，一律不给。**
 
@@ -48,7 +48,7 @@ npm test                                # Vitest
 - **排队消息存独立表 `queued_messages`**，出队才落 `chat_history`，claim 在同一事务里 DELETE + INSERT——这是「历史行 id 顺序恒等于对话顺序」的唯一保证。
 - **群成员是隐藏的 `chat_sessions` 行**，消息只存群会话。
 
-**AI 后端**在 `internal/ai/` + `backends/`（19 个后端子包）。改之前**必读** [`docs/spec/core/ai-backend.md`](docs/spec/core/ai-backend.md)（77KB，是这个项目最复杂的一块）。四条最容易踩：MCP 注入有**四条**建会话路径（new/load/resume/SyncLoadSession），漏一条表现为「进程重启后工具消失」；**不做帧级内容去重**（wire 上「重试」和「模型又输出一遍」字节相同，误删过真实内容，已整体移除）；后端差异用**能力位**表达，不要写 `if backend == "xxx"`；ACP 连接缓存用 leaf lock `stateMu`，**绝不在 RPC 期间持有**。
+**AI 后端**在 `internal/ai/` + `backends/`（25 个后端子包）。改之前**必读** [`docs/spec/core/ai-backend.md`](docs/spec/core/ai-backend.md)（77KB，是这个项目最复杂的一块）。四条最容易踩：MCP 注入有**四条**建会话路径（new/load/resume/SyncLoadSession），漏一条表现为「进程重启后工具消失」；**不做帧级内容去重**（wire 上「重试」和「模型又输出一遍」字节相同，误删过真实内容，已整体移除）；后端差异用**能力位**表达，不要写 `if backend == "xxx"`；ACP 连接缓存用 leaf lock `stateMu`，**绝不在 RPC 期间持有**。
 
 **内置智能体**在 `internal/agentcore/` + `ai/backends/builtin/`（进程内实现，不走 CLI 也不走 ACP）。**完整设计见 [`docs/plans/2026-11-16-builtin-agent-design.md`](docs/plans/2026-11-16-builtin-agent-design.md)，改之前先读**——权限模型、路径边界、上下文压缩全在里面，最易改错的三条：权限按能力位而非工具白名单（「只读 bash」靠命令白名单挡不住）；**零值 = 全关**（漏配必须 fail closed，与外部后端默认全权限相反）；未授权的工具**根本不声明给模型**。
 

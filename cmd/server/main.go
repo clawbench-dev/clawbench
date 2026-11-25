@@ -1014,65 +1014,25 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 
 	// NOTE: TTS summarizer initialization is deferred until after DB init.
 
-	// Initialize TTS synthesis provider from config
-	var ttsProvider speech.SpeechProvider
-	engine := cfg.TTS.Engine
-
-	switch engine {
-	case "edge":
-		p := speech.NewEdgeTTSProvider()
-		if cfg.TTS.Voice != "" {
-			p.Voice = cfg.TTS.Voice
-		}
-		if cfg.TTS.Speed > 0 {
-			// Convert speed multiplier (e.g. 1.5) to edge-tts rate percentage (e.g. "+50%")
-			ratePercent := int((cfg.TTS.Speed - 1.0) * 100)
-			if ratePercent > 0 {
-				p.Rate = fmt.Sprintf("+%d%%", ratePercent)
-			} else if ratePercent < 0 {
-				p.Rate = fmt.Sprintf("%d%%", ratePercent)
-			}
-		}
-		ttsProvider = p
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "edge"),
-			slog.String("voice", p.Voice),
-			slog.String("rate", p.Rate),
-		)
-	case strOpenAI:
-		o := newOpenAITTSProvider(cfg)
-		ttsProvider = o
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", strOpenAI),
-			slog.String("base_url", o.BaseURL),
-			slog.String("model", o.Model),
-			slog.String("voice", o.Voice),
-		)
-	default:
-		// Default to Edge TTS when engine is empty or unrecognized
-		p := speech.NewEdgeTTSProvider()
-		if cfg.TTS.Voice != "" {
-			p.Voice = cfg.TTS.Voice
-		}
-		if cfg.TTS.Speed > 0 {
-			ratePercent := int((cfg.TTS.Speed - 1.0) * 100)
-			if ratePercent > 0 {
-				p.Rate = fmt.Sprintf("+%d%%", ratePercent)
-			} else if ratePercent < 0 {
-				p.Rate = fmt.Sprintf("%d%%", ratePercent)
-			}
-		}
-		ttsProvider = p
-		slog.Info(
-			"tts provider configured",
-			slog.String("engine", "edge"),
-			slog.String("voice", p.Voice),
-			slog.String("rate", p.Rate),
-		)
-	}
+	// Initialize TTS synthesis provider from config.
+	//
+	// Goes through newTTSProvider — the SAME constructor the hot-reload path
+	// uses — instead of a second hand-written switch. The copy that lived here
+	// only knew "edge" and "openai"; every other engine (minimax, alibaba,
+	// tencent, volcano) fell into the default arm and silently became Edge, so
+	// picking MiniMax in the settings panel worked until the next restart and
+	// then reverted to Edge while config.yaml still said minimax. Keep one
+	// switch: a new engine must not have to be added in two places.
+	ttsProvider := newTTSProvider(cfg)
 	handler.SetSpeechProvider(ttsProvider)
+	// Log the engine CONFIGURED and the type actually built. Logging only the
+	// built type hid the old bug: an unrecognized engine became Edge while
+	// config.yaml kept saying otherwise, and nothing in the log disagreed.
+	slog.Info(
+		"tts provider configured",
+		slog.String("engine", cfg.TTS.Engine),
+		slog.String("provider", fmt.Sprintf("%T", ttsProvider)),
+	)
 
 	// Initialize STT (speech-to-text) provider from config
 	sttProvider := newSTTProvider(cfg)
@@ -1879,7 +1839,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		Agents:          agentInfos,
 		SSHEnabled:      sshEnabled,
 		SSHPort:         sshPort,
-		TTSEngine:       engine,
+		TTSEngine:       cfg.TTS.Engine,
 		RAGAvailable:    rag.GlobalStore != nil,
 		TerminalOn:      cfg.Terminal.Enabled,
 		TaskCount:       taskCount,

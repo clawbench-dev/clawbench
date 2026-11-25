@@ -58,6 +58,14 @@ func RegisterOrphanCmdline(binary, arg string) {
 	orphanPatterns = append(orphanPatterns, OrphanCmdlinePattern{Binary: binary, Arg: arg})
 }
 
+// OrphanCmdlineMatches reports whether a process command line matches any
+// registered shape. Exported as the single post-registration check a backend
+// package's test needs: the kernel NUL-separates argv, so a test passes
+// []byte("mcode\x00acp\x00") rather than re-implementing the matcher.
+func OrphanCmdlineMatches(cmdline []byte) bool {
+	return hasOrphanCmdlinePattern(cmdline)
+}
+
 // orphanCmdlinePatterns returns a snapshot for matching. A copy, so the caller
 // never holds the lock while walking it.
 func orphanCmdlinePatterns() []OrphanCmdlinePattern {

@@ -353,7 +353,7 @@ func buildSpec(req ai.ChatRequest) (agentcore.Spec, error) {
 		return agentcore.Spec{}, fmt.Errorf("builtin: agent %q not found", req.AgentID)
 	}
 
-	client, modelID, err := buildClient(agent, req.Model)
+	client, modelID, err := buildClient(agent, req.Model, req.ClawbenchSessionID)
 	if err != nil {
 		return agentcore.Spec{}, err
 	}
@@ -478,7 +478,10 @@ func summarizer(client llm.Client) func(context.Context, string) (string, error)
 // When the agent has no binding, the shared summary model is used and the UI is
 // told which model is running — a silent fallback to "some model" is how a user
 // ends up debugging answers produced by an endpoint they never configured.
-func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, error) {
+//
+// sessionID is this conversation's id in ClawBench, forwarded so endpoints that
+// route by a session header (OpenCode) can keep one conversation together.
+func buildClient(agent *model.Agent, modelOverride, sessionID string) (llm.Client, string, error) {
 	modelID := modelOverride
 	if modelID == "" {
 		modelID = agent.DefaultModelID()
@@ -500,6 +503,8 @@ func buildClient(agent *model.Agent, modelOverride string) (llm.Client, string, 
 		Model:    modelID,
 		// Vision support comes from the model catalog when it knows the id.
 		SupportsVision: model.ModelSupportsVision(provider.Protocol, modelID),
+		PresetID:       provider.PresetID,
+		SessionID:      sessionID,
 	})
 	if err != nil {
 		return nil, "", err

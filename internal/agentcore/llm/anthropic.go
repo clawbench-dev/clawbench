@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"clawbench/internal/providerhttp"
 )
 
 // anthropicClient speaks the Anthropic Messages wire format.
@@ -26,14 +28,21 @@ type anthropicClient struct {
 	cfg  Config
 	url  string
 	http *http.Client
+	// sessionID is resolved once so every request in this conversation carries
+	// the same provider routing id.
+	sessionID string
 }
 
 func newAnthropicClient(cfg Config) *anthropicClient {
-	return &anthropicClient{
+	c := &anthropicClient{
 		cfg:  cfg,
 		url:  resolveEndpoint(cfg.BaseURL, "/v1/messages"),
 		http: &http.Client{Timeout: 0},
 	}
+	if providerhttp.IsOpenCode(cfg.BaseURL, cfg.PresetID) {
+		c.sessionID = providerhttp.SessionID(cfg.SessionID)
+	}
+	return c
 }
 
 func (c *anthropicClient) Model() string        { return c.cfg.Model }
@@ -194,6 +203,7 @@ func (c *anthropicClient) Stream(ctx context.Context, req Request) (<-chan Event
 			httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 		}
 	}
+	providerhttp.Apply(httpReq, c.cfg.BaseURL, c.cfg.PresetID, c.sessionID)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {

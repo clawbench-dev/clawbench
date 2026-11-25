@@ -61,7 +61,7 @@ func TestBuildClient_ScopedModelUsesItsOwnProvider(t *testing.T) {
 	bound := int64(1)
 	agent := &model.Agent{ID: "builtin-pick", Backend: "builtin", BuiltinBackend: true, ProviderID: &bound}
 
-	client, modelID, err := buildClient(agent, model.ProviderScopedModelID(2, "model-picked"))
+	client, modelID, err := buildClient(agent, model.ProviderScopedModelID(2, "model-picked"), "")
 	require.NoError(t, err)
 	assert.Equal(t, "model-picked", modelID, "the wire sees the bare model name")
 
@@ -90,7 +90,7 @@ func TestBuildClient_PlainAndDanglingIDsFallBackToTheBinding(t *testing.T) {
 		"model-bound",
 		model.ProviderScopedModelID(999, "model-gone"),
 	} {
-		client, modelID, err := buildClient(agent, override)
+		client, modelID, err := buildClient(agent, override, "")
 		require.NoError(t, err, "override %q", override)
 		assert.NotEmpty(t, modelID)
 		drain(t, client)

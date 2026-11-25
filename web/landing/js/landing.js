@@ -33,7 +33,7 @@
     // 断行位置按英文节奏排：主语一行、谓语一行，"One workbench." 不拆开。
     'hero.title': 'From your palm<br>to your desk.<br><em>One workbench.</em>',
     'hero.sub':
-      'ClawBench wraps <strong>19</strong> AI coding agents — CodeBuddy, Claude Code, Codex and more — into a single web workbench. Execution stays on your server, the UI runs anywhere, and <strong>one session</strong> follows you across phone, tablet and desktop.',
+      'ClawBench wraps <strong>25</strong> AI coding agents — CodeBuddy, Claude Code, Codex and more — into a single web workbench. Execution stays on your server, the UI runs anywhere, and <strong>one session</strong> follows you across phone, tablet and desktop.',
     'hero.cta1': 'Get started',
     'hero.cta2': 'View source',
 
@@ -208,7 +208,7 @@
     'gal.lede': 'Everything below is a real screenshot, with no visual touch-ups.',
     'gal.chat': 'Chat · visible tool calls',
     'gal.office': 'Documents · native Office',
-    'gal.agents': 'Agents · 19 backends',
+    'gal.agents': 'Agents · 25 backends',
     'gal.ppt': 'Documents · native slides',
     'gal.git': 'Git · branch graph and history',
     'gal.mermaid': 'Markdown · Mermaid diagrams',
@@ -231,7 +231,7 @@
       'Everything stays on your own machine: a SQLite database plus files in the data directory, with no third-party relay. Passwords are stored salted with SHA-256, and even local requests carry a short-lived HMAC token. For public access, use a tunnel or reverse proxy with TLS.',
     'faq.q4': 'Which AI agents are supported?',
     'faq.a4':
-      '19 built-in backends: ClawBench Agent (built in), CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, Qoder CN, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Kimi, Antigravity, Grok Build, ZCode, Cursor, Hermes Agent, Command Code and OpenClaw. You can also add a <strong>custom ACP agent</strong> — any tool that speaks ACP over stdio works with one launch command.',
+      '25 built-in backends: ClawBench Agent (built in), CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, Qoder CN, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Kimi, Antigravity, Grok Build, ZCode, Cursor, Hermes Agent, Command Code, OpenClaw, Qwen Code, Cline, GitHub Copilot, MiniMax Code, Kiro and TRAE. You can also add a <strong>custom ACP agent</strong> — any tool that speaks ACP over stdio works with one launch command.',
     'faq.q5': 'How do I reach my home machine from outside?',
     'faq.a5':
       'IPv6 direct connection, EasyTier decentralized networking (no VPS needed), SSH tunnels and an HTTP/2 stream tunnel. Reverse mappings bind only to <code>127.0.0.1</code> and reserved ports are rejected, so nothing extra gets exposed.',
@@ -327,15 +327,15 @@
   var META = {
     zh: {
       title: 'ClawBench — 从掌心到桌面，同一个 AI 工作台',
-      desc: 'ClawBench 把 CodeBuddy、Claude Code、Codex 等 19 个 AI 编程智能体封装成一个 Web 工作台。服务端执行，客户端呈现，一个会话在手机、平板和桌面之间无缝继续。单文件部署，MIT 开源。',
+      desc: 'ClawBench 把 CodeBuddy、Claude Code、Codex 等 25 个 AI 编程智能体封装成一个 Web 工作台。服务端执行，客户端呈现，一个会话在手机、平板和桌面之间无缝继续。单文件部署，MIT 开源。',
       ogTitle: 'ClawBench — 从掌心到桌面，同一个 AI 工作台',
-      ogDesc: '19 个 AI 编程智能体，一块屏幕就够。服务端执行，客户端呈现，单文件部署。'
+      ogDesc: '25 个 AI 编程智能体，一块屏幕就够。服务端执行，客户端呈现，单文件部署。'
     },
     en: {
       title: 'ClawBench — One AI workbench, from phone to desktop',
-      desc: 'ClawBench wraps 19 AI coding agents into a single web workbench. Execution on your server, UI anywhere, one session across phone, tablet and desktop. Single binary, MIT licensed.',
+      desc: 'ClawBench wraps 25 AI coding agents into a single web workbench. Execution on your server, UI anywhere, one session across phone, tablet and desktop. Single binary, MIT licensed.',
       ogTitle: 'ClawBench — One AI workbench, from phone to desktop',
-      ogDesc: '19 AI coding agents, one screen. Execution on your server, UI anywhere, single binary.'
+      ogDesc: '25 AI coding agents, one screen. Execution on your server, UI anywhere, single binary.'
     }
   };
 

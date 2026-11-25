@@ -13,6 +13,12 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('commandcode')).toBe('Command Code')
     expect(getBackendDisplayName('openclaw')).toBe('OpenClaw')
     expect(getBackendDisplayName('qodercn')).toBe('Qoder CN')
+    expect(getBackendDisplayName('qwen')).toBe('Qwen Code')
+    expect(getBackendDisplayName('cline')).toBe('Cline')
+    expect(getBackendDisplayName('copilot')).toBe('GitHub Copilot')
+    expect(getBackendDisplayName('minimax')).toBe('MiniMax Code')
+    expect(getBackendDisplayName('kiro')).toBe('Kiro')
+    expect(getBackendDisplayName('trae')).toBe('TRAE')
     expect(getBackendDisplayName('builtin')).toBe('ClawBench Agent')
   })
 

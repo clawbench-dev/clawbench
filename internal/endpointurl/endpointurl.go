@@ -129,7 +129,7 @@ func splitVersionPrefix(defaultPath string) (version, rest string, ok bool) {
 
 // isVersionSegment reports whether seg is a bare API version: "v" followed by
 // digits, optionally with a maturity suffix ("v1", "v2", "v1beta"). The digit
-// is required so a vendor namespace such as "/vecli" is not mistaken for a
+// is required so a vendor namespace such as "/vendor" is not mistaken for a
 // version — that would make the resolver drop the segment and post to
 // "/messages".
 func isVersionSegment(seg string) bool {

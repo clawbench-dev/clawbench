@@ -16,6 +16,7 @@ import {
   setLeftCollapsed,
   setChatCollapsed,
   computeIsWideScreen,
+  WIDE_SCREEN_MIN_WIDTH,
   isChatPanelVisible,
 } from '@/composables/useWideScreenLayout'
 import { dockTabIdsInDefaultOrder, isDockTabId, type DockTabId } from '@/composables/dockTabs'
@@ -38,15 +39,18 @@ beforeEach(() => {
 })
 
 describe('computeIsWideScreen', () => {
-  it('CSS width ≥960 → wide screen', () => {
+  it('design width ≥ WIDE_SCREEN_MIN_WIDTH → wide screen', () => {
     expect(computeIsWideScreen(1280, 1)).toBe(true)
     expect(computeIsWideScreen(1024, 1)).toBe(true)
-    expect(computeIsWideScreen(960, 1)).toBe(true)
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH, 1)).toBe(true)
+    // The foldable case the lowered threshold exists for.
+    expect(computeIsWideScreen(840, 1)).toBe(true)
+    expect(computeIsWideScreen(760, 1)).toBe(true)
   })
 
-  it('CSS width <960 → NOT wide screen, regardless of device size', () => {
-    expect(computeIsWideScreen(959, 1)).toBe(false)
-    expect(computeIsWideScreen(800, 1)).toBe(false)
+  it('design width below the threshold → NOT wide screen, regardless of device size', () => {
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH - 1, 1)).toBe(false)
+    expect(computeIsWideScreen(700, 1)).toBe(false)
     expect(computeIsWideScreen(430, 1)).toBe(false)
     expect(computeIsWideScreen(360, 1)).toBe(false)
   })
@@ -85,12 +89,12 @@ describe('computeIsWideScreen', () => {
   })
 
   it('divides the viewport by the UI scale before comparing', () => {
-    // 960 design px is the threshold, so the same window flips as it grows.
-    expect(computeIsWideScreen(960, 1)).toBe(true)
-    expect(computeIsWideScreen(1440, 1.5)).toBe(true)   // exactly 960 design px
-    expect(computeIsWideScreen(1439, 1.5)).toBe(false)  // 959.3 design px
-    expect(computeIsWideScreen(1920, 2)).toBe(true)     // exactly 960 design px
-    expect(computeIsWideScreen(1919, 2)).toBe(false)
+    // The threshold is in design px, so the same window flips as it grows.
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH, 1)).toBe(true)
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH * 1.5, 1.5)).toBe(true)  // exactly at the threshold
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH * 1.5 - 1, 1.5)).toBe(false)
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH * 2, 2)).toBe(true)
+    expect(computeIsWideScreen(WIDE_SCREEN_MIN_WIDTH * 2 - 1, 2)).toBe(false)
   })
 
   it('treats a nonsensical scale as 1', () => {
@@ -105,12 +109,13 @@ describe('computeIsWideScreen', () => {
 
 describe('useWideScreenLayout', () => {
   it('initializes wide-screen from the viewport and does not throw', () => {
+    // 800 design px: above the 760 threshold, so the two-column layout is on.
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1280 })
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
     _resetForTest()
     const { isWideScreen } = useWideScreenLayout()
-    expect(isWideScreen.value).toBe(false)
+    expect(isWideScreen.value).toBe(true)
   })
 
   it('leftTab defaults to browse and is clamped to allowed tabs', () => {
@@ -673,8 +678,8 @@ describe('useWideScreenLayout viewport wiring', () => {
     const mod = await import('@/composables/useWideScreenLayout')
     expect(mod.getWideScreenState().isWideScreen.value).toBe(true)
 
-    // Rotate to portrait: CSS width drops below 960 → back to single column.
-    // (Orientation is not consulted; the width change alone drives this.)
+    // Rotate to portrait: CSS width drops below the threshold → back to single
+    // column. (Orientation is not consulted; the width change alone drives this.)
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 960 })
     Object.defineProperty(window.screen, 'width', { configurable: true, value: 600 })
@@ -682,7 +687,7 @@ describe('useWideScreenLayout viewport wiring', () => {
     window.dispatchEvent(new Event('resize'))
     expect(mod.getWideScreenState().isWideScreen.value).toBe(false)
 
-    // Phone portrait, high DPR → stays single column (CSS width 430 < 960).
+    // Phone portrait, high DPR → stays single column (CSS width 430 << threshold).
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 430 })
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 })
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 3 })
@@ -712,6 +717,7 @@ describe('useWideScreenLayout viewport wiring', () => {
     window.dispatchEvent(new Event('resize'))
     expect(mod.getWideScreenState().isWideScreen.value).toBe(true)
   })
+
 })
 
 describe('useWideScreenLayout — layout memory scope', () => {

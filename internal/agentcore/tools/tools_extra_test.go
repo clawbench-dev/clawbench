@@ -2,9 +2,7 @@ package tools
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"clawbench/internal/symwalk"
 )
 
 // This file covers the tool behaviors that an agent hits when it gets things
@@ -876,9 +876,10 @@ func TestGrepTool_OutsideRootUsesAbsolutePaths(t *testing.T) {
 	}
 }
 
-// TestGrepTargets_ErrorsAndSkips pins the directory-walk branches: skipped
-// directories are never descended, an unreadable entry does not fail the search,
-// and a walk error is reported.
+// TestGrepTargets_SkipsWalkDirs pins the directory-walk policy: skipped
+// directories are never descended, a third-party file target bypasses the include
+// filter, and a root that cannot be read is reported instead of becoming "no
+// matches".
 func TestGrepTargets_SkipsWalkDirs(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "src", "a.go"), "x")
@@ -888,7 +889,7 @@ func TestGrepTargets_SkipsWalkDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err := grepTargets(root, info, "")
+	files, err := grepTargets(Env{Root: root}, root, info, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -903,41 +904,53 @@ func TestGrepTargets_SkipsWalkDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files, err = grepTargets(target, fi, "*.md")
+	files, err = grepTargets(Env{Root: root}, target, fi, "*.md")
 	if err != nil || len(files) != 1 || files[0] != target {
 		t.Fatalf("an explicit file must be searched despite the include filter, got %v %v", files, err)
 	}
 
-	// A walk that cannot descend is reported, not silently turned into "no
+	// A root that cannot be read must be reported, not silently turned into "no
 	// matches": the model would otherwise conclude the symbol is absent. The
-	// target itself must stat (the caller does that first), so the failure is
-	// injected on the walk rather than by removing the target.
-	restore := swapWalkDir(func(_ string, _ fs.WalkDirFunc) error { return os.ErrPermission })
-	defer restore()
-	if _, err := grepTargets(root, info, ""); err == nil || !strings.Contains(err.Error(), "cannot search") {
-		t.Fatalf("a failed walk must be reported, got %v", err)
+	// caller stats the target first, so the walk is handed the info of a
+	// directory that is gone by the time it reads it.
+	gone := filepath.Join(root, "gone")
+	if _, err := grepTargets(Env{Root: root}, gone, info, ""); err == nil || !strings.Contains(err.Error(), "cannot search") {
+		t.Fatalf("an unreadable root must be reported, got %v", err)
 	}
 }
 
-// swapWalkDir replaces the walk used by grepTargets for the duration of one
-// test, so the "the walk itself failed" branch can be reached without
-// depending on filesystem permissions (which root ignores).
-func swapWalkDir(fn func(string, fs.WalkDirFunc) error) func() {
-	prev := grepWalkDir
-	grepWalkDir = fn
-	return func() { grepWalkDir = prev }
-}
+// TestGrepTargets_FollowsSymlinkedDirectory pins that content behind a project
+// symlink is searchable — the file manager shows those files, so a grep that
+// cannot see them answers "not found" for a file the user is looking at.
+func TestGrepTargets_FollowsSymlinkedDirectory(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	mustWriteFile(t, filepath.Join(outside, "linked.txt"), "needle\n")
+	if err := os.Symlink(outside, filepath.Join(root, "data")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
-// TestCollectGrepFile_SkipsUnreadableEntries pins that a walk error is a skip,
-// not a failure: one unreadable directory must not hide every match elsewhere.
-func TestCollectGrepFile_SkipsUnreadableEntries(t *testing.T) {
-	var files []string
-	err := collectGrepFile("/x", nil, os.ErrPermission, "", &files)
+	info, err := os.Stat(root)
 	if err != nil {
-		t.Fatalf("an unreadable entry must be skipped, got %v", err)
+		t.Fatal(err)
+	}
+	// Fence off: a link to another disk is a legitimate layout.
+	files, err := grepTargets(Env{Root: root}, root, info, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(files) != 1 || !strings.HasSuffix(filepath.ToSlash(files[0]), "data/linked.txt") {
+		t.Fatalf("a linked-in file must be listed, got %v", files)
+	}
+
+	// Fence on: the same link is outside the working directory, so the walk
+	// must not enter it — otherwise glob/grep would read what read refuses.
+	files, err = grepTargets(Env{Root: root, ConfineToWorkDir: true}, root, info, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(files) != 0 {
-		t.Fatalf("nothing must be added, got %v", files)
+		t.Fatalf("a confined turn must not walk outside its working directory, got %v", files)
 	}
 }
 
@@ -973,29 +986,18 @@ func TestCollectGlobMatch_ResultCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := &fakeDirEntry{name: filepath.Base(full[len(full)-1]), info: d}
+	entry := symwalk.Entry{Path: full[len(full)-1], Name: filepath.Base(full[len(full)-1]), Info: d}
 
 	for i := range full[:len(full)-1] {
 		matches = append(matches, full[i])
 	}
-	if err := collectGlobMatch("**/*.txt", root, full[len(full)-1], entry, nil, &matches); !errors.Is(err, fs.SkipAll) {
-		t.Fatalf("reaching the cap must stop the walk with fs.SkipAll, got %v", err)
+	if got := collectGlobMatch("**/*.txt", root, entry, &matches); got != symwalk.Stop {
+		t.Fatalf("reaching the cap must stop the walk with Stop, got %v", got)
 	}
 	if len(matches) != maxGlobResults {
 		t.Fatalf("cap not enforced: %d matches", len(matches))
 	}
 }
-
-// fakeDirEntry is the minimum fs.DirEntry collectGlobMatch reads.
-type fakeDirEntry struct {
-	name string
-	info os.FileInfo
-}
-
-func (f *fakeDirEntry) Name() string               { return f.name }
-func (f *fakeDirEntry) IsDir() bool                { return f.info.IsDir() }
-func (f *fakeDirEntry) Type() os.FileMode          { return f.info.Mode().Type() }
-func (f *fakeDirEntry) Info() (os.FileInfo, error) { return f.info, nil }
 
 // TestBashTool_ReportsNoOutput pins the placeholder: an empty result reads as a
 // broken tool, so a silent successful command is announced.
@@ -1106,6 +1108,36 @@ func TestShellCommand(t *testing.T) {
 	shell, flag := shellCommand()
 	if shell != "/bin/sh" || flag != "-c" {
 		t.Fatalf("got %q %q, want /bin/sh -c", shell, flag)
+	}
+}
+
+// TestGlobTool_FollowsSymlinkedDirectory pins that a pattern reaches files behind
+// a project symlink — the file manager lists them, so glob answering "no match"
+// for a file the user is looking at is the bug this guards. With the fence on,
+// the same link is outside the working directory and must stay invisible.
+func TestGlobTool_FollowsSymlinkedDirectory(t *testing.T) {
+	env, root := newEnv(t)
+	outside := t.TempDir()
+	mustWriteFile(t, filepath.Join(outside, "nested.go"), "package x")
+	if err := os.Symlink(outside, filepath.Join(root, "data")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	res := mustRun(t, GlobTool{}, env, map[string]any{"pattern": "data/**/*.go"})
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Text)
+	}
+	if !strings.Contains(res.Text, "data/nested.go") {
+		t.Fatalf("a file behind a linked directory must match, got %q", res.Text)
+	}
+
+	env.ConfineToWorkDir = true
+	res = mustRun(t, GlobTool{}, env, map[string]any{"pattern": "**/*.go"})
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Text)
+	}
+	if strings.Contains(res.Text, "nested.go") {
+		t.Fatalf("a confined turn must not list files outside its working directory, got %q", res.Text)
 	}
 }
 

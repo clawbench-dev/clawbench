@@ -34,6 +34,10 @@ var skillAwareBackends = map[string]bool{
 	"commandcode": true, // .commandcode/skills + .agents/skills (cli.mjs resolveSkillLoadPlan adds both at the user tier)
 	"cursor":      true, // .cursor/skills + .claude/skills + .codex/skills + .grok/skills + .agents/skills (verified with marker SKILL.md files; skills also surface as ACP slash commands)
 	"openclaw":    true, // <workspace>/skills + <workspace>/.agents/skills + ~/.agents/skills + ~/.openclaw/skills + per-agent workshop-skills (verified with marker SKILL.md files: the model listed marker-oc-probe and marker-agents-probe by name)
+	"qwen":        true, // .qwen/skills + .agents/skills (real user skills showed up in the model request; project-level dirs did not)
+	"cline":       true, // .cline/skills + .agents/skills (+ project .clinerules/.claude skills); skills register as a use_skill TOOL, not as prompt text
+	"copilot":     true, // .copilot/skills + .agents/skills (+ project .github/.agents/.claude skills); verified per-directory with marker skills in ACP availableCommands
+	"kiro":        true, // .kiro/skills only (project .kiro/skills is per-cwd); marker skills appear as progressive_context items of type "skill". It does NOT read .agents/skills (0 hits in the binary)
 
 	// Do NOT load their own skills → ClawBench must inject.
 	//
@@ -57,6 +61,10 @@ var skillAwareBackends = map[string]bool{
 	// when skills are disabled globally) — which is why this is false and not
 	// a "no directory" case with special handling.
 	"builtin": false,
+	"minimax": true, // <home>/.minimax/skills (the bundle resolves it beside the data dir); skills also surface as slash commands
+
+	"trae": true, // <TRAE_HOME>/.trae/skills (the shipped binary resolves "${TRAE_HOME:-$HOME/.trae}/skills")
+
 }
 
 // pluginsForSkillCheck snapshots the registry at package init.
@@ -126,6 +134,7 @@ func TestSharedSkillsDirDeclaredWhereReadable(t *testing.T) {
 		"codex": true, "opencode": true,
 		"mimo": true, "qoder": true, "qodercn": true, "dsh": true, "deepseek": true,
 		"cursor": true, "commandcode": true, "openclaw": true,
+		"qwen": true, "cline": true, "copilot": true,
 	}
 	for _, p := range pluginsForSkillCheck {
 		if !readsShared[p.ID] {

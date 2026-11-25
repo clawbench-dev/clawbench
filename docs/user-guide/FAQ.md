@@ -6,7 +6,7 @@ A: 支持 Linux（x86_64 / ARM64）、macOS（Apple Silicon / Intel）和 Window
 
 **Q: 支持哪些 AI 后端？**
 
-A: 支持 ClawBench Agent（内置）、CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 十九种后端，外部后端统一走 ACP 协议。可在 Web UI 中实时切换，会话数据隔离。需确保对应 CLI 已安装并在 PATH 中可用；内置智能体零依赖，不需要安装任何 CLI。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
+A: 支持 ClawBench Agent（内置）、CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw、Qwen Code、Cline、GitHub Copilot、MiniMax Code、Kiro、TRAE 二十五种后端，外部后端统一走 ACP 协议。可在 Web UI 中实时切换，会话数据隔离。需确保对应 CLI 已安装并在 PATH 中可用；内置智能体零依赖，不需要安装任何 CLI。OpenClaw 走 ACP 桥接，需要先跑起它自己的 Gateway（`openclaw gateway start`），否则桥连不上会表现为「Agent 启动超时」。
 
 **Q: 如何添加新的智能体？**
 
@@ -14,7 +14,7 @@ A: 从欢迎屏幕安装智能体，或在 Web UI 中创建新智能体，选择
 
 **Q: 是否需要配置 API Key？**
 
-A: 不需要。ClawBench 通过调用本地已装好的后端（内置的 ClawBench Agent、CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw 共 19 种）实现 AI 功能，凭据由这些工具自己管理；ClawBench 只在「创建智能体」时让你填 LLM 提供商的 API Key（用于标题生成、摘要等旁路能力）。个别后端需要额外前置条件——例如 OpenClaw 走 ACP 桥接，要先跑起它自己的 Gateway（`openclaw gateway start`），否则表现为「Agent 启动超时」。
+A: 不需要。ClawBench 通过调用本地已装好的后端（内置的 ClawBench Agent、CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、Qoder CN（国内版）、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Kimi、Antigravity、Grok Build、ZCode、Cursor、Hermes Agent、Command Code、OpenClaw、Qwen Code、Cline、GitHub Copilot、MiniMax Code、Kiro、TRAE 共 25 种）实现 AI 功能，凭据由这些工具自己管理；ClawBench 只在「创建智能体」时让你填 LLM 提供商的 API Key（用于标题生成、摘要等旁路能力）。个别后端需要额外前置条件——例如 OpenClaw 走 ACP 桥接，要先跑起它自己的 Gateway（`openclaw gateway start`），否则表现为「Agent 启动超时」。
 
 **Q: TTS 语音合成可以使用本地模型吗？**
 

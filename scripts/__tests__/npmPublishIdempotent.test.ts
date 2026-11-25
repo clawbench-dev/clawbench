@@ -110,6 +110,44 @@ describe('release.yml — one tag runs one release pipeline', () => {
   })
 })
 
+describe('release.yml — npm 是第二段，失败不影响发布结论', () => {
+  const jobText = (key: string): string => {
+    const job = JOBS.find((j) => j.key === key)
+    expect(job, `job ${key} not found`).toBeDefined()
+    return job!.text
+  }
+
+  it('npm 只在整个 GitHub 发布完成之后才开始', () => {
+    // release-notes 与 desktop-checksums 是第一段的两个收尾 job（前者覆盖
+    // 各平台二进制与 docker，后者覆盖全部桌面包与 SHA256SUMS）。npm 依赖
+    // 它们，等于依赖「GitHub Release 已经完整发出去」。
+    expect(
+      jobText('publish-npm'),
+      'npm 必须在 GitHub Release 完整发布之后才跑'
+    ).toMatch(/^\s{4}needs:\s*\[release-notes, desktop-checksums\]\s*$/m)
+  })
+
+  it('npm 失败不把整条流水线打红', () => {
+    expect(
+      jobText('publish-npm'),
+      'npm 是附带渠道，发布成败由 GitHub Release 决定'
+    ).toMatch(/^\s{4}continue-on-error:\s*true\s*$/m)
+    expect(
+      jobText('sync-npmmirror'),
+      '镜像同步属于同一段，失败同样不能影响发布结论'
+    ).toMatch(/^\s{4}continue-on-error:\s*true\s*$/m)
+  })
+
+  it('GitHub 发布（含 Release Notes）不等 npm', () => {
+    const needs = jobText('release-notes').match(/^\s{4}needs:\s*\[(.*)\]\s*$/m)
+    expect(needs, 'release-notes 缺少 needs').not.toBeNull()
+    expect(
+      needs![1].split(',').map((s) => s.trim()),
+      'Release Notes 挂上 npm 后，npm 一失败整条流水线就红'
+    ).not.toContain('publish-npm')
+  })
+})
+
 describe('release.yml — every publish step goes through the idempotent script', () => {
   it('parses the workflow into jobs', () => {
     // A parser matching nothing would make the per-job assertions vacuous.

@@ -21,9 +21,13 @@ var (
 	decodeJSON             = httpx.DecodeJSON
 	decodeOptionalJSON     = httpx.DecodeOptionalJSON
 	validateAndResolvePath = httpx.ValidateAndResolvePath
-	resolveAbsPath         = httpx.ResolveAbsPath
-	isPathUnderAnyRoot     = httpx.IsPathUnderAnyRoot
-	isPathUnderBase        = httpx.IsPathUnderBase
+	// 读接口专用：允许项目内的符号链接指向项目外（详见 httpx.ResolveReadPath），
+	// 写接口仍然用严格的 validateAndResolvePath。
+	validateAndResolveReadPath = httpx.ValidateAndResolveReadPath
+	resolveReadPath            = httpx.ResolveReadPath
+	resolveAbsPath             = httpx.ResolveAbsPath
+	isPathUnderAnyRoot         = httpx.IsPathUnderAnyRoot
+	isPathUnderBase            = httpx.IsPathUnderBase
 )
 
 // 编译期断言：别名签名与 httpx 一致（防止有人改了一边忘了另一边）。
@@ -36,4 +40,5 @@ var (
 	_ func(http.ResponseWriter, *http.Request, string) (string, bool) = resolveAbsPath
 	_ func(string) bool                                               = isPathUnderAnyRoot
 	_ func(string, string) bool                                       = isPathUnderBase
+	_ func(string, string) (string, bool)                             = resolveReadPath
 )

@@ -62,6 +62,16 @@ func TestOrphanCmdlinePatterns_ReturnsACopy(t *testing.T) {
 	assert.Len(t, orphanCmdlinePatterns(), 2)
 }
 
+// The exported matcher is what a backend package's own test uses to prove its
+// declared pattern recognizes its argv; it must agree with the internal path.
+func TestOrphanCmdlineMatches_MatchesRegisteredShape(t *testing.T) {
+	resetOrphanPatterns(t)
+	RegisterOrphanCmdline("minimax-probe", "acp")
+
+	assert.True(t, OrphanCmdlineMatches([]byte("minimax-probe\x00acp\x00")))
+	assert.False(t, OrphanCmdlineMatches([]byte("minimax-probe\x00exec\x00prompt\x00")))
+}
+
 // resetOrphanPatterns clears the package registry and restores the caller's
 // state afterwards, so these tests neither leak into each other nor erase the
 // real registrations made by the backend plugins at init.

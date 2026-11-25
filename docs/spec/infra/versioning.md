@@ -200,6 +200,19 @@ env:
 - **服务端从 GitHub 直连拉清单**，不经过 gh-proxy：如果 zip 和清单都来自同一个代理，代理可以同时替换两者。拉不到时返回空 map，客户端跳过校验（旧服务端/dev 构建同理）。
 - **客户端按下载 URL 的文件名查表**，不匹配就换下一个候选；没有该文件名时记日志后继续。
 
+### 两段式：GitHub Release 先完整发完，npm 再发
+
+`release.yml` 内部分两段，**发布成败只看第一段**：
+
+- **第一段**：各平台二进制、桌面包、`SHA256SUMS`、`Release Notes` 全部完成，GitHub Release 已经是完整可用的状态。
+- **第二段**：`publish-npm` 的 `needs` 指向第一段的两个收尾 job（`release-notes`、`desktop-checksums`），因此只在 GitHub 发布成功之后才启动；`sync-npmmirror` 跟在它后面，同样属于第二段。
+
+第二段的两个 job 都带 `continue-on-error: true`：失败时该 job 标红（能看见「npm 没发上」），但整条 run 的结论仍是成功。npm 只是附带渠道，GitHub Release 才是发布本体——不能让镜像抖动或 npm 认证问题把一次成功的发布打成失败。
+
+**代价是整条流水线晚 5–8 分钟结束**（v0.145.0 / v0.147.0 实测）：桌面打包是最后收尾的那一段，`Release Notes` 只要 15 秒。换来的是 npm 不会先于发布结果发出去——否则某个桌面包挂掉时，npm 上会留下一个「GitHub 发布失败但 npm 已有」的版本，而 npm 版本号不可撤销（只能 deprecate）。
+
+没有拆成两个 workflow 文件：跨 workflow 要重新解决 tag、ref、artifact 三件事，任何一处接错都表现为「npm 静默没发」，而 v0.110/111/112 连续三个版本没发上 npm 正是这种形态。守护见 `scripts/__tests__/npmPublishIdempotent.test.ts`。
+
 #### npm 发布认证：OIDC Trusted Publishing
 
 `publish-npm` 改用 **OIDC Trusted Publishing**，不再用长期 token。
@@ -217,7 +230,7 @@ npm 发完不等于镜像有了。npmmirror 平时靠上游事件自动同步，
 
 `sync-npmmirror` job 在所有 npm 发布之后跑 `scripts/npmmirror-sync.sh`：对每个包提交一次同步任务，然后**统一**轮询（镜像任务是并行的，逐个等会把最坏情况变成「包数 × 等待窗口」），最后再实取 1KB 验一次 tarball——元数据先到、文件后到，只查元数据会误判成功。
 
-它单独成 job 而不是并进 `publish-npm`：失败只让流水线变红，已发布的包不受影响，重跑这一个 job 即可（脚本幂等）。守护 `scripts/__tests__/npmmirrorSync.test.ts` 用假 curl 跑真脚本，钉住三件事：版本晚几次才出现时继续轮询、始终不同步的包要点名失败、tarball 下不了也算没同步好。
+它单独成 job 而不是并进 `publish-npm`：失败只标红这一段，已发布的包和整条流水线的结论都不受影响，重跑这一个 job 即可（脚本幂等）。守护 `scripts/__tests__/npmmirrorSync.test.ts` 用假 curl 跑真脚本，钉住三件事：版本晚几次才出现时继续轮询、始终不同步的包要点名失败、tarball 下不了也算没同步好。
 
 ### 下游影响
 

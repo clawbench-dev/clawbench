@@ -267,6 +267,44 @@ func (failingFileProvider) Synthesize(context.Context, string, string, string) e
 	return context.DeadlineExceeded
 }
 
+// partialStreamProvider writes a valid MP3, streams a little of it, and THEN
+// fails — the shape of a reading cut off mid-sentence.
+type partialStreamProvider struct{ fixtureProvider }
+
+func (p *partialStreamProvider) SynthesizeStream(ctx context.Context, _, outputPath, _ string,
+	_ chan<- []byte,
+) error {
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(outputPath, tinyMP3(), 0o644); err != nil {
+		return err
+	}
+	return context.DeadlineExceeded
+}
+
+// A truncated reading must not be reported as done, and the fragment must not
+// stay on disk: the next read would find a non-empty file and replay it.
+func TestSpeakSummary_TruncatedStreamIsReportedAndDiscarded(t *testing.T) {
+	dir := t.TempDir()
+	mp3Path := filepath.Join(dir, "truncated.mp3")
+
+	srv, cleanup := setupSpeakSummary(t, &partialStreamProvider{}, mp3Path)
+	defer cleanup()
+
+	conn := dialStream(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	frames, _ := drainFrames(t, conn)
+	last := frames[len(frames)-1]
+	if last[ttsWSType] != strError {
+		t.Fatalf("last frame = %v, want an error instead of done", last)
+	}
+	if _, statErr := os.Stat(mp3Path); !os.IsNotExist(statErr) {
+		t.Fatalf("the half-spoken file must be removed, stat err = %v", statErr)
+	}
+}
+
 func TestSpeakSummary_CorruptCacheEmitsDecodeError(t *testing.T) {
 	dir := t.TempDir()
 	mp3Path := filepath.Join(dir, "broken.mp3")
@@ -299,6 +337,80 @@ func TestSpeakSummary_StreamingGarbageEmitsDecodeError(t *testing.T) {
 	if len(frames) != 1 || frames[0][messageKey] != "decode failed" {
 		t.Fatalf("frames = %v, want a single decode failed error", frames)
 	}
+}
+
+// lateStreamProvider 把整段 MP3 都放完、最后才报合成失败——线上是"最后一帧
+// 写超时"的形状。解码器已经播了一部分，客户端仍必须收到错误而不是 done。
+type lateStreamProvider struct{ fixtureProvider }
+
+func (p *lateStreamProvider) SynthesizeStream(ctx context.Context, text, outputPath, lang string,
+	chunkCh chan<- []byte,
+) error {
+	if err := p.fixtureProvider.SynthesizeStream(ctx, text, outputPath, lang, chunkCh); err != nil {
+		return err
+	}
+	return context.DeadlineExceeded
+}
+
+// 合成流放完但上游报错：客户端必须收到错误帧，且半成品文件要删掉——下一次
+// 点击把非空 .mp3 当成已完成的缓存，会重放这段其实失败的朗读。
+//
+// 帧序不是本测试的关注点：pumpPCM 播完会先发 done，错误帧随后才到，所以这里
+// 读到连接关闭为止，再断言错误帧出现过、文件已删。
+func TestSpeakSummary_LateSynthesisErrorIsReportedAndDiscarded(t *testing.T) {
+	dir := t.TempDir()
+	mp3Path := filepath.Join(dir, "late-error.mp3")
+
+	srv, cleanup := setupSpeakSummary(t, &lateStreamProvider{}, mp3Path)
+	defer cleanup()
+
+	conn := dialStream(t, srv)
+	defer func() { _ = conn.CloseNow() }()
+
+	frames := drainFramesUntilClose(t, conn)
+	var synthErr map[string]any
+	for _, f := range frames {
+		if f[ttsWSType] == strError && f[messageKey] == "synthesize failed" {
+			synthErr = f
+		}
+	}
+	if synthErr == nil {
+		t.Fatalf("frames = %v, want a synthesize failed error", frames)
+	}
+	if _, statErr := os.Stat(mp3Path); !os.IsNotExist(statErr) {
+		t.Fatalf("the failed reading must not stay on disk, stat err = %v", statErr)
+	}
+}
+
+// drainFramesUntilClose reads every frame until the handler closes the
+// connection (the late-error path emits done and then an error).
+func drainFramesUntilClose(t *testing.T, conn *websocket.Conn) []map[string]any {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	var frames []map[string]any
+	for {
+		mt, data, err := conn.Read(ctx)
+		if err != nil {
+			return frames
+		}
+		if mt != websocket.MessageText {
+			continue
+		}
+		var frame map[string]any
+		require.NoError(t, json.Unmarshal(data, &frame), "frame is not JSON: %s", data)
+		frames = append(frames, frame)
+	}
+}
+
+// 删除半成品失败（用非空目录制造失败）只能记日志：调用方紧接着还要给客户端
+// 发错误帧，这里 panic 或返回错误都会让收尾静默断掉。
+func TestRemovePartialAudio_RemoveFailureIsNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("x"), 0o644))
+
+	removePartialAudio(dir)
 }
 
 func TestDownmixFrames(t *testing.T) {

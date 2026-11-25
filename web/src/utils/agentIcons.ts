@@ -19,6 +19,10 @@ import zhipuIcon from '@lobehub/icons-static-svg/icons/zhipu-color.svg?raw'
 import mimoIcon from '@lobehub/icons-static-svg/icons/xiaomimimo.svg?raw'
 import antigravityIcon from '@lobehub/icons-static-svg/icons/antigravity-color.svg?raw'
 import openclawIcon from '@lobehub/icons-static-svg/icons/openclaw-color.svg?raw'
+import qwenIcon from '@lobehub/icons-static-svg/icons/qwen-color.svg?raw'
+import minimaxIcon from '@lobehub/icons-static-svg/icons/minimax-color.svg?raw'
+import kiroIcon from '@lobehub/icons-static-svg/icons/kiro-color.svg?raw'
+import traeIcon from '@lobehub/icons-static-svg/icons/trae-color.svg?raw'
 
 // Monochrome icons (fill="currentColor" — inherit CSS `color`, theme-aware)
 import opencodeIcon from '@lobehub/icons-static-svg/icons/opencode.svg?raw'
@@ -27,6 +31,10 @@ import grokIcon from '@lobehub/icons-static-svg/icons/grok.svg?raw'
 import hermesIcon from '@lobehub/icons-static-svg/icons/hermesagent.svg?raw'
 import cursorIcon from '@lobehub/icons-static-svg/icons/cursor.svg?raw'
 import kimiIcon from '@lobehub/icons-static-svg/icons/kimi.svg?raw'
+import clineIcon from '@lobehub/icons-static-svg/icons/cline.svg?raw'
+// GitHub Copilot, not Microsoft Copilot: the vendor's own mark is the
+// monochrome "githubcopilot" glyph. "copilot-color" is the Microsoft assistant.
+import copilotIcon from '@lobehub/icons-static-svg/icons/githubcopilot.svg?raw'
 
 
 // Command Code (Langbase) is not in lobe-icons. Its official mark ships inside
@@ -78,6 +86,10 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     // OpenClaw's official mark is the red lobster; lobe-icons ships it as a
     // color SVG with baked-in gradient fills.
     openclaw: { svg: extractSvgInner(openclawIcon), viewBox: extractViewBox(openclawIcon) },
+    qwen: { svg: extractSvgInner(qwenIcon), viewBox: extractViewBox(qwenIcon) },
+    minimax: { svg: extractSvgInner(minimaxIcon), viewBox: extractViewBox(minimaxIcon) },
+    kiro: { svg: extractSvgInner(kiroIcon), viewBox: extractViewBox(kiroIcon) },
+    trae: { svg: extractSvgInner(traeIcon), viewBox: extractViewBox(traeIcon) },
 
     // Monochrome icons (currentColor — CSS `color` controls theme adaptation)
     opencode: { svg: extractSvgInner(opencodeIcon), viewBox: extractViewBox(opencodeIcon), needsBg: true, monoCssClass: 'mono-opencode' },
@@ -97,6 +109,11 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     // variant in Kimi's own brand blue is legible on both themes, so it needs
     // no contrasting backdrop.
     kimi: { svg: extractSvgInner(kimiIcon), viewBox: extractViewBox(kimiIcon), monoCssClass: 'mono-kimi' },
+    // Cline ships only a monochrome mark (fill="currentColor").
+    cline: { svg: extractSvgInner(clineIcon), viewBox: extractViewBox(clineIcon), needsBg: true, monoCssClass: 'mono-cline' },
+    // GitHub Copilot's mark is monochrome; the color class keeps it legible on
+    // both theme bases.
+    copilot: { svg: extractSvgInner(copilotIcon), viewBox: extractViewBox(copilotIcon), needsBg: true, monoCssClass: 'mono-copilot' },
 
     // Command Code's mark is monochrome, so it gets the theme-aware mono class.
     commandcode: { svg: commandcodeIcon, viewBox: '0 0 144 144', needsBg: true, monoCssClass: 'mono-commandcode' },

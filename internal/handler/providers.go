@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/providerhttp"
 	"clawbench/internal/service"
 	"clawbench/internal/summarize"
 )
@@ -520,6 +521,9 @@ func buildProviderProbeRequest(ctx context.Context, p *model.Provider, modelID s
 	}
 	req.Header.Set("Content-Type", "application/json")
 	applyProviderAuth(req, p)
+	// The probe must send the same extra headers a real turn sends, or a
+	// working provider fails its own test (OpenCode Go: 400 MissingSessionID).
+	providerhttp.Apply(req, p.BaseURL, p.PresetID, "")
 	return req, nil
 }
 

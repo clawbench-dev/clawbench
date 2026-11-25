@@ -174,6 +174,22 @@ type ACPPlugin struct {
 	// With this set, the host suppresses the mode surface for the backend.
 	ModesMirrorThoughtLevel bool
 
+	// InitialConfigOptions are values a NEW session must start with, applied
+	// right after session/new (see ai.ACPConn.applyInitialConfigOptionsLocked).
+	//
+	// They exist for a backend whose own default is wrong for a host that
+	// renders permissions: kiro starts every session with autopilot=on
+	// ("Agent executes tools without confirmation"), which means
+	// session/request_permission never arrives and the user sees no permission
+	// card at all. A config option can only be written after the session
+	// exists, and kiro resets it per session, so a host-side default is the
+	// only way to make "supervised" the starting state.
+	//
+	// Applied only when the agent advertised the id in session/new, and only
+	// when the current value differs — an unadvertised id would just answer
+	// -32602.
+	InitialConfigOptions map[string]string
+
 	// SpawnHooks customizes the ACP child's argv/env at spawn time.
 	//
 	// Backend-private spawn workarounds live here instead of in the shared

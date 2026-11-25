@@ -161,6 +161,7 @@ import {
   assetNameFromUrl,
   sha256Hex,
 } from './install'
+import { _resetInstanceForTests, setActiveInstanceId } from './instanceProfile'
 import { app } from 'electron'
 
 /**
@@ -985,6 +986,23 @@ describe('restartInto', () => {
 
     expect(spawnMock).toHaveBeenCalledTimes(1)
     expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('carries the instance id into the new process', async () => {
+    // The upgraded binary lives in the shared version store, so its path no
+    // longer identifies which copy started it. Dropping the flag would move
+    // every copy onto the default profile after its first upgrade.
+    installVersion('1.2.3')
+    writePointer('1.2.3')
+    setActiveInstanceId('abcd1234')
+
+    try {
+      await restartInto('1.2.3')
+    } finally {
+      _resetInstanceForTests()
+    }
+
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual(['--instance', 'abcd1234'])
   })
 
   it('reports a binary that cannot start, clears the pointer and does not quit', async () => {

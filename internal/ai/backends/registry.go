@@ -204,6 +204,17 @@ func LookupACPModesMirrorThoughtLevel(backendID string) bool {
 	return false
 }
 
+// LookupACPInitialConfigOptions returns the values a backend's new sessions must
+// start with (see ACPPlugin.InitialConfigOptions). Unknown backends return nil.
+func LookupACPInitialConfigOptions(backendID string) map[string]string {
+	pluginsMu.RLock()
+	defer pluginsMu.RUnlock()
+	if p, ok := plugins[backendID]; ok && p.ACP != nil {
+		return p.ACP.InitialConfigOptions
+	}
+	return nil
+}
+
 // LookupACPBehavior returns the backend's ACP event-mapping hooks, or nil when
 // it declares none (the generic implementation applies).
 func LookupACPBehavior(backendID string) *ai.ACPBehavior {

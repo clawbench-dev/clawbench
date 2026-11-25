@@ -11,6 +11,7 @@ import { isEmbeddedServerActive, stopEmbeddedServer } from './localServer'
 import { getCookieHeaderForUrl, record, recordError } from './clientLog'
 import { floatingCapsuleLabels, resolveNativeLanguage } from './labels'
 import { createMainWindow, getMainWindow, onMainWindowCreated } from './window'
+import { instanceLabel } from './instance'
 import {
   DEFAULT_HEIGHT,
   DEFAULT_WIDTH,
@@ -627,7 +628,12 @@ function destroyTray(): void {
 function syncTray(): void {
   if (!tray) return
   try {
-    tray.setToolTip(trayTooltip(stats, labels()))
+    // A copy runs beside the original and gets its own tray icon. Without the
+    // name both icons are indistinguishable, so the counters would look like
+    // they belong to one app.
+    const tip = trayTooltip(stats, labels())
+    const name = instanceLabel()
+    tray.setToolTip(name ? `${name} · ${tip}` : tip)
     tray.setContextMenu(trayMenu())
   } catch {
     /* tray gone */

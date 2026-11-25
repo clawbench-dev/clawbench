@@ -181,6 +181,21 @@ type ProviderEnvSpec struct {
 	// variable has to exist. Every other check still applies — the protocol
 	// list is what makes the agent bindable in the first place.
 	InProcess bool
+
+	// ModelEnv names the variable that carries the model id this process must
+	// use at STARTUP. It exists for backends that resolve the model before a
+	// session exists, so the picker's per-session choice cannot reach them:
+	//
+	//   - qwen's OpenAI auth refuses session/new ("configure a model first")
+	//     unless OPENAI_MODEL is set, and the request keeps that id — a static
+	//     name would make every agent ask for a model the endpoint may not serve.
+	//   - copilot's BYOK refuses to start without COPILOT_PROVIDER_MODEL_ID.
+	//
+	// The value is the agent's pinned model when it comes from the provider,
+	// else the provider's DefaultModel. It is a process-level default, not a
+	// substitute for session-level switching: a backend that also advertises
+	// models over ACP still lets the session override it.
+	ModelEnv string
 }
 
 // providerEnvRegistry is the single place that knows which environment
@@ -808,15 +823,8 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 	if p.APIKey == "" {
 		return nil, fmt.Errorf("provider %q has no API key", p.Name)
 	}
-	// A provider with no endpoint on a backend that has an official service
-	// (CodeBuddy's account token): inject the credential plus the switches and
-	// skip every protocol/config-file path. The protocol is irrelevant here —
-	// the request goes to the backend's own endpoint.
-	if ProviderOwnServiceMode(backendID, p) {
-		return ownServiceEnv(backendID, spec, p)
-	}
-	if spec.ConfigOnly || (spec.KeyOnly != "" && p.BaseURL == "" && protocolEnvFor(spec, p.Protocol) == nil) {
-		return keyOnlyEnv(backendID, spec, p)
+	if env, handled, err := credentialOnlyEnv(backendID, spec, p, pinnedModel); handled || err != nil {
+		return env, err
 	}
 
 	pe := protocolEnvFor(spec, p.Protocol)
@@ -828,7 +836,8 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 		return nil, err
 	}
 	if p.BaseURL == "" {
-		return withInlineConfig(spec, p, pinnedModel, []string{keyVar + "=" + p.APIKey}), nil
+		return withModelEnv(spec, p, pinnedModel,
+			withInlineConfig(spec, p, pinnedModel, []string{keyVar + "=" + p.APIKey})), nil
 	}
 	env := make([]string, 0, 3+len(pe.Extra))
 	env = append(env, pe.BaseURL+"="+p.BaseURL, keyVar+"="+p.APIKey)
@@ -836,7 +845,60 @@ func BuildProviderEnv(backendID string, p *Provider, pinnedModel string) ([]stri
 		env = append(env, name+"="+value)
 	}
 	sort.Strings(env)
-	return withInlineConfig(spec, p, pinnedModel, env), nil
+	return withModelEnv(spec, p, pinnedModel, withInlineConfig(spec, p, pinnedModel, env)), nil
+}
+
+// credentialOnlyEnv renders the two paths that carry a credential WITHOUT a
+// protocol endpoint, and reports whether one of them applied:
+//
+//   - own service (CodeBuddy's account token): the request goes to the
+//     backend's own endpoint, so the protocol is irrelevant;
+//   - key-only / config-only: the CLI reads its credential from a file or a
+//     single variable and has no endpoint slot at all.
+//
+// handled=false means the caller must continue down the protocol path.
+func credentialOnlyEnv(backendID string, spec ProviderEnvSpec, p *Provider, pinnedModel string) ([]string, bool, error) {
+	if ProviderOwnServiceMode(backendID, p) {
+		env, err := ownServiceEnv(backendID, spec, p)
+		if err != nil {
+			return nil, true, err
+		}
+		return withModelEnv(spec, p, pinnedModel, env), true, nil
+	}
+	if spec.ConfigOnly || (spec.KeyOnly != "" && p.BaseURL == "" && protocolEnvFor(spec, p.Protocol) == nil) {
+		env, err := keyOnlyEnv(backendID, spec, p)
+		if err != nil {
+			return nil, true, err
+		}
+		return withModelEnv(spec, p, pinnedModel, env), true, nil
+	}
+	return nil, false, nil
+}
+
+// withModelEnv appends the startup model variable for backends that resolve the
+// model before any session exists (see ProviderEnvSpec.ModelEnv).
+//
+// The pinned model wins only when THIS provider serves it. The pin comes from
+// the agent's preference, which can outlive the provider it was chosen under
+// (rebinding the agent to another endpoint leaves the old id behind), and
+// handing that id to a process-level variable makes every turn fail against the
+// new endpoint instead of falling back to a model it does serve. Otherwise the
+// provider's own default is used. Both empty means "the provider declares no
+// model", and nothing is appended — the backend then fails its own startup check
+// with a message about the missing model, which is more useful than naming a
+// model the endpoint never served.
+func withModelEnv(spec ProviderEnvSpec, p *Provider, pinnedModel string, env []string) []string {
+	if spec.ModelEnv == "" {
+		return env
+	}
+	modelID := p.DefaultModel
+	if pinnedModel != "" && containsString(p.Models, pinnedModel) {
+		modelID = pinnedModel
+	}
+	if modelID == "" {
+		return env
+	}
+	return append(env, spec.ModelEnv+"="+modelID)
 }
 
 // ownServiceEnv renders the environment for an own-service provider: the
@@ -1370,7 +1432,10 @@ func BuildProviderEnvForAgent(agentID, backendID string, p *Provider, pinnedMode
 		if !ProviderConfigSecretInFile(backendID) {
 			env = append(env, ProviderSecretEnvName()+"="+p.APIKey)
 		}
-		return env, nil
+		// A config-directory backend can still need the model at startup; the
+		// file it owns is not always the thing that names it.
+		spec, _ := providerEnvSpec(backendID)
+		return withModelEnv(spec, p, pinnedModel, env), nil
 	}
 	return BuildProviderEnv(backendID, p, pinnedModel)
 }

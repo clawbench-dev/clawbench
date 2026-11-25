@@ -263,6 +263,38 @@ func TestMinimaxTTS_MalformedResponse(t *testing.T) {
 	}
 }
 
+// TestMinimaxTTS_OversizeResponseNamesTheRealCause pins the fix for long
+// answers. The audio travels as a HEX string, so a normal long segment used to
+// blow past a 4 MiB read limit, get cut mid-JSON, and surface as "malformed
+// response" — a misleading label for what was really "response too big".
+func TestMinimaxTTS_OversizeResponseNamesTheRealCause(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// Stream past the cap without allocating the whole thing.
+		chunk := bytes.Repeat([]byte("a"), 1<<20)
+		for i := 0; i <= minimaxTTSMaxResponseBytes/(1<<20); i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	p := newTestMinimaxProvider(srv.URL)
+	p.HTTPClient = &http.Client{Timeout: minimaxTTSTimeout}
+
+	out := filepath.Join(t.TempDir(), "out.mp3")
+	err := p.Synthesize(context.Background(), "你好", out, "zh")
+	if err == nil || !strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("err = %v, want an over-limit error", err)
+	}
+	if strings.Contains(err.Error(), "malformed response") {
+		t.Fatalf("err = %v, an oversize body must not be reported as malformed JSON", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("partial audio was left at %s", out)
+	}
+}
+
 func TestMinimaxTTS_MissingAudioNamesTheTrace(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

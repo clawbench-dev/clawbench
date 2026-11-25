@@ -1757,3 +1757,40 @@ func TestProvidersAPI_OwnServiceEditionRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"field":"baseUrl"`)
 }
+
+// TestBuildProviderProbeRequest_SendsOpenCodeSessionHeader pins that the
+// settings-page probe sends the headers a real turn sends. OpenCode Go answers
+// 400 MissingSessionID to a probe that omits them, which made a working
+// provider fail its own test.
+func TestBuildProviderProbeRequest_SendsOpenCodeSessionHeader(t *testing.T) {
+	p := &model.Provider{
+		Protocol: model.ProviderProtocolOpenAI,
+		BaseURL:  "https://opencode.ai/inference/go/openai/v1",
+		APIKey:   "sk-test",
+		PresetID: "opencode-go",
+	}
+	req, err := buildProviderProbeRequest(context.Background(), p, "deepseek-v4.1-flash")
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, req.Header.Get("x-opencode-session"),
+		"OpenCode rejects a probe without the session header")
+	assert.True(t, strings.HasPrefix(req.Header.Get("User-Agent"), "clawbench/"),
+		"OpenCode asks clients to identify themselves, got %q", req.Header.Get("User-Agent"))
+	assert.Equal(t, "Bearer sk-test", req.Header.Get("Authorization"))
+}
+
+// TestBuildProviderProbeRequest_NoSessionHeaderForOtherProviders keeps the new
+// header scoped: an unrelated gateway must see exactly what it saw before.
+func TestBuildProviderProbeRequest_NoSessionHeaderForOtherProviders(t *testing.T) {
+	p := &model.Provider{
+		Protocol: model.ProviderProtocolOpenAI,
+		BaseURL:  "https://api.deepseek.com",
+		APIKey:   "sk-test",
+		PresetID: "deepseek",
+	}
+	req, err := buildProviderProbeRequest(context.Background(), p, "deepseek-chat")
+	require.NoError(t, err)
+
+	assert.Empty(t, req.Header.Get("x-opencode-session"))
+	assert.Empty(t, req.Header.Get("User-Agent"))
+}

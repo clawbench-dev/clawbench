@@ -206,24 +206,14 @@ func parseSearchParams(w http.ResponseWriter, r *http.Request) (dirSearchParams,
 	return dirSearchParams{path: pathParam, query: query, recursive: recursive, exact: exact, limit: limit}, true
 }
 
-// classifyEntry returns the entry type string for a directory entry.
-func classifyEntry(d fs.DirEntry, name string) string {
-	if d.IsDir() {
-		return entryTypeDir
-	}
-	if model.IsImageFile(name) {
-		return entryTypeImage
-	}
-	return entryTypeFile
-}
-
 // resolveSearchRoot resolves the search root for DirSearch. An absolute path is
 // a project-EXTERNAL directory and is used directly once validated against the
 // configured roots; a relative path resolves against basePath (the project
 // root). Writes an error and returns false on failure.
 func resolveSearchRoot(w http.ResponseWriter, r *http.Request, basePath, pathParam string) (string, bool) {
 	if !filepath.IsAbs(pathParam) {
-		return validateAndResolvePath(w, r, basePath, pathParam)
+		// 读路径：搜索起点可以是一个指向项目外的符号链接目录，和浏览保持一致。
+		return validateAndResolveReadPath(w, r, basePath, pathParam)
 	}
 	resolved, err := filepath.Abs(pathParam)
 	if err != nil || !isPathUnderAnyRoot(resolved) {
@@ -335,10 +325,11 @@ func DirSearch(w http.ResponseWriter, r *http.Request) {
 	if externalRoot {
 		walkBase = absPath
 	}
-	if params.recursive {
-		walkAndMatchRecursive(ctx, absPath, walkBase, params.query, params.exact, onMatch)
-	} else {
-		walkAndMatchFlat(ctx, absPath, walkBase, params.query, params.exact, onMatch)
+	if runDirSearchWalk(ctx, params, absPath, walkBase, onMatch) {
+		// The walk hit its entry budget, so more matches may exist beyond what
+		// was found. Reporting it as truncated is honest: the client tells the
+		// user to narrow the query instead of "no more results".
+		truncated = true
 	}
 
 	// Check if context was cancelled
@@ -456,51 +447,47 @@ func DirSearchTop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, DirSearchTopResponse{Items: items, Total: len(ranked)})
 }
 
+// runDirSearchWalk runs the chosen walk and reports whether the results were cut
+// short by the walker's entry budget.
+func runDirSearchWalk(ctx context.Context, params dirSearchParams, absPath, walkBase string, onMatch func(string, string, string, []int, fs.FileInfo, string)) bool {
+	if !params.recursive {
+		walkAndMatchFlat(ctx, absPath, walkBase, params.query, params.exact, onMatch)
+		return false
+	}
+	return walkAndMatchRecursive(ctx, absPath, walkBase, params.query, params.exact, onMatch).Exhausted
+}
+
 // walkAndMatchRecursive walks the directory tree, fuzzy-matching each entry against the query.
 // On match, it calls onMatch with the entry's absolute path. It respects context cancellation.
-func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo, string)) {
-	err := filepath.WalkDir(absPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil //nolint:nilerr // skip inaccessible entries
+//
+// Symlinks are followed (see walkFollowSymlinks): a file that is only reachable
+// through a link inside the project is a legitimate hit, the same way it is a
+// legitimate row in the listing. The reported path stays the logical one.
+func walkAndMatchRecursive(ctx context.Context, absPath string, basePath string, query string, exact bool, onMatch func(string, string, string, []int, fs.FileInfo, string)) walkOutcome {
+	return walkFollowSymlinks(ctx, absPath, basePath, func(e walkEntry) walkResult {
+		if e.IsDir && shouldSkipSearchDir(e.Rel, e.Name) {
+			return walkSkipDir
 		}
 
-		// Check context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if path == absPath {
-			return nil
-		}
-
-		relPath, relErr := filepath.Rel(basePath, path)
-		if relErr != nil {
-			return nil //nolint:nilerr // skip entries with invalid relative paths
-		}
-		relPathSlash := filepath.ToSlash(relPath)
-
-		if d.IsDir() && shouldSkipSearchDir(relPathSlash, d.Name()) {
-			return fs.SkipDir
-		}
-
-		name := d.Name()
-		matchedIndexes := matchName(name, query, exact)
+		matchedIndexes := matchName(e.Name, query, exact)
 		if len(matchedIndexes) > 0 {
-			entryType := classifyEntry(d, name)
-			info, infoErr := d.Info()
-			if infoErr != nil {
-				info = nil
-			}
-			onMatch(name, relPathSlash, entryType, matchedIndexes, info, path)
+			onMatch(e.Name, e.Rel, classifyName(e.Name, e.IsDir), matchedIndexes, e.Info, e.Path)
 		}
-
-		return nil
+		return walkContinue
 	})
-	if err != nil {
-		slog.Debug("dir search walk incomplete", slog.String("err", err.Error()))
+}
+
+// classifyName returns the entry type for a name plus its (target) directory
+// status. Taking the flag instead of a DirEntry is what lets a symlink be typed
+// by what it points at.
+func classifyName(name string, isDir bool) string {
+	if isDir {
+		return entryTypeDir
 	}
+	if model.IsImageFile(name) {
+		return entryTypeImage
+	}
+	return entryTypeFile
 }
 
 // walkAndMatchFlat reads only the top-level entries and fuzzy-matches against the query.
@@ -529,15 +516,15 @@ func walkAndMatchFlat(ctx context.Context, absPath string, basePath string, quer
 			continue
 		}
 
+		info, _, ok := statFollowing(fullPath, d)
+		if !ok {
+			continue
+		}
+
 		name := d.Name()
 		matchedIndexes := matchName(name, query, exact)
 		if len(matchedIndexes) > 0 {
-			entryType := classifyEntry(d, name)
-			info, infoErr := d.Info()
-			if infoErr != nil {
-				info = nil
-			}
-			onMatch(name, filepath.ToSlash(relPath), entryType, matchedIndexes, info, fullPath)
+			onMatch(name, filepath.ToSlash(relPath), classifyName(name, info.IsDir()), matchedIndexes, info, fullPath)
 		}
 	}
 }

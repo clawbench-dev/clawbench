@@ -1133,11 +1133,11 @@ describe('landing page', () => {
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li:not(.more)'))
 
-      // 17 = the backend registry (internal/ai/backends) minus the built-in
+      // 23 = the backend registry (internal/ai/backends, 25) minus the built-in
       // agent (no logo of its own) and Qoder CN (same product as Qoder and
       // reads as a duplicate here).
       // Bumping this number is the reminder to add a logo when one is added.
-      expect(items.length).toBe(17)
+      expect(items.length).toBe(23)
       for (const li of items) {
         const svg = li.querySelector('svg.strip-logo')
         expect(svg, `no inline logo for "${li.textContent?.trim()}"`).toBeTruthy()
@@ -1170,7 +1170,7 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const items = Array.from(doc.querySelectorAll('.strip-list li'))
-      expect(items.length).toBe(17)
+      expect(items.length).toBe(23)
       for (const li of items) {
         expect(li.querySelector('svg.strip-logo-mono'), li.textContent?.trim()).toBeTruthy()
         const colour = li.querySelector('svg.strip-logo-color')
@@ -1203,9 +1203,9 @@ describe('landing page', () => {
       const dom = new JSDOM(html)
       const doc = dom.window.document
       const logos = Array.from(doc.querySelectorAll('svg.strip-logo-mono'))
-      expect(logos.length).toBe(17)
+      expect(logos.length).toBe(23)
       const kept = logos.filter((svg) => svg.getAttribute('fill-rule') === 'evenodd')
-      expect(kept.length).toBeGreaterThanOrEqual(15)
+      expect(kept.length).toBeGreaterThanOrEqual(22)
       dom.window.close()
     })
 

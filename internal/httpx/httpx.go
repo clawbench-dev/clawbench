@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 
@@ -134,6 +135,69 @@ func ValidateAndResolvePath(w http.ResponseWriter, r *http.Request, basePath, re
 		return "", false
 	}
 	return absPath, true
+}
+
+// ValidateAndResolveReadPath is ValidateAndResolvePath for READ-ONLY endpoints.
+// Writes 403 on failure. Returns (absPath, true) on success.
+func ValidateAndResolveReadPath(w http.ResponseWriter, r *http.Request, basePath, relPath string) (string, bool) {
+	absPath, ok := ResolveReadPath(basePath, relPath)
+	if !ok {
+		WriteLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return "", false
+	}
+	return absPath, true
+}
+
+// ResolveReadPath resolves a project-relative path for READ-ONLY access.
+//
+// It accepts one case ValidatePath rejects: a path that is lexically inside the
+// project but whose symlink resolves to a target OUTSIDE it. That is the whole
+// point of putting a link in a project — `data -> /mnt/disk/data` is how a user
+// brings an external tree in — and the file manager already browses such links
+// (the listing reports their resolved target and the client navigates there).
+// Refusing the same link to reads meant the listing showed a directory the
+// viewer, the quick preview and the path annotations all called "not found".
+//
+// The relaxation is bounded by the same rule absolute paths already follow: the
+// resolved target must be under a configured root. On Linux/macOS that root is
+// "/", so in practice any link is followed — which grants nothing new, because
+// the very same file is already readable through its absolute path. Two things
+// are deliberately NOT relaxed:
+//
+//   - a `..` escape stays refused: only the link's own indirection is honored,
+//     not a path that walks out of the project lexically;
+//   - writes keep using ValidatePath, so no mutation follows a link out.
+//
+// The returned path is the LEXICAL one (the link is not resolved), because that
+// is what the caller opens: the OS follows the link, and the reported row path
+// keeps matching what the client asked for.
+func ResolveReadPath(basePath, relPath string) (string, bool) {
+	if absPath, ok := model.ValidatePath(basePath, relPath); ok {
+		return absPath, true
+	}
+	return resolveSymlinkEscape(basePath, relPath)
+}
+
+// resolveSymlinkEscape handles the escape case ResolveReadPath documents.
+func resolveSymlinkEscape(basePath, relPath string) (string, bool) {
+	cleanRel := filepath.Clean(relPath)
+	if cleanRel == "." || filepath.IsAbs(cleanRel) || cleanRel == ".." ||
+		strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	absBase, err := filepath.Abs(basePath)
+	if err != nil {
+		return "", false
+	}
+	lexical := filepath.Join(absBase, cleanRel)
+	resolved, err := filepath.EvalSymlinks(lexical)
+	if err != nil {
+		return "", false // missing, or an unresolvable chain
+	}
+	if !IsPathUnderAnyRoot(resolved) {
+		return "", false
+	}
+	return lexical, true
 }
 
 // ResolveAbsPath resolves a path string to an absolute path under any root path.

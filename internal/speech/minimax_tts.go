@@ -41,6 +41,17 @@ const (
 
 	// minimaxTTSTimeout bounds one synthesis request.
 	minimaxTTSTimeout = 120 * time.Second
+
+	// minimaxTTSMaxResponseBytes bounds the JSON envelope read from the API.
+	//
+	// The audio arrives as a HEX string, so the body is twice the clip size, and
+	// a segment may hold minimaxTTSSegmentRunes runes of text. A 4 MiB cap (what
+	// this used to be, copied from the base64 engines) fits only ~2 MiB of audio:
+	// a normal long answer ran past it, the body was cut mid-JSON and the user
+	// saw "malformed response" for what was really "response too big". Sized off
+	// the segment budget instead: 2000 runes of Chinese at the slowest rate stays
+	// far below this, and hex doubling is charged twice over by the 2x headroom.
+	minimaxTTSMaxResponseBytes = 64 << 20
 )
 
 // MinimaxTTSProvider implements SpeechProvider against MiniMax T2A v2.
@@ -246,12 +257,17 @@ func (p *MinimaxTTSProvider) synthesizeSegment(ctx context.Context, text string,
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<22))
+	// One extra byte so an over-limit body is detected rather than silently
+	// reported as truncated JSON.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, minimaxTTSMaxResponseBytes+1))
 	if err != nil {
 		return fmt.Errorf("minimax-tts: failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("minimax-tts: API returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	if len(respBody) > minimaxTTSMaxResponseBytes {
+		return fmt.Errorf("minimax-tts: response exceeded %d bytes; the text segment is too long", minimaxTTSMaxResponseBytes)
 	}
 
 	var parsed minimaxTTSResponse

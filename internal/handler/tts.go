@@ -200,6 +200,18 @@ func ttsRunJob(
 		err := synthesizeFunc(synthesizeCtx, ttsSynthText(speakerPrefix, summary), absAudioPath, req.Language)
 		synthesizeCancel()
 
+		// Never leave broken audio where a success would: a truncated synthesis
+		// leaves a half-spoken file, and the TTS cache treats any non-empty file
+		// as a finished one. Left in place it would be replayed as a successful
+		// reading on every later click and never retried. The providers already
+		// remove their own output on error; this is the same guarantee for any
+		// provider that forgets.
+		if err != nil {
+			if rmErr := os.Remove(absAudioPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				slog.Warn("tts failed to remove partial audio", slog.String("error", rmErr.Error()), slog.String("path", relAudioPath))
+			}
+		}
+
 		// Close AudioCh BEFORE sending result event (streaming only) so the WS
 		// handler drains all audio chunks before the terminal done/error frame.
 		if job.AudioCh != nil {
@@ -207,11 +219,11 @@ func ttsRunJob(
 		}
 
 		if err != nil {
-			logMsg := "tts synthesize failed"
+			logMsg := "tts synthesize failed, discarding partial audio"
 			if isStreaming {
-				logMsg = "tts stream synthesize failed"
+				logMsg = "tts stream synthesize failed, discarding partial audio"
 			}
-			slog.Error(logMsg, slog.String("error", err.Error()), slog.String("cache_key", cacheKey))
+			slog.Error(logMsg, slog.String("error", err.Error()), slog.String("cache_key", cacheKey), slog.String("path", relAudioPath))
 			service.SendTTSEvent(cacheKey, service.TTSEvent{
 				Type: "result", SynthesizeFailed: true, SynthesizeError: errSynthesizeFailed, Summary: summary, Streaming: isStreaming,
 			})

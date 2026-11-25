@@ -38,7 +38,7 @@ func ListDir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	absPath, ok := validateAndResolvePath(w, r, basePath, relPath)
+	absPath, ok := validateAndResolveReadPath(w, r, basePath, relPath)
 	if !ok {
 		return
 	}
@@ -204,7 +204,7 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 	}
 
 	basePath, _ := filepath.Abs(projectPath)
-	absPath, ok = validateAndResolvePath(w, r, basePath, filepathStr)
+	absPath, ok = validateAndResolveReadPath(w, r, basePath, filepathStr)
 	return absPath, false, ok
 }
 
@@ -537,7 +537,7 @@ func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath st
 	}
 
 	basePath, _ := filepath.Abs(projectPath)
-	return validateAndResolvePath(w, r, basePath, filepathStr)
+	return validateAndResolveReadPath(w, r, basePath, filepathStr)
 }
 
 // ServeLocalFile serves a file directly (for images, PDFs, etc.).
@@ -763,7 +763,7 @@ func ServeFileBatchExists(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Relative path — resolve against project root
 			var ok bool
-			absPath, ok = model.ValidatePath(baseAbs, p)
+			absPath, ok = resolveReadPath(baseAbs, p)
 			if !ok {
 				results[p] = "none"
 				continue

@@ -301,6 +301,14 @@ type Config struct {
 	// the model catalog, not from the protocol: an OpenAI-compatible gateway
 	// may serve both vision and text-only models.
 	SupportsVision bool
+	// PresetID is the models.dev provider id this endpoint came from ("" for a
+	// hand-written one). Some endpoints require request headers beyond auth,
+	// and the id is how this client recognizes them; see providerhttp.
+	PresetID string
+	// SessionID is this conversation's stable id, sent as the provider's
+	// routing header when the endpoint wants one. Empty means "one-off call":
+	// the client generates one id and reuses it for its own lifetime.
+	SessionID string
 }
 
 // Auth modes, mirroring model.ProviderAuth*.

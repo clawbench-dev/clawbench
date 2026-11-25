@@ -23,6 +23,11 @@ func init() {
 	// extraction can suppress the redundant mode surface (openclaw).
 	ai.LookupACPModesMirrorThoughtLevelFn = LookupACPModesMirrorThoughtLevel
 
+	// Wire up the per-session startup defaults so a new session can be put into
+	// the state this host requires (kiro: autopilot=off) without the lifecycle
+	// knowing which backend it is.
+	ai.LookupACPInitialConfigOptionsFn = LookupACPInitialConfigOptions
+
 	// Wire up the model-switch method lookup so the ACP prompt path can send
 	// session/set_model for agents that ignore a "model" config option (Hermes)
 	// without importing the backends package.

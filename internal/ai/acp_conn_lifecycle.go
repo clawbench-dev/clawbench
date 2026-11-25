@@ -431,6 +431,11 @@ func (c *ACPConn) createSessionLocked(ctx context.Context, cwd string, want conn
 	c.mcpVersion = want.mcp
 	c.providerVersion = want.provider
 	slog.Info("acp conn: created new session", "clawbench_sid", c.clawbenchSID, "acp_sid", c.acpSID)
+	// Some agents start every session in a state this host cannot accept (kiro
+	// advertises autopilot=on, which skips the permission flow entirely). The
+	// value can only be written after session/new and resets with each new
+	// session, so the backend's declared defaults are applied here.
+	c.applyInitialConfigOptionsLocked(ctx, sessResp.ConfigOptions)
 	return true, nil
 }
 
