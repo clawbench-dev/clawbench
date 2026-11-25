@@ -7,6 +7,7 @@ import { createMainWindow, getMainWindow } from './window'
 import { registerBridge } from './bridge'
 import { registerCertificateHandler } from './certificate'
 import { handOffToPointedVersion } from './install'
+import { applyInstanceProfile } from './instance'
 import { flushFloatingBounds, hasAppTray, initFloating, openMainWindow } from './floating'
 import { record, recordError, flushOnShutdown } from './clientLog'
 import { APP_USER_MODEL_ID } from './identity'
@@ -20,10 +21,12 @@ import {
 } from './localServer'
 
 /**
- * One process per machine, before anything else runs.
+ * One process per PROFILE, before anything else runs.
  *
- * Without this the shell happily starts a second copy, and every "one window"
- * assumption behind it breaks at once:
+ * The lock is keyed by the userData directory, so a copied installation gets
+ * its own lock (and its own settings, cookies and client id) and runs beside
+ * the original — see `instance.ts`. Launches of the SAME installation still
+ * collapse into one process, which is what everything below assumes:
  *
  * - a second tray icon and a second floating capsule, both drawn from the same
  *   `floatingBounds` — drag one and the other stays behind, which is exactly how
@@ -36,9 +39,14 @@ import {
  * window leaves only a tray icon, so the app looks closed and the shortcut gets
  * clicked again.
  *
- * A second copy quits instead, and the copy that owns the lock brings its window
- * forward — the same gesture the tray and the capsule use.
+ * A second launch of the same installation quits instead, and the copy that
+ * owns the lock brings its window forward — the same gesture the tray and the
+ * capsule use.
+ *
+ * The profile must be resolved BEFORE the lock: the lock is keyed by userData,
+ * so a copy that took the default path would collide with the original.
  */
+applyInstanceProfile()
 if (!app.requestSingleInstanceLock()) {
   // `quit()` before `ready` ends the process; the startup below never gets to
   // observe a ready app. The `before-quit` flush is a no-op with nothing open.

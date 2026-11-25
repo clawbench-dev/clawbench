@@ -67,6 +67,7 @@ sequenceDiagram
 - **主进程 HTTP 调用必须自带 Cookie**：主进程没有 `document.cookie`，Cookie 在 Electron cookie jar 里。`/api/fs/raw/`（文件下载）是鉴权端点且要求项目 Cookie，因此 `fetchToFile` 经 `clientLog.getCookieHeaderForUrl(url)` 取 jar 里**全部**适用 Cookie（只匹配 session 名会缺 `clawbench_project` 而 403），并设 `rejectUnauthorized:false`（自签名证书，与 tunnel/clientLog/h2Transport 一致）。这条链是产品内下载进度条重构（把浏览器自动带 cookie 的 `<a download>` 换成主进程流式传输）时引入的缺口——服务端返回 401/403，进度条 3 秒兜底静默收尾，用户看到的是「选了目录什么都没发生」。分享（`native:share-file`）同走该函数
 - **已读消除原生通知**：系统通知只设 `setAutoCancel` 时，仅在点击通知本身时消失；用户手动打开 App 读消息后，旧通知仍留在通知栏，再点会重复派发深链、重复加载会话。因此主进程按 subject 键控保留 Notification 句柄，`native:dismiss-notification` 供渲染层在收到 `read` 事件时撤销对应通知（Android 侧同型，见 [推送通知](../features/push-notifications.md)）
 - **多服务器与凭据**：服务器列表里每个服务端各存各的密码（safeStorage 加密在各自 entry 内，keychain 不可用时降级为带标记的明文），因此在多个实例间切换都能自动登录；连接失败时回退登录页并展示失败原因（认证失败 / 网络不通 / 该服务端没存过密码三种区分）
+- **多实例（复制目录多开）**：安装目录就是实例身份。首次启动把当前目录记为「主安装」（`~/.clawbench-desktop/primary-install.json`），之后**任何其他目录**都按复制出来的新实例处理，分配独立的 userData 与 Chromium profile，因而各有独立的服务器列表、登录态、`client_id` 与单标签页锁；同一目录再次启动仍只有一个进程（`requestSingleInstanceLock` 按 userData 键控）。**必须在取锁之前 `app.setPath('userData')` 和 `setPath('sessionData')`**：前者决定锁与 electron-store 的位置，后者装 cookies/localStorage/Web Locks——只改 userData 会让两个窗口共用一个 `client_id` 互顶订阅。**升级交接必须带 `--instance`**：新进程跑在共享的 `~/.clawbench-desktop/app-<version>` 里，路径已不能说明它属于哪一份。托盘提示与窗口标题带副本名（取复制出来的文件夹名，落在该 profile 的 `instance.json`），否则两个图标/窗口无法区分
 - **SSH / h2 端口映射**：桌面端内置 ssh2 客户端（以及默认启用的 h2 流隧道，见 [SSH 隧道](../infra/ssh-tunnel.md)），读取服务器公开的 `/api/ssh/info` 获取 SSH 端口与用户名，用 safeStorage 加密存储的密码建立连接，把 localhost 端口映射到服务器端口。设置页提供 **SSH / HTTP/2 二选一**传输选择器（默认 HTTP/2），选择持久化到 Electron store 并在下次重连生效；桥暴露 `native:get-tunnel-transport`（偏好）、`native:get-active-tunnel-transport`（实际承载本次连接的线缆）与 `native:set-tunnel-transport`（只接受 `'ssh' | 'h2'`）
 - **界面缩放**：外观设置里的「自动适配」按钮**点一次**按当前屏幕分辨率算出合适的缩放并写入「界面缩放」滑块（1080p 为基准，上限 200%；已由系统缩放过的屏幕不二次放大），之后倍率是普通存储值、不会随屏幕变动。**这条链路在所有宿主上完全相同**——缩放经根字号（`--ui-scale` / `--dp`）实现，桌面壳**不再**走 `webContents.setZoomFactor`：原生缩放会缩小 `innerWidth` 并压制页面里所有 ResizeObserver，dock 溢出计算得靠人工补测，且与浏览器/Android 产生两套坐标空间。`Ctrl+滚轮` / `Ctrl+=` / `Ctrl+-` / `Ctrl+0` 仍是 Electron 原生页面缩放（与外观缩放**互相独立、可叠加**，比例按站点记忆），光标在终端 / PDF / PPT 预览内时缩放的是该内容本身
 - **系统通知**：AI 完成、任务执行、仓库事件通过原生系统通知展示；点击通知恢复窗口并导航到对应会话/任务/仓库详情。冷启动时通知先于页面加载到达，导航载荷暂存，等渲染进程显式握手后再派发
@@ -77,6 +78,26 @@ sequenceDiagram
 - **麦克风与屏幕捕获权限**：授予 `media`（麦克风/摄像头）与 `display-capture`（屏幕捕获）两个权限值——它们是**独立的**，只放行 `media` 会让 `getDisplayMedia` 以 `NotAllowedError` 失败。同时实现 `setPermissionCheckHandler`：Electron 要求 request/check 两个都实现，缺 check 会让 `enumerateDevices()` 返回空 label。其余权限请求默认拒绝
 - **屏幕 + 声音共享（发布端）**：`getDisplayMedia` 在 Electron 里**不会自己弹选择框**，必须由主进程 `setDisplayMediaRequestHandler` 指定源。渲染层先 `native:list-capture-sources` 拿到屏幕/窗口列表并渲染选择器，再用 `native:set-pending-capture-source` 声明本次要抓哪个源；**该声明是一次性的**（handler 消费后立即清空），否则任何页面后续调用 `getDisplayMedia` 都能静默抓屏。**系统声音（loopback）仅 Windows 支持**，其他平台 `native:get-audio-capture-support` 返回 `systemAudio: false` 并给出原因，UI 不得提供该开关。共享期间 `native:set-publishing-active(true)` 关掉窗口的后台节流——最小化后 Chromium 会降频定时器，编码器随之停摆、所有观众画面冻结
 - **安全上下文**：桌面壳加载的是局域网 `http://` 地址，Chromium 不视为安全上下文，`navigator.mediaDevices` 因此为 `undefined`——麦克风、屏幕捕获、WebCodecs 全部不可达。启动时在 `app.whenReady()` **之前**把**已保存的全部服务器 origin**（`serverUrl` + `servers` 列表，只取 `http://`）拼成逗号列表加 `unsafely-treat-insecure-origin-as-secure`——只作用于用户自己配置的服务器，不是全局关闭；该开关不支持通配符（实测 `http://*` 无效）。Chromium 只在启动时读一次，因此连接一个**不在列表里的新服务器**时会自动重启一次应用（`secureContext.ts` 的 `needsSecureContextRelaunch`，URL 先落盘，重启后即覆盖），避免"切完服务器会议就建不了、只能手动重启"
+
+### 多实例：复制目录同时开多个
+
+判定全部集中在 `instanceProfile.ts`（纯模块、无 electron import、可单测），`instance.ts` 只负责读 argv、读写主安装标记并调用 `app.setPath`。优先级从高到低：
+
+| 情况 | 结果 |
+| --- | --- |
+| 命令行带 `--instance <id>` | 用该 id（自升级交接，进程跑在共享版本目录里） |
+| 未打包（开发运行 `electron .`） | 默认实例，且不写主安装标记 |
+| 安装目录在 `~/.clawbench-desktop` 下 | 默认实例（直接启动升级后的二进制） |
+| 还没记录过主安装 | 记为默认实例并写入标记 |
+| 安装目录 == 主安装 | 默认实例 |
+| 安装目录 != 主安装，且主安装目录**还在** | 副本：id = 目录路径哈希，userData = 默认目录 + `-<id>` |
+| 安装目录 != 主安装，且主安装目录**已不在** | 视为移动：沿用默认实例并更新标记 |
+
+**「复制」与「移动」的区分只有这一条判据**：记录的主目录还在磁盘上说明这是另一份拷贝；不在了说明用户把原目录挪走了，此时沿用默认 profile 才不会让设置凭空消失。代价是「复制后删掉原目录、再运行副本」会被当成移动（沿用原设置的 profile）——这是刻意选的，因为丢设置比多一份旧配置更难解释。
+
+`--instance` 的 id 只接受 `[A-Za-z0-9_-]`（≤32），因为它会拼进目录名，不能让手改的命令行指到 `..` 或绝对路径。升级交接（`spawnDetachedConfirmed`）与安全上下文重启（`app.relaunch()`，默认继承 argv）都会带上它。
+
+**两份客户端仍共用两个全局目录**：`~/.clawbench`（服务端数据，一个目录只跑一个服务端，后启动的副本接管同一个）和 `~/.clawbench-desktop`（升级下载的版本文件与 `current` 指针）。所以「复制目录」多开的是**客户端**，不是第二个本机服务端；要两台服务端，副本应当连另一台机器。
 
 ### 自升级：侧装 + 指针
 

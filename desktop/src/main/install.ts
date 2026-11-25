@@ -7,6 +7,7 @@ import { inflateRawSync, gunzipSync } from 'node:zlib'
 import { app } from 'electron'
 import { compareVersions, normalizeVersion } from '../shared/version'
 import { httpGetBuffer } from './httpGet'
+import { currentInstanceArgs } from './instanceProfile'
 
 export { httpGetBuffer } from './httpGet'
 export type { HttpGetOptions } from './httpGet'
@@ -686,10 +687,15 @@ function clearPointer(): void {
  * Rejects when the child reports 'error'. A host that reports neither event is
  * treated as success after the timeout: nothing says the binary is broken, and
  * blocking the app on an unresponsive event emitter would be worse.
+ *
+ * The instance flag is carried along: the new process runs from the SHARED
+ * version store, where its path no longer identifies which copy it belongs to.
+ * Without the flag every copy would land on the default profile after its first
+ * upgrade.
  */
 function spawnDetachedConfirmed(bin: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, [], { detached: true, stdio: 'ignore' })
+    const child = spawn(bin, currentInstanceArgs(), { detached: true, stdio: 'ignore' })
     child.unref()
     const timer = setTimeout(resolve, SPAWN_CONFIRM_TIMEOUT_MS)
     child.once('spawn', () => {

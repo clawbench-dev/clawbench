@@ -23,6 +23,7 @@ import { isEmbeddedServerActive, isEmbeddedServerUrl } from './localServer'
 import { isStartupSettled, whenStartupSettled } from './startupGate'
 import { embeddedServerLabels } from './labels'
 import { record } from './clientLog'
+import { instanceLabel } from './instance'
 import { boundsToPersist, resolveStartupBounds, MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, type WindowBounds } from './windowGeometry'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
@@ -587,6 +588,17 @@ export function createMainWindow(): BrowserWindow {
   // Maximize before the window is shown, so a maximized restore does not flash
   // the restored rect first.
   if (startMaximized) mainWindow.maximize()
+  // A copy runs beside the original; the page title alone would leave two
+  // identical entries in the task switcher. Appending the copy's name is the
+  // only place the OS can see it — the page knows nothing about instances.
+  const copyName = instanceLabel()
+  if (copyName) {
+    const win = mainWindow
+    win.on('page-title-updated', (event, title) => {
+      event.preventDefault()
+      win.setTitle(title ? `${title} · ${copyName}` : copyName)
+    })
+  }
   registerWindowGeometryPersistence(mainWindow)
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
