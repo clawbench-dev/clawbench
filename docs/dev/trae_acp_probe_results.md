@@ -1,101 +1,128 @@
-# TRAE（TraeCode CLI / `traecli`）ACP 探测记录
+# TRAE（TRAE CLI / `traecli`）ACP 探测记录
 
-日期：2026-11-24。结论先说：**没有拿到二进制，一帧都没有抓到。** 下面「实现」一节的每个字段都在代码注释里标了来源，凡是没有实测或第三方文档支撑的，一律不填。
+日期：2026-11-25。**首轮（2026-11-24）的结论「拿不到二进制」已作废**——当时找错了入口：
+npm 上没有、文档站里 `cli_what-is-trae-cli` 是 404。正确入口是
+`https://docs.trae.cn/cli_get-started-with-trae-cli`，官方提供公开安装脚本，本轮已装并完成握手。
 
-## 1. 能不能拿到 CLI
+## 1. 安装（官方，已实测）
 
-| 途径 | 结果 |
-|---|---|
-| 本机已安装 | 无 `traecli` / `trae` / `trae-cli`（`which` 全部落空，`/tmp/cli-probe` 里也只有 qwen / cline / copilot） |
-| npm `traecli` | E404 |
-| npm `trae-cli` | E404 |
-| npm `trae` | 存在，但是一个无关的浏览器 HTTP 客户端库（`huemul/trae`），不是 TraeCode CLI |
-| 官方文档 `https://docs.trae.cn/cli_what-is-trae-cli` | 404；`docs.trae.cn` 根路径返回 400。`docs.trae.ai` 能打开，但这个是 IDE 文档站，站内没有任何 `traecli` / `acp` 字样 |
-| `www.trae.cn` / `www.trae.ai` / `/download` | 200，但页面里没有 CLI 下载入口 |
-| GitHub | 没有官方仓库；`firerlAGI/TraeCli` 是个人 Python 项目（5 star，无描述），与本 CLI 无关 |
+```bash
+# macOS / Linux
+sh -c "$(curl -fsSL https://trae.cn/trae-cli/install_v2.sh)"
+# Windows
+irm https://trae.cn/trae-cli/install_v2.ps1 | iex
+```
 
-**拿不到的根因**：TraeCode CLI 只对 **TRAE 企业旗舰版（Enterprise Flagship）客户**开放（第三方适配器 README 与官方文档口径一致）。没有订阅就拿不到安装包，也不应该去注册或购买（任务边界）。
+- 实测：在隔离 HOME（`/tmp/traehome`）里执行，装到 `~/.local/bin/traecli`，版本 **0.216.0**，
+  并在 `~/.bashrc` 里补 PATH。
+- 文档同时说明 **1.0 已进入弱维护，请升级到 2.0**；2.0 首次启动会提示迁移旧配置
+  （`traecli.yaml` → `traecli.toml`）。
 
-## 2. 探测帧
+## 2. 握手（0.216.0，未登录，实测）
 
-无。`initialize` / `session/new` / `session/prompt` **全部未抓取**，所以以下事实**全部未知**：
+`initialize` 返回的关键字段：
 
-- `agentInfo`（name / version）
-- `agentCapabilities`：`loadSession`、`sessionCapabilities`、`mcpCapabilities`、`promptCapabilities`
-- `authMethods`（ACP `authenticate` 的 methodId）
-- `session/new` 是否 `-32000 Authentication required`
-- 模型列表怎么来
-- 工具调用的名字与参数形状
-- `session/load` 是否可用
+```json
+{"agentInfo":{"name":"traecli-acp","title":"TRAE CLI","version":"0.216.0"},
+ "agentCapabilities":{
+   "loadSession":true,
+   "promptCapabilities":{"image":true,"audio":false,"embeddedContext":true},
+   "mcpCapabilities":{"http":true,"sse":false},
+   "sessionCapabilities":{"list":{},"additionalDirectories":{},"systemPrompt":{},
+                          "fork":{},"resume":{},"close":{}},
+   "auth":{"logout":{}}},
+ "authMethods":[
+   {"id":"trae-tob-browser","name":"Sign in with Enterprise SSO"},
+   {"id":"trae-tob-pat","name":"Sign in with Personal Access Token",
+    "description":"Requires `TRAECLI_PERSONAL_ACCESS_TOKEN` to be set before starting TRAE CLI."}]}
+```
 
-## 3. 实现依据：只有第三方适配器 README
+`session/new` 未登录：`-32000 "Authentication required"`。
 
-唯一信息源是 `@tunnelbox/trae@0.1.37`（npm，2026-10-24 发布）的 README。**它的可信度是「中等」**：作者自己在 README 里写「Standard ACP surface assumed; **verify with `npm run probe`** on a real TraeCode CLI」，也就是说它同样没有能力矩阵，只是按标准 ACP 假设。
+`_meta` 里另有：
 
-从该 README 采信、并写进代码的事实：
+| 键 | 内容 | 含义 |
+|---|---|---|
+| `steering.supported` | `true` | 插话（mid-turn）可能可用，**未实测** |
+| `trae.acpBackend` | `"app-server"` | ACP 面挂在它自己的 app-server 上 |
+| `trae.options` | `mcpServers` / `skills` | 它自己管理 MCP 与技能清单 |
+| `goal.controlMethod` | `_session/goal`（set/pause/resume/clear） | 目标控制扩展，本仓未接 |
 
-| 事实 | 用在哪 |
-|---|---|
-| 二进制名 `traecli` | `DefaultCmd` |
-| `traecli acp serve`，JSON-RPC over stdio | `AcpCommand` |
-| 先 `traecli login`；ACP `authenticate` 可跳过（默认不调） | `LoginCmd` |
-| 流式 `session/update`（`agent_message_chunk` / `agent_thought_chunk`） | 不加 `Behavior` 覆盖（走公共解析） |
-| `session/request_permission` 审批、`session/cancel` 中止 | 同上，公共路径已覆盖 |
-| 会话续接可用 `session/resume`，而 `session/load` 是「when advertised」 | 因此 `ACPLoadSession` 保持默认 false |
+**结论：二进制公开可装，但登录是企业账号（ToB：企业 SSO 或企业控制台签发的 PAT）。**
+个人版账号没有这两条登录路径，所以「能装、不能免费用」——这解释了第三方适配器
+README 里「仅企业版旗舰版可用」的说法。
 
-README 还提到 `--permission-mode`（`default` / `auto` / `bypass_permissions`）与 `-y`，但这些是用户侧开关，ClawBench 不需要强制，没有接。
+## 3. 技能目录
 
-## 4. 实现清单与每一处的置信度
+二进制里有 `"${TRAE_HOME:-$HOME/.trae}/skills"` 的字面量，且 `_meta.trae.options.skills`
+说明技能是它的会话选项之一。因此：
 
-`internal/ai/backends/trae/register.go`：
+```go
+NativeSkillsDirs:      []string{".trae/skills"}
+AutoLoadsNativeSkills: true
+```
 
-| 字段 | 值 | 置信度 |
+不声明的话，ClawBench 会再注入一份技能表，用户看到重复技能。
+
+## 4. 模型列表
+
+`traecli models --json` 存在，未登录时返回 `[]`（rc=0）。登录后应返回账号可用模型，但
+**JSON 字段形状未知**，所以 `ModelSource` 仍保持「未知」而不是猜字段：
+
+```go
+func discoverTraeModels() ([]model.AgentModel, string) {
+	return nil, "trae: model list unknown (traecli models needs an enterprise login; shape unverified)"
+}
+```
+
+## 5. 实现清单（`internal/ai/backends/trae/register.go`）
+
+| 字段 | 值 | 依据 |
 |---|---|---|
 | `ID` / `Backend` | `trae` | 项目命名约定 |
-| `DefaultCmd` | `traecli` | 第三方 |
-| `Name` / `Specialty` | `TRAE` / 字节 TRAE 企业版编码智能体 | 项目约定 |
-| `AcpCommand` | `traecli acp serve` | 第三方，**未实测** |
-| `LoginCmd` | `traecli login` | 第三方，**未实测** |
-| `SortOrder` | 26 | lead 分配 |
-| `ACPLoadSession` | 不设（false） | 未知，故意不猜 |
-| `InstallCmd` | 不设 | 没有公开安装方式，写了就是坏按钮 |
-| `ThinkingEffortLevels` | 不设 | 未知 |
-| `NativeSkillsDirs` | 不设 | 未知 |
-| `MCPUnsupported` | 不设 | 未知（没跑过带 mcpServers 的 session/new） |
-| `ACP`（工具映射） | nil | 没有抓过工具帧，不能凭名字猜 |
+| `DefaultCmd` | `traecli` | 安装脚本产物 |
+| `AcpCommand` | `traecli acp serve` | `traecli acp --help` 只有一个 `serve` 子命令 |
+| `ACPLoadSession` | `true` | initialize 广告 `loadSession:true` |
+| `InstallCmd` | `sh -c "$(curl -fsSL https://trae.cn/trae-cli/install_v2.sh)"` | 官方文档 + 实装；Windows 用 ps1 变体（字段只能放一条） |
+| `LoginCmd` | `traecli login` | `traecli login --help` 存在（另有 `login status`） |
+| `NativeSkillsDirs` | `[".trae/skills"]` | 二进制里的路径字面量 |
+| `AutoLoadsNativeSkills` | `true` | 同上 |
+| `ProviderEnv` | `KeyOnly: "TRAECLI_PERSONAL_ACCESS_TOKEN"` | authMethod 文案点名该变量；没有端点槽，不是 BYOK |
+| `ModelSource` | `PluginSource`，恒定返回「未知」 | 见 §4 |
+| `MCPUnsupported` | 不设 | 广告 `http:true`，未实测注入 |
+| `ACP`（工具映射） | nil | 没抓到工具帧 |
 | `Behavior` | nil | 同上 |
-| `ProviderEnv` | `&model.ProviderEnvSpec{}`（空但存在） | 企业订阅，无 BYOK 依据；空 spec = 「不能绑 provider」 |
-| `ModelSource` | `PluginSource("trae", discoverTraeModels)`，探针恒定返回空 + 原因 | 没有可信模型源；宁可不列也不猜 id |
-| `OrphanCmdline` | `{traecli, "acp serve"}` | 按启动形状推导，**未实测** |
+| `OrphanCmdline` | `{traecli, "acp serve"}` | 启动形状 |
 
-`discovery.go`：`discoverTraeModels` 永远返回 `nil, "trae: model list unknown …"`。这样 UI 显示「未知」，而不是给出一个第一次对话就会失败的模型 id。若将来实测到 `traecli` 有 `models` 子命令或 `session/new` 里带 `model` 配置项，替换成真实探针即可。
+## 6. 仍未验证（需要企业账号）
 
-注意：`internal/ai/backends/all/all.go` 的注册行由 lead 统一加（我的边界不允许改）。
+1. 一轮真实对话：工具帧的 `toolCallId` / `title` / `rawInput` 形状 → 决定要不要工具映射。
+2. `session/new` 的 `configOptions` 里有没有 `model`、模型 id 长什么样。
+3. 注入 MCP 服务后工具是否真的出现。
+4. `session/load` / `session/resume` 是否真回放。
+5. 插话：`_meta.steering.supported=true` 只是广告，注入是否成功、是否回显插入帧都要真跑。
+6. 权限：`session/request_permission` 是否触发、审批文案。
 
-## 5. 拿到二进制后应该补测什么
-
-按 `/tmp/acp_probe.py` 跑：
-
-```bash
-mkdir -p /tmp/probe-trae && cd /tmp/probe-trae
-python3 /tmp/acp_probe.py --cmd "traecli acp serve" --cwd /tmp/probe-trae --timeout 30
-python3 /tmp/acp_probe.py --cmd "traecli acp serve" --prompt "say hi" --timeout 90   # 需先 traecli login
-```
-
-优先确认（按影响排序）：
-
-1. `initialize` 的 `agentCapabilities.loadSession` → 决定 `ACPLoadSession` 是否打开。
-2. `authMethods` → 若存在，考虑在 `LoginCmd` 之外补 `authenticate` 通路。
-3. 模型：`traecli --help` / `traecli models` 有没有；`session/new` 返回的 `configOptions` 里有没有 `model` → 决定 `ModelSource` 换静态 catalog 还是插件探针。
-4. 第一个工具调用的 `toolCallId` / `title` / `rawInput` 形状 → 决定要不要加 `ToolCallIDPrefixes` / `InputRemaps`。
-5. `session/new` 传 `mcpServers` 后 MCP 工具是否真的出现 → 决定 `MCPUnsupported`。
-6. 能否 BYOK（`-c` 覆盖或环境变量里有 `BASE_URL` / `API_KEY`）→ 决定 `ProviderEnv` 是否保持空。
-
-## 6. 测试
+## 7. 复现命令
 
 ```bash
-go test ./internal/ai/backends/trae/ -count=1 -cover
-# ok  clawbench/internal/ai/backends/trae  0.01s  coverage: 100.0% of statements
+mkdir -p /tmp/traehome && HOME=/tmp/traehome \
+  sh -c "$(curl -fsSL https://trae.cn/trae-cli/install_v2.sh)"
+export HOME=/tmp/traehome
+/tmp/traehome/.local/bin/traecli --version           # traecli 0.216.0 / installation: public
+/tmp/traehome/.local/bin/traecli acp --help          # serve: Start the ACP server over stdio
+
+cd /tmp && mkdir -p probe-trae && cd probe-trae
+python3 /tmp/acp_probe.py --cmd "/tmp/traehome/.local/bin/traecli acp serve" \
+  --cwd /tmp/probe-trae --timeout 30
+# 一轮对话需要企业登录：TRAECLI_PERSONAL_ACCESS_TOKEN=trae-lt-…
 ```
 
-测试只钉注册字段（命令、排序、LoginCmd、空 ProviderEnv、OrphanCmdline、模型源报「未知」），**没有伪造任何协议行为断言**——因为不存在真实的帧可以断言。
+## 8. 测试
+
+```bash
+go test ./internal/ai/backends/trae/ -count=1
+```
+
+钉住：命令、排序、`ACPLoadSession`、安装命令、技能声明、`KeyOnly` 注入与
+「带端点的 provider 必须被拒」、孤儿识别、模型源报「未知」。

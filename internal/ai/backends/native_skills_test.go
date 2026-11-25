@@ -63,10 +63,8 @@ var skillAwareBackends = map[string]bool{
 	"builtin": false,
 	"minimax": true, // <home>/.minimax/skills (the bundle resolves it beside the data dir); skills also surface as slash commands
 
-	// trae: UNVERIFIED — no binary could be obtained (enterprise-only). No
-	// skill directory is declared, so ClawBench injects; if a real run shows
-	// traecli reading its own skills, flip this to true with the directory.
-	"trae": false,
+	"trae": true, // <TRAE_HOME>/.trae/skills (the shipped binary resolves "${TRAE_HOME:-$HOME/.trae}/skills")
+
 }
 
 // pluginsForSkillCheck snapshots the registry at package init.

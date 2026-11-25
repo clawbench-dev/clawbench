@@ -4,16 +4,14 @@ import "clawbench/internal/model"
 
 // discoverTraeModels always reports that the model list is unknown.
 //
-// TraeCode CLI ships no public model list: the models depend on the
-// enterprise deployment and the official site publishes no capability matrix.
-// A static catalog would therefore be a guess, and a guessed id is worse than
-// no id — the picker would offer a model the agent cannot select. Returning an
-// empty list with a reason makes the UI show "unknown" instead of a list that
-// silently fails on the first turn.
+// `traecli models --json` exists, but it answers `[]` without a credential and
+// the list depends on the enterprise account. The JSON shape of a populated
+// answer has never been observed, and a guessed field name would produce an
+// empty (or wrong) picker — worse than an honest "unknown". Returning a reason
+// makes the UI say so instead of offering ids that fail on the first turn.
 //
-// UNVERIFIED: if a real `traecli` turns out to expose the list (a `models`
-// subcommand, or a `model` config option in `session/new`), replace this with
-// a plugin probe that reads it.
+// TODO(trae/models): once an enterprise account is available, capture
+// `traecli models --json` and parse it here; the picker then fills itself.
 func discoverTraeModels() ([]model.AgentModel, string) {
 	return nil, "trae: model list unknown (no verified discovery source for traecli)"
 }

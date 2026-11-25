@@ -11,8 +11,9 @@ import (
 )
 
 // TestRegistration pins the fields the rest of the project depends on by name.
-// It deliberately asserts nothing about wire behavior: no frame from a real
-// traecli has ever been captured (see docs/dev/trae_acp_probe_results.md).
+// The capability fields come from a real initialize against traecli 0.216.0
+// (see docs/dev/trae_acp_probe_results.md); the wire shape of a TURN is still
+// unverified because a session needs an enterprise login.
 func TestRegistration(t *testing.T) {
 	p := backends.Lookup("trae")
 	require.NotNil(t, p, "the trae backend must register itself in init()")
@@ -24,23 +25,40 @@ func TestRegistration(t *testing.T) {
 	assert.Equal(t, 26, p.Spec.SortOrder)
 	assert.Equal(t, "traecli login", p.Spec.LoginCmd, "login is the documented way past -32000 AUTH_REQUIRED")
 
-	assert.False(t, p.Spec.ACPLoadSession, "loadSession support is unknown; it must stay off rather than be guessed on")
-	assert.Empty(t, p.Spec.InstallCmd, "no public install path exists; do not invent one")
+	assert.True(t, p.Spec.ACPLoadSession, "initialize advertises loadSession:true (measured on 0.216.0)")
+	assert.Equal(t, TraeInstallCmd, p.Spec.InstallCmd, "the official installer is the only install path")
+	assert.NotEmpty(t, p.Spec.InstallCmd, "the installer is public: sh -c \"$(curl -fsSL https://trae.cn/trae-cli/install_v2.sh)\"")
+	assert.True(t, p.Spec.AutoLoadsNativeSkills, "traecli loads ${TRAE_HOME:-$HOME/.trae}/skills itself")
+	assert.Equal(t, []string{".trae/skills"}, p.Spec.NativeSkillsDirs)
 	assert.Nil(t, p.ACP, "no tool mapping is justified without a captured frame")
 	assert.Nil(t, p.Behavior, "no private wire shape is known")
 }
 
-// TestProviderEnvCannotBind: an empty (but PRESENT) spec is how the project
-// records "this backend cannot take a provider". A nil pointer would mean the
-// backend was never classified.
-func TestProviderEnvCannotBind(t *testing.T) {
+// TestProviderEnvKeyOnly: the only credential traecli accepts from the
+// environment is the enterprise login token. There is no endpoint slot, so a
+// provider carrying a base URL must be refused rather than silently ignored.
+func TestProviderEnvKeyOnly(t *testing.T) {
 	p := backends.Lookup("trae")
 	require.NotNil(t, p)
-	require.NotNil(t, p.ProviderEnv, "the coverage test requires a classification, even a negative one")
+	require.NotNil(t, p.ProviderEnv, "the coverage test requires a classification")
 
 	assert.True(t, model.HasProviderEnvEntry("trae"))
-	assert.False(t, model.ProviderEnvSupported("trae", model.ProviderProtocolOpenAI))
-	assert.False(t, model.ProviderEnvSupported("trae", model.ProviderProtocolAnthropic))
+	assert.True(t, model.BackendIsKeyOnly("trae"))
+
+	withEndpoint := (&model.Provider{
+		ID: 1, Name: "gw", Protocol: model.ProviderProtocolOpenAI,
+		BaseURL: "https://gw.example/v1", APIKey: "k",
+	}).Normalized()
+	if _, err := model.BuildProviderEnv("trae", &withEndpoint, ""); err == nil {
+		t.Fatal("a provider with an endpoint must be refused: traecli has no endpoint slot")
+	}
+
+	keyOnly := (&model.Provider{
+		ID: 2, Name: "pat", Protocol: model.ProviderProtocolOpenAI, APIKey: "tok",
+	}).Normalized()
+	env, err := model.BuildProviderEnv("trae", &keyOnly, "")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"TRAECLI_PERSONAL_ACCESS_TOKEN=tok"}, env)
 }
 
 func TestOrphanCmdline(t *testing.T) {
