@@ -17,7 +17,7 @@ import (
 // It used to exist twice. The copy inside main() knew only "edge" and
 // "openai"; minimax, alibaba, tencent and volcano fell into its default arm and
 // were silently replaced by Edge. The settings panel writes the config and the
-// hot-reload path (which used this function) honoured it, so switching worked
+// hot-reload path (which used this function) honored it, so switching worked
 // until the next restart — then the server came back on Edge while config.yaml
 // still said "minimax". Nothing in the logs disagreed: the startup line printed
 // engine=edge, which looks exactly like "the config never got saved".
@@ -47,7 +47,7 @@ func TestNewTTSProviderMapsEveryEngine(t *testing.T) {
 	}
 }
 
-// An engine name nobody recognises still has to yield a working provider: the
+// An engine name nobody recognizes still has to yield a working provider: the
 // server must boot even with a hand-edited config, and Edge needs no
 // credentials. Falling back is fine — doing it silently is what this file
 // exists to prevent, hence the startup log now prints both the configured

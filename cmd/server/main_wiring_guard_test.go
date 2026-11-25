@@ -84,7 +84,7 @@ func TestMainWiring_StopIsDeferredRightAfterStart(t *testing.T) {
 // main() used to carry its own switch over cfg.TTS.Engine. It knew "edge" and
 // "openai" only, so every other engine was silently rebuilt as Edge on the next
 // restart while config.yaml still named it — the settings panel looked fine, the
-// hot-reload path (which uses newTTSProvider) honoured the change, and only a
+// hot-reload path (which uses newTTSProvider) honored the change, and only a
 // restart exposed the mismatch. Two switches means one of them goes stale; this
 // guard fails the moment a second one grows back.
 func TestMainWiring_TTSProviderBuiltByTheSharedConstructor(t *testing.T) {
@@ -96,7 +96,7 @@ func TestMainWiring_TTSProviderBuiltByTheSharedConstructor(t *testing.T) {
 	// of the file legitimately contain `p := speech.NewEdgeTTSProvider()`.
 	body := mainFuncBody(t, code)
 
-	// The old copy was recognisable by building a provider inline inside main().
+	// The old copy was recognizable by building a provider inline inside main().
 	for _, literal := range []string{
 		"speech.NewEdgeTTSProvider()",
 		"speech.NewOpenAITTSProvider()",

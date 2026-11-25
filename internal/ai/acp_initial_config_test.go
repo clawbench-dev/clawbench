@@ -67,3 +67,52 @@ func TestInitialConfigSends_BooleanOption(t *testing.T) {
 func TestInitialConfigSends_EmptyDeclaration(t *testing.T) {
 	assert.Empty(t, initialConfigSends(nil, []acp.SessionConfigOption{selectOption("autopilot", "on")}))
 }
+
+// 声明里给了空值等于没给：发一个空字符串只会让 agent 拒绝或把选项清空。
+func TestInitialConfigSends_SkipsEmptyValue(t *testing.T) {
+	sends := initialConfigSends(
+		map[string]string{"autopilot": ""},
+		[]acp.SessionConfigOption{selectOption("autopilot", "on")},
+	)
+	assert.Empty(t, sends)
+}
+
+// 布尔选项当前是 false 时，读出来的值必须是 "false"（而不是"没读到"），
+// 否则想把它打开的后端每次都会被当成"已经对了"跳过。
+func TestInitialConfigSends_BooleanFalseIsAdvertised(t *testing.T) {
+	opt := acp.SessionConfigOption{Boolean: &acp.SessionConfigOptionBoolean{
+		Id:           "autopilot",
+		CurrentValue: false,
+	}}
+	sends := initialConfigSends(map[string]string{"autopilot": "true"}, []acp.SessionConfigOption{opt})
+	require.Len(t, sends, 1, "false must read as a real value, so turning it on is sent")
+	assert.Equal(t, "true", sends[0].value)
+}
+
+// 后端查表还没接上（或 id 为空）时返回 nil，绝不能在新建会话的路径上 panic。
+func TestACPInitialConfigOptions_NilSafe(t *testing.T) {
+	orig := LookupACPInitialConfigOptionsFn
+	t.Cleanup(func() { LookupACPInitialConfigOptionsFn = orig })
+
+	LookupACPInitialConfigOptionsFn = nil
+	assert.Nil(t, acpInitialConfigOptions("kiro"))
+
+	LookupACPInitialConfigOptionsFn = func(string) map[string]string {
+		t.Fatal("an empty backend id must not reach the lookup")
+		return nil
+	}
+	assert.Nil(t, acpInitialConfigOptions(""))
+}
+
+// 查表接上后按 backend id 转发，别的后端拿到什么就返回什么。
+func TestACPInitialConfigOptions_UsesLookup(t *testing.T) {
+	orig := LookupACPInitialConfigOptionsFn
+	t.Cleanup(func() { LookupACPInitialConfigOptionsFn = orig })
+
+	want := map[string]string{"autopilot": "off"}
+	LookupACPInitialConfigOptionsFn = func(id string) map[string]string {
+		assert.Equal(t, "kiro", id)
+		return want
+	}
+	assert.Equal(t, want, acpInitialConfigOptions("kiro"))
+}

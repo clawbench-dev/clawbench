@@ -26,7 +26,7 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
   })
 
   it('treats a narrow viewport as narrow (below the wide-screen threshold)', () => {
-    setInnerWidth(800)
+    setInnerWidth(600)
     expect(isNarrowScreen()).toBe(true)
     setInnerWidth(1440)
     expect(isNarrowScreen()).toBe(false)
@@ -35,7 +35,7 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
   it('bar: value-axis ticks hidden on narrow, shown on desktop', () => {
     const cats = ['glm', 'opus']
     const vals = [5, 3]
-    setInnerWidth(800)
+    setInnerWidth(600)
     const narrow = buildBarOption(cats, vals, 'total') as { xAxis: { axisLabel: { show?: boolean } } }
     expect((narrow.xAxis.axisLabel as { show: boolean }).show).toBe(false)
     // Category labels (which bar is which) are always kept.
@@ -46,7 +46,7 @@ describe('statsChart axis labels (mobile vs desktop)', () => {
   })
 
   it('trend: value-axis ticks hidden on narrow, dates kept with hideOverlap', () => {
-    setInnerWidth(800)
+    setInnerWidth(600)
     const narrow = buildTrendOption(['2026-09-01', '2026-09-02'], [{ label: 'glm', values: [1, 2] }], 'total') as {
       yAxis: { axisLabel: { show?: boolean } }
       xAxis: { axisLabel: { hideOverlap?: boolean } }

@@ -20,9 +20,9 @@ const i18n = createI18n({
 // dock path is covered in FileOverlay.test.ts.) Resetting the wide-screen
 // module forces the next getWideScreenState() to recompute from the stub.
 function setNarrowViewport() {
-  Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true, writable: true })
+  Object.defineProperty(window, 'innerWidth', { value: 600, configurable: true, writable: true })
   Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true, writable: true })
-  Object.defineProperty(window.screen, 'width', { value: 800, configurable: true, writable: true })
+  Object.defineProperty(window.screen, 'width', { value: 600, configurable: true, writable: true })
   Object.defineProperty(window.screen, 'height', { value: 1280, configurable: true, writable: true })
   _resetWideForTest()
 }

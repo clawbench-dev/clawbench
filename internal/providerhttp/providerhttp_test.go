@@ -20,6 +20,7 @@ func TestIsOpenCode(t *testing.T) {
 		{"inference host", "https://opencode.ai/inference/go/openai/v1", "", true},
 		{"host is a suffix, not a substring", "https://opencode.ai.example.com/v1", "", false},
 		{"unrelated provider", "https://api.deepseek.com", "deepseek", false},
+		{"malformed base URL", "http://[::1", "", false},
 		{"empty", "", "", false},
 	}
 	for _, tc := range cases {

@@ -432,3 +432,36 @@ func TestLookupACPSpawnHooks(t *testing.T) {
 		}
 	}
 }
+
+// TestLookupACPInitialConfigOptions covers the startup-default lookup that
+// acp_initial_config.go consumes: it must return exactly the registered map,
+// and nil for backends that declare nothing (sending an unknown option answers
+// -32602 on every new session).
+func TestLookupACPInitialConfigOptions(t *testing.T) {
+	t.Cleanup(backends.ResetForTest())
+
+	want := map[string]string{"autopilot": "off"}
+	backends.Register(&backends.BackendPlugin{
+		ID:  "with-initial-config",
+		ACP: &backends.ACPPlugin{InitialConfigOptions: want},
+	})
+	backends.Register(&backends.BackendPlugin{ID: "no-acp"})
+	backends.Register(&backends.BackendPlugin{
+		ID:  "acp-without-defaults",
+		ACP: &backends.ACPPlugin{},
+	})
+
+	got := backends.LookupACPInitialConfigOptions("with-initial-config")
+	if len(got) != 1 || got["autopilot"] != "off" {
+		t.Errorf("expected the registered defaults, got %v", got)
+	}
+	if got := backends.LookupACPInitialConfigOptions("acp-without-defaults"); got != nil {
+		t.Errorf("expected nil when no defaults are declared, got %v", got)
+	}
+	if got := backends.LookupACPInitialConfigOptions("no-acp"); got != nil {
+		t.Errorf("expected nil for a backend without an ACP plugin, got %v", got)
+	}
+	if got := backends.LookupACPInitialConfigOptions("nonexistent"); got != nil {
+		t.Errorf("expected nil for an unknown backend, got %v", got)
+	}
+}

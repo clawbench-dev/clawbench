@@ -312,3 +312,43 @@ func TestResolveReadPath_NormalPathUnchanged(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, filepath.Join(root, "a.txt"), abs)
 }
+
+// ValidateAndResolveReadPath 是读接口的门：能解析就给绝对路径，不能解析就写 403。
+// 它和写接口的区别只在 ResolveReadPath 会跟随项目内符号链接，错误路径完全一样。
+func TestValidateAndResolveReadPath(t *testing.T) {
+	origRoots := model.RootPaths
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	root := t.TempDir()
+	model.RootPaths = []string{root}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644))
+
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
+
+	rec := httptest.NewRecorder()
+	got, ok := ValidateAndResolveReadPath(rec, r, root, "a.txt")
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(root, "a.txt"), got)
+
+	rec2 := httptest.NewRecorder()
+	_, ok = ValidateAndResolveReadPath(rec2, r, root, "../outside.txt")
+	assert.False(t, ok)
+	assert.Equal(t, http.StatusForbidden, rec2.Code)
+}
+
+// 自指的符号链接解析不出来（ELOOP）：必须拒绝，不能把 "读不到" 当成
+// "路径合法" 放给调用方。
+func TestResolveReadPath_RejectsUnresolvableSymlink(t *testing.T) {
+	origRoots := model.RootPaths
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	root := t.TempDir()
+	model.RootPaths = []string{root}
+
+	project := filepath.Join(root, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	require.NoError(t, os.Symlink("loop", filepath.Join(project, "loop")))
+
+	_, ok := ResolveReadPath(project, "loop")
+	assert.False(t, ok, "解析不出目标的链接没有可读内容，必须拒绝")
+}
