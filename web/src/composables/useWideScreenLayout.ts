@@ -8,13 +8,15 @@ import { readAppliedUIScale, UI_SCALE_EVENT } from '@/utils/uiScale'
 const TAG = 'WideScreenLayout'
 
 /**
- * Wide-screen (two-column) threshold, in CSS pixels.
+ * Wide-screen (two-column) threshold, in DESIGN pixels.
  *
- * 960 rather than 1024: the original 1024 existed only so that a 2400-physical-px
- * tablet at DPR 2.5 (→ 960 CSS px) could be rescued by a separate physical-width
- * clause. Once the criterion is pure CSS width, that rescue is unnecessary — 960
- * CSS px is itself enough room for two columns — so folding the tablet case into
- * the threshold lets the physical clause go entirely.
+ * 760: a 2400-physical-px tablet at DPR 2.5 (→ 960 CSS px) and every common
+ * unfolded foldable (≈ 840 CSS px) fit two columns. The old 960 was chosen for
+ * that tablet alone; it left foldables in single-column mode for no reason
+ * other than the tablet case. The vertical dock on the left eats 48 of it, so
+ * the two columns get (760 - 48) / 2 = 356 design px each, above the 320 floor
+ * SplitView applies. Widths just above the threshold are therefore cramped —
+ * that is the deliberate trade-off, not a bug to paper over with a manual switch.
  *
  * Why CSS px and nothing else: the layout can only ever use CSS pixels, so that
  * is the only unit in which "is there room for a second column?" has a meaning.
@@ -22,10 +24,10 @@ const TAG = 'WideScreenLayout'
  * self-contradictory results — a 698 CSS px landscape phone was "wide" while a
  * 960 CSS px desktop window was not — and it also could not be expressed in CSS
  * (media queries see CSS px only), so the JS signal and any CSS media query would
- * disagree at the boundary. UI scale (`html { zoom }`) does not affect this: it
- * changes neither `innerWidth` nor media-query evaluation (measured).
+ * disagree at the boundary. UI scale changes neither `innerWidth` nor
+ * media-query evaluation (measured); it is divided out separately below.
  */
-export const WIDE_SCREEN_MIN_WIDTH = 960
+export const WIDE_SCREEN_MIN_WIDTH = 760
 // The active left tab used to be persisted here under a single global key
 // ('clawbench-widescreen-left-tab'). That gave the tab no project dimension, so
 // switching to project B overwrote project A's tab and switching back restored
@@ -39,14 +41,14 @@ export const WIDE_SCREEN_MIN_WIDTH = 960
  *
  * `cssWidth` is the raw `window.innerWidth`; `uiScale` is the font-driven scale
  * factor. The threshold is compared against the width measured in DESIGN
- * pixels — the units the 960 was chosen in — so the decision means the same
+ * pixels — the units the 760 was chosen in — so the decision means the same
  * thing at every scale:
  *
  *   usable design width = innerWidth / uiScale
  *
- * At scale 1 the two are identical. At scale 1.5 a 1400px window has only
- * ~933 design px of room, i.e. the panels are 1.5× bigger and genuinely no
- * longer fit side by side, so it collapses to one column. Skipping the division
+ * At scale 1 the two are identical. At scale 1.5 a 1200px window has only 800
+ * design px of room, i.e. the panels are 1.5× bigger and genuinely no longer fit
+ * side by side, so it collapses to one column. Skipping the division
  * would be wrong in the other direction: the layout would claim there is room
  * for two 320px-minimum columns while the columns themselves are 1.5× wider.
  *

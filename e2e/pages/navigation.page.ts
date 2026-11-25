@@ -86,14 +86,15 @@ export class NavigationPage {
             // The threshold is a DESIGN width: the app divides the viewport by
             // the applied interface scale before comparing (see
             // computeIsWideScreen), because scaling grows the panels without
-            // widening the window. Reading `innerWidth >= 960` here would
+            // widening the window. Reading a raw `innerWidth >= N` here would
             // expect the wide dock on a window that the app has already
             // collapsed — a 1200px window at 150% is 800 design px.
+            // 760 matches WIDE_SCREEN_MIN_WIDTH.
             const scale = parseFloat(
               getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'),
             )
             const uiScale = Number.isFinite(scale) && scale > 0 ? scale : 1
-            const wantWide = window.innerWidth / uiScale >= 960
+            const wantWide = window.innerWidth / uiScale >= 760
             return wantWide ? shown(wide) && !shown(narrow) : shown(narrow) && !shown(wide)
           }),
         { timeout: 10000, message: 'the dock matching the viewport should be the one rendered' },
@@ -139,7 +140,15 @@ export class NavigationPage {
     // content present yet `display:none`, which is exactly the "team-chip
     // resolved but hidden" timeout seen on WebKit in CI).
     await this.waitForLayoutSettled()
-    const wide = await this.page.evaluate(() => window.innerWidth >= 960)
+    // Same design-px rule as the app (and as the check above): a fixed
+    // `innerWidth >= 960` ignored UI scaling and disagreed with the real layout.
+    const wide = await this.page.evaluate(() => {
+      const scale = parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--ui-scale'),
+      )
+      const uiScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+      return window.innerWidth / uiScale >= 760
+    })
     if (wide) {
       // In wide mode chat lives in the right pane. When it is collapsed the
       // pane is `display:none` and a 24px rail remains at the right edge; the

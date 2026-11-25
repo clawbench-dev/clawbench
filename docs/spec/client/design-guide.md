@@ -300,12 +300,14 @@ html  { font-size: calc(15px * var(--ui-scale, 1)); }
 
 ### 宽屏 vs 窄屏
 
-- 阈值（`useWideScreenLayout.ts` 的 `WIDE_SCREEN_MIN_WIDTH`）：**CSS 视口宽度 ≥960px**，仅此一条。
+- 阈值（`useWideScreenLayout.ts` 的 `WIDE_SCREEN_MIN_WIDTH`）：**设计像素宽度 ≥760px**，仅此一条。
+- **为什么是 760 而不是 960**：960 当初只为救高 DPR 平板（2400 物理 px / DPR 2.5 = 960 CSS px）而设，代价是折叠屏展开（约 840 CSS px）明明放得下两栏却一直停在单栏。降到 760 把折叠屏并进来。左边竖排 dock 占 48，所以门槛处两栏各得 (760−48)/2 = 356，仍高于 `SplitView` 的 320 下限。
+- **门槛压到 760 的代价**：刚过线的那段宽度两栏都能开但都很挤，这是有意的取舍，不为它额外加手动开关。
 - **为什么是纯 CSS 宽度、且不带物理像素回退**：布局实际能用的只有 CSS 像素，所以「放得下第二栏吗」只在 CSS 像素里有意义。早期版本带一条「物理宽度 ≥1280 且横屏」的回退，本意是救高 DPR 平板（2400 物理 px / DPR 2.5 = 960 CSS px），但副作用是拿「屏幕玻璃尺寸」越权替「可用布局空间」做决定，产出自相矛盾的结果——横屏手机（CSS 698px）被判宽屏，而桌面 960px 窗口反而不算。它也无法用 CSS 表达（媒体查询只认 CSS 像素），会让 JS 信号与 CSS 媒体查询在边界处分歧。把阈值从 1024 降到 960 就把平板那个 case 直接并进阈值里，回退条款可整体删除。
-- **UI 缩放影响判定**：判据是**有效宽度** `innerWidth / uiScale`。面板本身随缩放变大，所以同一个窗口在 1.5 倍下只剩约 933 设计 px，确实放不下两栏（1400px 窗口会掉成单栏，1440px 正好 960 保持两栏）。`computeIsWideScreen(cssWidth, uiScale)` 两个参数缺一不可。
+- **UI 缩放影响判定**：判据是**有效宽度** `innerWidth / uiScale`。面板本身随缩放变大，所以同一个窗口在 1.5 倍下只剩约 800 设计 px，确实放不下两栏（1200px 窗口会掉成单栏，1140px 正好 760 保持两栏）。`computeIsWideScreen(cssWidth, uiScale)` 两个参数缺一不可。
   - **缩放变化不会触发 `resize`**：rem 缩放改的是元素尺寸不是视口，所以 `applyUIScale` 会广播 `clawbench-ui-scale-change`（`utils/uiScale.ts` 的 `UI_SCALE_EVENT`），布局监听它重算。少了这条，布局会一直沿用上一个缩放档位的判定。
 - 生效方式是给 `.main-content` 加 `.wide-screen` 类，`wide-screen.css` 切成 `flex-direction: row`。
-- **不要拿宽屏阈值当「布局放得下吗」的通用判据**：那是另一个问题、另一个阈值。例如头部胶囊的段标签用 `@media (min-width: 600px)`（见 `AppHeader.vue` 的 `.seg-label`）——带标签的胶囊实测仅约 215px，600 就够，用 960 反而会在有空间的横屏手机上隐藏标签。
+- **不要拿宽屏阈值当「布局放得下吗」的通用判据**：那是另一个问题、另一个阈值。例如头部胶囊的段标签用 `@media (min-width: 600px)`（见 `AppHeader.vue` 的 `.seg-label`）——带标签的胶囊实测仅约 215px，600 就够，用宽屏阈值反而会在有空间的横屏手机上隐藏标签。
 - **默认分屏比例是 4:6（左侧稍窄）**，常量 `DEFAULT_RATIO` 在 `utils/splitRatio.ts`——composable 初值与 `resetWideScreenState` 都引用它，不要把 0.4 散落成魔数。用户已持久化的自定义比例不受影响（localStorage 优先）。
 
 ### 聊天区阅读栏（超宽屏收窄）
