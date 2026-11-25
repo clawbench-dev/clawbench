@@ -117,9 +117,13 @@ func streamPCMSynth(ctx context.Context, conn *websocket.Conn,
 	dec, err := mp3.NewDecoder(pr)
 	if err != nil {
 		slog.Error("speech stream: stream decode failed", slog.String("error", err.Error()))
-		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "decode failed"})
 		_ = pr.Close()
+		// Remove BEFORE reporting: the client's next click takes "a non-empty
+		// .mp3 exists" as a finished reading, so a caller that reacts to the
+		// frame (or a test asserting on it) must not find the fragment still
+		// there. The synth-error branch below is ordered the same way.
 		removePartialAudio(outPath)
+		_ = writeSpeechFrame(ctx, conn, map[string]any{ttsWSType: strError, messageKey: "decode failed"})
 		return
 	}
 	pumpPCM(ctx, conn, dec)

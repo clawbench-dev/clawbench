@@ -3,7 +3,6 @@ package handler
 import (
 	"bufio"
 	"encoding/json"
-	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -717,7 +716,7 @@ func TestParseSearchParams_RelativePathKeepsProjectSemantics(t *testing.T) {
 	}
 }
 
-func TestClassifyEntry(t *testing.T) {
+func TestClassifyName(t *testing.T) {
 	tests := []struct {
 		name     string
 		isDir    bool
@@ -736,25 +735,13 @@ func TestClassifyEntry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := fakeDirEntry{isDir: tt.isDir, name: tt.fileName}
-			got := classifyEntry(d, tt.fileName)
+			got := classifyName(tt.fileName, tt.isDir)
 			if got != tt.want {
-				t.Errorf("classifyEntry(%v, %q) = %q, want %q", tt.isDir, tt.fileName, got, tt.want)
+				t.Errorf("classifyName(%q, %v) = %q, want %q", tt.fileName, tt.isDir, got, tt.want)
 			}
 		})
 	}
 }
-
-// fakeDirEntry implements fs.DirEntry for testing classifyEntry.
-type fakeDirEntry struct {
-	isDir bool
-	name  string
-}
-
-func (f fakeDirEntry) Name() string               { return f.name }
-func (f fakeDirEntry) IsDir() bool                { return f.isDir }
-func (f fakeDirEntry) Type() fs.FileMode          { return 0 }
-func (f fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func TestDirSearch_WrongMethod(t *testing.T) {
 	env, teardown := setupTestEnv(t)

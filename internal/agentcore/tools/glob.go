@@ -1,14 +1,15 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"clawbench/internal/symwalk"
 )
 
 // GlobTool lists files by pattern.
@@ -88,11 +89,12 @@ func (GlobTool) Run(env Env, raw json.RawMessage) Result {
 	base := globWalkBase(env, absRoot, pattern)
 
 	var matches []string
-	walkErr := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
-		return collectGlobMatch(pattern, absRoot, path, d, err, &matches)
-	})
-	if walkErr != nil && !errors.Is(walkErr, fs.SkipAll) {
-		return Result{Text: fmt.Sprintf("cannot list files: %v", walkErr), IsError: true}
+	outcome := symwalk.Walk(context.Background(), base, env.walkOptions(absRoot),
+		func(e symwalk.Entry) symwalk.Result {
+			return collectGlobMatch(pattern, absRoot, e, &matches)
+		})
+	if outcome.RootError != nil {
+		return Result{Text: fmt.Sprintf("cannot list files: %v", outcome.RootError), IsError: true}
 	}
 
 	if len(matches) == 0 {
@@ -137,26 +139,42 @@ func globWalkBase(env Env, absRoot, pattern string) string {
 	return resolved
 }
 
-// collectGlobMatch is the WalkDir callback: it appends path's display form to
-// matches when the pattern matches, and stops the walk once the result cap is
-// reached.
+// collectGlobMatch is the walk visitor: it appends path's display form to matches
+// when the pattern matches, and stops the walk once the result cap is reached.
 //
-// The nil returns on a failed entry and on a filepath.Rel error are deliberate:
-// an unreadable directory and a path with no relative form are both "leave this
-// one out", not reasons to report the listing as failed.
-func collectGlobMatch(pattern, absRoot, path string, d fs.DirEntry, walkErr error, matches *[]string) error {
-	if walkErr != nil {
-		return nil //nolint:nilerr // unreadable entries are skipped, not fatal
+// Directories are pruned before any matching, so globSkipDirs never contributes
+// its own paths. Symlinks are followed (see symwalk), which is what makes a file
+// behind a linked-in directory reachable by pattern instead of invisible here
+// while the file manager shows it.
+func collectGlobMatch(pattern, absRoot string, e symwalk.Entry, matches *[]string) symwalk.Result {
+	if e.Blocked {
+		// A directory the turn is not allowed to enter: listing it would invite a
+		// read of a path that read itself refuses.
+		return symwalk.Continue
 	}
-	if d.IsDir() {
-		if globSkipDirs[d.Name()] {
-			return filepath.SkipDir
+	if e.IsDir {
+		if globSkipDirs[e.Name] {
+			return symwalk.SkipDir
 		}
-		return nil
+		return symwalk.Continue
 	}
+	display, ok := globDisplayPath(pattern, absRoot, e.Path)
+	if !ok {
+		return symwalk.Continue
+	}
+	*matches = append(*matches, display)
+	if len(*matches) >= maxGlobResults {
+		return symwalk.Stop
+	}
+	return symwalk.Continue
+}
+
+// globDisplayPath returns the form of path shown to the model when the pattern
+// matches. ok is false when it matches neither form.
+func globDisplayPath(pattern, absRoot, path string) (string, bool) {
 	rel, err := filepath.Rel(absRoot, path)
 	if err != nil {
-		return nil //nolint:nilerr // not representable relative to the root: left out
+		return "", false // not representable relative to the root: left out
 	}
 	rel = filepath.ToSlash(rel)
 	// Outside the project, "relative to the working directory" would be a
@@ -165,13 +183,10 @@ func collectGlobMatch(pattern, absRoot, path string, d fs.DirEntry, walkErr erro
 	if strings.HasPrefix(rel, "../") {
 		display = filepath.ToSlash(path)
 	}
-	if globMatch(pattern, rel) || (display != rel && globMatch(pattern, display)) {
-		*matches = append(*matches, display)
-		if len(*matches) >= maxGlobResults {
-			return fs.SkipAll
-		}
+	if !globMatch(pattern, rel) && (display == rel || !globMatch(pattern, display)) {
+		return "", false
 	}
-	return nil
+	return display, true
 }
 
 // literalPrefix returns the leading path segments of a pattern that contain no

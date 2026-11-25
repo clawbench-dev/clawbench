@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"clawbench/internal/symwalk"
 )
 
 // JSON Schema vocabulary shared by every Spec(). They are literal keyword
@@ -178,6 +180,31 @@ func (e Env) resolve(p string) (string, error) {
 		return resolvePath(e.Root, p)
 	}
 	return resolveAnywhere(e.Root, p)
+}
+
+// walkOptions is the directory-walk policy for this turn: what Entry.Rel is
+// relative to, and whether a directory reached through a symlink may be entered.
+//
+// With ConfineToWorkDir on, a link that resolves outside the working directory is
+// not entered. That is the same fence every other tool's path check applies: a
+// poisoned repository's `resources -> /etc` must not become readable just because
+// the model asked glob or grep instead of read. With the fence off, any target is
+// fine — that is the "project with a link to another disk" layout the fence
+// exists to allow.
+func (e Env) walkOptions(relBase string) symwalk.Options {
+	opts := symwalk.Options{Base: relBase}
+	if !e.ConfineToWorkDir {
+		return opts
+	}
+	realRoot := e.Root
+	if abs, absErr := filepath.Abs(e.Root); absErr == nil {
+		realRoot = abs
+	}
+	if resolved, evalErr := filepath.EvalSymlinks(realRoot); evalErr == nil {
+		realRoot = resolved
+	}
+	opts.CanEnter = func(realPath string) bool { return isWithin(realRoot, realPath) }
+	return opts
 }
 
 // resolvePath turns a caller-supplied path into an absolute path that is

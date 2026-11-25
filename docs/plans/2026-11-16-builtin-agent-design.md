@@ -138,6 +138,8 @@ root/link/secret.txt     # 文本路径在 root 内，实际指向 /etc
 
 这条必须拦住，否则只读策略毫无意义。写入 `root/link/new.txt`（文件还不存在）同样要拦——`resolveExistingPrefix` 就是为此。
 
+**遍历工具（`glob` / `grep`）跟着符号链接走，但同一把尺子量**：两个工具都用 `internal/symwalk.Walk`（文件管理器的搜索也用它），所以链接进来的目录能搜到；能进哪个链接目录由 `Env.walkOptions` 决定——`ConfineToWorkDir` 打开时，目标解析后不在工作目录内的链接**只列出、不进入**（`Entry.Blocked`），和 `resolvePath` 对单个路径的拦截口径一致。关掉围栏时任意目标都进，这正是「项目里放了指向另一块盘的链接」的合法形态。不加这条，模型只要换用 `glob`/`grep` 就能读到 `read` 拒绝的文件——那等于把上面的边界架空。
+
 ### 两层分离
 
 | 层 | 在哪 | 作用 |

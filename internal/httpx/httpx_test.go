@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -240,4 +241,74 @@ func TestIsPathUnderBase_MissingPaths(t *testing.T) {
 	assert.False(t, IsPathUnderBase(filepath.Join(dir, "x"), filepath.Join(dir, "no-such-base")))
 	// 目标不存在时按"最近的已存在祖先"判断：祖先在根外 → false。
 	assert.False(t, IsPathUnderBase(filepath.Join(t.TempDir(), "no-such-dir", "f.txt"), dir))
+}
+
+// ── ResolveReadPath：读接口放行"项目内符号链接指向项目外" ────────────────────
+//
+// 用户把外部目录链进项目（data -> /mnt/disk/data）是正常用法，浏览也一直支持。
+// 读接口以前一律拒绝，于是"搜到了，点开说文件不存在"。放宽的边界：链接目标必须
+// 仍在配置的根下，词法上的 .. 越界一律拒绝。
+
+func TestResolveReadPath_AllowsSymlinkEscapeUnderRoot(t *testing.T) {
+	origRoots := model.RootPaths
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	root := t.TempDir()
+	model.RootPaths = []string{root}
+
+	project := filepath.Join(root, "project")
+	external := filepath.Join(root, "external")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	require.NoError(t, os.MkdirAll(external, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(external, "a.txt"), []byte("x"), 0o644))
+	require.NoError(t, os.Symlink(external, filepath.Join(project, "data")))
+
+	abs, ok := ResolveReadPath(project, "data/a.txt")
+	require.True(t, ok, "链接指向的文件必须可读")
+	assert.Equal(t, filepath.Join(project, "data", "a.txt"), abs, "返回词法路径，让 OS 自己跟随链接")
+}
+
+func TestResolveReadPath_RejectsLexicalEscape(t *testing.T) {
+	origRoots := model.RootPaths
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	root := t.TempDir()
+	model.RootPaths = []string{root}
+
+	project := filepath.Join(root, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "outside.txt"), []byte("x"), 0o644))
+
+	_, ok := ResolveReadPath(project, "../outside.txt")
+	assert.False(t, ok, ".. 写出项目属于路径穿越，不在放宽范围")
+}
+
+func TestResolveReadPath_RejectsTargetOutsideEveryRoot(t *testing.T) {
+	origRoots := model.RootPaths
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	root := t.TempDir()
+	model.RootPaths = []string{root}
+
+	project := filepath.Join(root, "project")
+	require.NoError(t, os.MkdirAll(project, 0o755))
+	elsewhere := t.TempDir() // 不在任何根下
+	require.NoError(t, os.WriteFile(filepath.Join(elsewhere, "secret.txt"), []byte("x"), 0o644))
+	require.NoError(t, os.Symlink(elsewhere, filepath.Join(project, "out")))
+
+	_, ok := ResolveReadPath(project, "out/secret.txt")
+	assert.False(t, ok, "链接目标在根之外，和绝对路径同一口径：拒绝")
+}
+
+func TestResolveReadPath_NormalPathUnchanged(t *testing.T) {
+	origRoots := model.RootPaths
+	t.Cleanup(func() { model.RootPaths = origRoots })
+
+	root := t.TempDir()
+	model.RootPaths = []string{root}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644))
+
+	abs, ok := ResolveReadPath(root, "a.txt")
+	require.True(t, ok)
+	assert.Equal(t, filepath.Join(root, "a.txt"), abs)
 }

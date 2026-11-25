@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"clawbench/internal/symwalk"
 )
 
 // GrepTool searches file contents by regular expression.
@@ -95,7 +98,7 @@ func (GrepTool) Run(env Env, raw json.RawMessage) Result {
 		return Result{Text: fmt.Sprintf("cannot access %s: %v", args.Path, statErr), IsError: true}
 	}
 
-	files, err := grepTargets(target, info, args.Include)
+	files, err := grepTargets(env, target, info, args.Include)
 	if err != nil {
 		return Result{Text: err.Error(), IsError: true}
 	}
@@ -122,50 +125,50 @@ func (GrepTool) Run(env Env, raw json.RawMessage) Result {
 
 // grepTargets lists the files to search: the target itself, or every file
 // under it when it is a directory, filtered by the include glob.
-func grepTargets(target string, info os.FileInfo, include string) ([]string, error) {
+//
+// Symlinks are followed (see symwalk), so content that only exists on the other
+// side of a project symlink is searchable. Whether a linked directory may be
+// entered is the turn's confinement rule, carried by env.walkOptions.
+func grepTargets(env Env, target string, info os.FileInfo, include string) ([]string, error) {
 	if !info.IsDir() {
 		return []string{target}, nil
 	}
 	var files []string
-	walkErr := grepWalkDir(target, func(path string, d os.DirEntry, walkErr error) error {
-		return collectGrepFile(path, d, walkErr, include, &files)
-	})
-	if walkErr != nil {
-		return nil, fmt.Errorf("cannot search: %w", walkErr)
+	outcome := symwalk.Walk(context.Background(), target, env.walkOptions(target),
+		func(e symwalk.Entry) symwalk.Result {
+			return collectGrepFile(e, include, &files)
+		})
+	if outcome.RootError != nil {
+		return nil, fmt.Errorf("cannot search: %w", outcome.RootError)
 	}
 	return files, nil
 }
 
-// grepWalkDir is the directory walk behind grepTargets. It is a variable only so
-// a test can inject a walk failure — the "the tree could not be read" branch has
-// no portable filesystem trigger (root ignores permissions).
-var grepWalkDir = filepath.WalkDir
-
-// collectGrepFile is the WalkDir callback behind grepTargets: it adds path to
+// collectGrepFile is the walk visitor behind grepTargets: it adds the entry to
 // files when it passes the directory skip list and the include filter.
 //
-// Both nil returns are deliberate skips, not swallowed failures. An unreadable
-// entry must not hide every match elsewhere in the tree, and a malformed
-// include pattern matches nothing — failing the search over it would answer
-// nothing at all.
-func collectGrepFile(path string, d os.DirEntry, walkErr error, include string, files *[]string) error {
-	if walkErr != nil {
-		return nil //nolint:nilerr // unreadable entries are skipped rather than failing the whole search
+// A malformed include pattern matches nothing rather than failing: answering
+// nothing at all would be worse than answering nothing for that pattern.
+func collectGrepFile(e symwalk.Entry, include string, files *[]string) symwalk.Result {
+	if e.Blocked {
+		// A directory the turn is not allowed to enter. Adding it as a "file"
+		// would only produce a read error dressed up as a scanned file.
+		return symwalk.Continue
 	}
-	if d.IsDir() {
-		if globSkipDirs[d.Name()] {
-			return filepath.SkipDir
+	if e.IsDir {
+		if globSkipDirs[e.Name] {
+			return symwalk.SkipDir
 		}
-		return nil
+		return symwalk.Continue
 	}
 	if include != "" {
-		ok, err := filepath.Match(include, d.Name())
+		ok, err := filepath.Match(include, e.Name)
 		if err != nil || !ok {
-			return nil //nolint:nilerr // a malformed filter or a non-matching name selects nothing
+			return symwalk.Continue
 		}
 	}
-	*files = append(*files, path)
-	return nil
+	*files = append(*files, e.Path)
+	return symwalk.Continue
 }
 
 // grepFiles scans candidates until the match cap is reached and reports the
