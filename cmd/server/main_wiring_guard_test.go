@@ -77,3 +77,47 @@ func TestMainWiring_StopIsDeferredRightAfterStart(t *testing.T) {
 	assert.Less(t, stopAt-startAt, 64,
 		"defer stopPlugins() must sit right next to startPlugins(cfg) in main(), not somewhere later in the function")
 }
+
+// TestMainWiring_TTSProviderBuiltByTheSharedConstructor keeps the startup path
+// on newTTSProvider.
+//
+// main() used to carry its own switch over cfg.TTS.Engine. It knew "edge" and
+// "openai" only, so every other engine was silently rebuilt as Edge on the next
+// restart while config.yaml still named it — the settings panel looked fine, the
+// hot-reload path (which uses newTTSProvider) honoured the change, and only a
+// restart exposed the mismatch. Two switches means one of them goes stale; this
+// guard fails the moment a second one grows back.
+func TestMainWiring_TTSProviderBuiltByTheSharedConstructor(t *testing.T) {
+	code := mainGoSource(t)
+
+	callOffset(t, code, "ttsProvider := newTTSProvider(cfg)")
+
+	// Only main()'s body is searched: the provider constructors at the bottom
+	// of the file legitimately contain `p := speech.NewEdgeTTSProvider()`.
+	body := mainFuncBody(t, code)
+
+	// The old copy was recognisable by building a provider inline inside main().
+	for _, literal := range []string{
+		"speech.NewEdgeTTSProvider()",
+		"speech.NewOpenAITTSProvider()",
+		"newOpenAITTSProvider(cfg)",
+		"switch engine {",
+	} {
+		assert.NotContains(t, body, literal,
+			"main() builds a TTS provider inline (%q) — call newTTSProvider(cfg) instead, or an engine it does not know about silently becomes Edge on restart", literal)
+	}
+}
+
+// mainFuncBody returns the text of func main() only, so guards can assert about
+// the startup path without matching the same constructs in helper functions.
+func mainFuncBody(t *testing.T, code string) string {
+	t.Helper()
+	start := callOffset(t, code, "func main() {")
+	rest := code[start:]
+	// main() is the first top-level func in the file's ordering here; the next
+	// one starts at a line beginning with "func ".
+	if end := strings.Index(rest[1:], "\nfunc "); end >= 0 {
+		return rest[:end+1]
+	}
+	return rest
+}
