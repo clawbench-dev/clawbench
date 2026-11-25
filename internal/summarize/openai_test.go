@@ -400,3 +400,18 @@ func TestOpenAIAskAboutContextLossless_CompletePasses(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "完整回答", out)
 }
+
+// TestNewOpenAI_ResolvesOpenCodeSession pins that an OpenCode endpoint gets a
+// routing id at construction. The id itself is asserted by providerhttp; what
+// matters here is that the summarizer path is wired to it at all, so a summary
+// model backed by an OpenCode provider does not fail with MissingSessionID.
+func TestNewOpenAI_ResolvesOpenCodeSession(t *testing.T) {
+	s := NewOpenAI("https://opencode.ai/inference/go/openai/v1", "k", "m")
+	if s.sessionID == "" {
+		t.Fatal("an OpenCode endpoint must get a session id")
+	}
+	other := NewOpenAI("https://api.deepseek.com", "k", "m")
+	if other.sessionID != "" {
+		t.Fatalf("an unrelated endpoint must not get a session id, got %q", other.sessionID)
+	}
+}

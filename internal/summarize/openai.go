@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"clawbench/internal/providerhttp"
 )
 
 // OpenAISummarizer implements Summarizer using the OpenAI Chat Completions API format.
@@ -21,6 +23,9 @@ type OpenAISummarizer struct {
 	Model      string       // Model name (default: "gpt-4o-mini")
 	HTTPClient *http.Client // Shared HTTP client with timeout
 	gs         summarizePipeline
+	// sessionID is resolved once so a multi-pass summary keeps one provider
+	// routing id (see providerhttp).
+	sessionID string
 }
 
 // NewOpenAI creates an OpenAISummarizer with the given configuration.
@@ -40,6 +45,9 @@ func NewOpenAI(baseURL, key, model string) *OpenAISummarizer {
 		},
 	}
 	s.gs = NewSummarizePipeline(s.DoSummarizePass)
+	if providerhttp.IsOpenCode(s.BaseURL, "") {
+		s.sessionID = providerhttp.SessionID("")
+	}
 	return s
 }
 
@@ -123,6 +131,7 @@ func (s *OpenAISummarizer) DoAskPassDetailed(ctx context.Context, systemPrompt, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.Key)
+	providerhttp.Apply(req, s.BaseURL, "", s.sessionID)
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
@@ -193,6 +202,7 @@ func (s *OpenAISummarizer) DoSummarizePass(ctx context.Context, text, systemProm
 	if s.Key != "" {
 		req.Header.Set("Authorization", "Bearer "+s.Key)
 	}
+	providerhttp.Apply(req, s.BaseURL, "", s.sessionID)
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {

@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"clawbench/internal/providerhttp"
 )
 
 // AnthropicSummarizer implements Summarizer using the Anthropic Messages API format.
@@ -19,6 +21,9 @@ type AnthropicSummarizer struct {
 	Model      string       // Model name (default: "claude-3-5-haiku-latest")
 	HTTPClient *http.Client // Shared HTTP client with timeout
 	gs         summarizePipeline
+	// sessionID is resolved once so a multi-pass summary keeps one provider
+	// routing id (see providerhttp).
+	sessionID string
 }
 
 // NewAnthropic creates an AnthropicSummarizer with the given configuration.
@@ -38,6 +43,9 @@ func NewAnthropic(baseURL, key, model string) *AnthropicSummarizer {
 		},
 	}
 	s.gs = NewSummarizePipeline(s.DoSummarizePass)
+	if providerhttp.IsOpenCode(s.BaseURL, "") {
+		s.sessionID = providerhttp.SessionID("")
+	}
 	return s
 }
 
@@ -167,6 +175,7 @@ func (s *AnthropicSummarizer) DoAskPassDetailed(ctx context.Context, systemPromp
 	if s.Key != "" {
 		req.Header.Set("x-api-key", s.Key)
 	}
+	providerhttp.Apply(req, s.BaseURL, "", s.sessionID)
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
@@ -233,6 +242,7 @@ func (s *AnthropicSummarizer) DoSummarizePass(ctx context.Context, text, systemP
 	if s.Key != "" {
 		req.Header.Set("x-api-key", s.Key)
 	}
+	providerhttp.Apply(req, s.BaseURL, "", s.sessionID)
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {

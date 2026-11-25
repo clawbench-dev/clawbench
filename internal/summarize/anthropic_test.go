@@ -422,3 +422,16 @@ func TestAnthropicAskAboutContextLossless_TruncatedIsAnError(t *testing.T) {
 	_, err := AskAboutContextLossless(context.Background(), s, "sys", "ctx", "q", 8000)
 	assert.ErrorIs(t, err, ErrOutputTruncated)
 }
+
+// TestNewAnthropic_ResolvesOpenCodeSession mirrors the OpenAI constructor: the
+// Messages path must carry the same routing id for an OpenCode endpoint.
+func TestNewAnthropic_ResolvesOpenCodeSession(t *testing.T) {
+	s := NewAnthropic("https://opencode.ai/inference/go/anthropic/v1", "k", "m")
+	if s.sessionID == "" {
+		t.Fatal("an OpenCode endpoint must get a session id")
+	}
+	other := NewAnthropic("https://api.anthropic.com", "k", "m")
+	if other.sessionID != "" {
+		t.Fatalf("an unrelated endpoint must not get a session id, got %q", other.sessionID)
+	}
+}

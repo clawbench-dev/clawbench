@@ -181,6 +181,7 @@ func builtinAgentClient(agent *model.Agent) (llm.Client, string, error) {
 		AuthMode:       provider.AuthMode,
 		Model:          modelID,
 		SupportsVision: model.ModelSupportsVision(provider.Protocol, modelID),
+		PresetID:       provider.PresetID,
 	})
 	if err != nil {
 		return nil, "", err
