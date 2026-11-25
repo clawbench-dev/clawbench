@@ -171,6 +171,14 @@ echo "Run ID: $RUN_ID"
 gh run watch $RUN_ID --exit-status
 ```
 
+流水线分两段：GitHub Release 先完整发完，npm 发布跟在后面。**npm 那一段失败不会让流水线变红**（`publish-npm` / `sync-npmmirror` 带 `continue-on-error`），所以 `gh run watch` 通过不代表 npm 发上了。要确认 npm，单独看这两个 job 的状态：
+
+```bash
+gh run view $RUN_ID --json jobs -q '.jobs[] | select(.name|test("npm")) | "\(.name): \(.conclusion)"'
+```
+
+某个 npm job 失败时，单独重跑它即可（脚本幂等，已发布的版本会跳过）：`gh run rerun $RUN_ID --job <job-id>`。
+
 ## 7. 如果流水线失败
 
 1. 查看失败日志：`gh run view $RUN_ID --log-failed`

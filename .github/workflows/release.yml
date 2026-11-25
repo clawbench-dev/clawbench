@@ -1562,9 +1562,23 @@ jobs:
         # repository from and fails with "not a git repository".
         run: gh release upload "${{ github.ref_name }}" desktop-zips/SHA256SUMS --clobber --repo "${{ github.repository }}"
 
+  # ── npm：GitHub 发布之后才发的第二段 ──────────────────────────────────
+  # `needs` 指向第一段的两个收尾 job（`release-notes` 覆盖各平台二进制与
+  # docker，`desktop-checksums` 覆盖全部桌面包与 SHA256SUMS），所以 npm 只在
+  # GitHub Release 完整发出去之后才开始。实测两次发布，整条流水线因此晚
+  # 5–8 分钟结束（桌面打包是最后收尾的那段，Release Notes 只要 15 秒）。
+  #
+  # `continue-on-error` 让它失败时只标红本 job，不把整条 run 的结论变成
+  # 失败——发布成败由 GitHub Release 决定，npm 是附带的第二渠道。反过来
+  # Release Notes 也不依赖它（见下），所以 npm 一红不会传染给第一段。
+  #
+  # 没有拆成两个 workflow 文件：跨 workflow 要重新解决 tag、ref、artifact
+  # 三件事，任何一处接错都是「npm 静默没发」，而 v0.110/111/112 连续三个
+  # 版本没发上 npm 正是这种形态。
   publish-npm:
     name: Publish to npm
-    needs: [build-frontend, build-linux, build-linux-arm64, build-android-go, build-windows, build-macos-arm64, build-macos-amd64]
+    needs: [release-notes, desktop-checksums]
+    continue-on-error: true
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1746,9 +1760,10 @@ jobs:
     #
     # 所以发布完要主动催一次同步，并等到「元数据 + tarball 都可用」才算完。
     # 脚本现在会在超时后重新提交再等，最多 3 轮（见 NPMMIRROR_ATTEMPTS）。
-    # 单独成 job：失败只让流水线变红，已经发出去的包不受影响，重跑这一个
-    # job 就能补齐（脚本本身幂等）。
+    # 单独成 job：失败只标红这一段，已经发出去的包和整条流水线的结论都不受
+    # 影响，重跑这一个 job 就能补齐（脚本本身幂等）。
     needs: [publish-npm]
+    continue-on-error: true
     runs-on: ubuntu-latest
     # 3 轮 × 5 分钟 = 15 分钟的等待，加上每轮 7 个包的 tarball 探测余量，
     # 这里留 30 分钟兜底防止卡死。
@@ -1783,7 +1798,8 @@ jobs:
 
   release-notes:
     name: Generate Release Notes
-    needs: [build-linux, build-linux-arm64, build-android-go, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker, publish-npm]
+    # npm 不在依赖里：它是第二段，失败不能传染给 Release Notes。
+    needs: [build-linux, build-linux-arm64, build-android-go, build-windows, build-macos-arm64, build-macos-amd64, build-android, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
