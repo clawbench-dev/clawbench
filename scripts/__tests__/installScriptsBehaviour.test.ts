@@ -467,12 +467,159 @@ exit 7
         }
       })()
       // v24 comes first in the list but is not LTS; v22.20 beats v22.9.
-      // String-comparing versions would pick 22.9 (9 > 2). The URL itself
-      // carries the version with or without a `v` depending on the mirror
-      // path, so match the version, not the URL shape.
-      expect(url, `installer output:\n${r.output}`).toMatch(/node-v?22\.20\.0-/)
+      // String-comparing versions would pick 22.9 (9 > 2).
+      // The `v` prefix in BOTH the directory and the file name is load-bearing:
+      // both nodejs.org and npmmirror publish `v22.20.0/node-v22.20.0-…`, and
+      // dropping it makes every request 404 (`node^v` would accept the broken
+      // form, which is exactly how that bug shipped).
+      expect(url, `installer output:\n${r.output}`).toMatch(/\/v22\.20\.0\/node-v22\.20\.0-/)
       expect(url).not.toMatch(/node-v?24\./)
       expect(url).not.toMatch(/node-v?22\.9\.0-/)
+    } finally {
+      box.cleanup()
+    }
+  })
+})
+
+describe('install.sh: fail before wasting the download', () => {
+  /**
+   * A minimal image (container, server install) has no libatomic1. The old
+   * behaviour downloaded ~60MB, extracted, and only then reported
+   * "error while loading shared libraries" — on a slow link that is minutes
+   * wasted for a fact knowable up front.
+   *
+   * The check must look for the library itself, not probe the system `node`:
+   * distro builds of node are often patched and do not need libatomic.so.1,
+   * so a working `node` says nothing about the official binary we download.
+   */
+  it('stops before downloading when libatomic.so.1 is absent', () => {
+    const box = sandbox({
+      // A system node that runs fine — exactly the case the old probe let
+      // through. The library is what decides.
+      node: '#!/usr/bin/env bash\n[ "$1" = "-v" ] && echo v18.0.0\nexit 0\n',
+      npm: '#!/usr/bin/env bash\nexit 0\n',
+      curl: `#!/usr/bin/env bash
+args="$*"
+echo "$args" >> "$HOME/curl-args.log"
+case "$args" in
+  *"/-/ping"*) exit 0 ;;
+esac
+exit 7
+`,
+      // The host has libatomic.so.1, so "the library is missing" can only be
+      // tested by pointing the lookup somewhere empty — the sandbox root has
+      // no libatomic.so.1 in it.
+      ldconfig: '#!/usr/bin/env bash\nexit 0\n',
+    })
+    try {
+      const r = runScript(box, [], { CLAWBENCH_LIBDIR_OVERRIDE: box.root })
+      expect(r.status, r.output).not.toBe(0)
+      // Actionable: the user must be told what to install, not shown the .so error alone.
+      expect(r.output).toContain('libatomic1')
+      expect(r.output).toContain('apt-get install')
+      // And nothing may have been downloaded.
+      const asked = existsSync(join(box.home, 'curl-args.log'))
+        ? readFileSync(join(box.home, 'curl-args.log'), 'utf8')
+        : ''
+      expect(asked, `installer output:\n${r.output}`).not.toContain('.tar.gz')
+      expect(asked).not.toContain('index.json')
+    } finally {
+      box.cleanup()
+    }
+  })
+
+  it('says tar is missing instead of surfacing a confusing download error', () => {
+    const box = sandbox({
+      npm: '#!/usr/bin/env bash\nexit 0\n',
+      // The tar check comes first, so the library answer is irrelevant here —
+      // but it must not be the reason this test fails.
+      ldconfig: '#!/usr/bin/env bash\necho " libatomic.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libatomic.so.1"\n',
+      curl: `#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *"/-/ping"*) exit 0 ;;
+  *"index.json"*) printf '[{"version":"v22.20.0","lts":"Jod"}]'; exit 0 ;;
+esac
+exit 7
+`,
+    })
+    try {
+      // A PATH that has every program the script needs EXCEPT `tar` — the
+      // minimal-image case. Preparing it by symlink keeps the real binaries
+      // (mktemp, sed, awk…) available so the script reaches the check instead
+      // of dying on something unrelated first.
+      const tools = join(box.root, 'tools')
+      mkdirSync(tools, { recursive: true })
+      for (const name of ['bash', 'sh', 'uname', 'mktemp', 'tr', 'sed', 'awk', 'sort', 'cat', 'rm', 'mkdir', 'mv', 'ln', 'dirname', 'grep', 'id']) {
+        const real = ['/usr/bin', '/bin'].map((d) => join(d, name)).find((p) => existsSync(p))
+        if (real) spawnSync('ln', ['-sf', real, join(tools, name)])
+      }
+      expect(existsSync(join(tools, 'tar')), 'the sandbox must not contain tar').toBe(false)
+
+      const r = spawnSync(join(tools, 'bash'), [INSTALL_SH], {
+        env: {
+          PATH: [tools, box.bin].join(delimiter),
+          HOME: box.home,
+          CLAWBENCH_HOME: box.prefix,
+          SHELL: '/bin/bash',
+          TERM: 'dumb',
+        },
+        encoding: 'utf8',
+        timeout: 60_000,
+      })
+      const output = `${r.stdout ?? ''}${r.stderr ?? ''}`
+      expect(r.status, output).not.toBe(0)
+      // Names the missing program and how to get it, rather than letting the
+      // user read `tar: not found` out of the middle of a download log.
+      expect(output).toContain('需要 tar')
+      expect(output).toContain('apt-get install')
+      expect(output).not.toContain('下载 Node.js 失败')
+    } finally {
+      box.cleanup()
+    }
+  })
+})
+
+describe('install.sh: checksum sourcing', () => {
+  /**
+   * The download succeeded, so the installer must not make the user wait on a
+   * second, much slower source just to get SHASUMS256.txt. Pinning it here:
+   * `SHASUMS256.txt` must be asked of the mirror FIRST even when the mirror
+   * answered `/index.json` and the tarball.
+   */
+  it('asks the mirror for SHASUMS256.txt before falling back to the official site', () => {
+    const box = sandbox({
+      node: '#!/usr/bin/env bash\n[ "$1" = "-v" ] && echo v18.0.0\nexit 0\n',
+      npm: '#!/usr/bin/env bash\nexit 0\n',
+      curl: `#!/usr/bin/env bash
+args="$*"
+echo "$args" >> "$HOME/curl-args.log"
+case "$args" in
+  *"/-/ping"*) exit 0 ;;
+  *"index.json"*)
+    printf '[{"version":"v22.20.0","lts":"Jod"}]'
+    exit 0 ;;
+  *"SHASUMS256.txt"*)
+    # Deliberately unparseable so no sha256sum of a stub tarball is attempted;
+    # this test only cares WHICH host was asked, and in what order.
+    exit 6 ;;
+  *".tar.gz"*)
+    # A successful download: the checksum step only runs after one.
+    printf 'not a tarball' > "\${out:-/dev/null}"
+    exit 0 ;;
+esac
+exit 7
+`,
+    })
+    try {
+      const r = runScript(box, [])
+      expect(r.status, r.output).not.toBe(0)
+      const asked = readFileSync(join(box.home, 'curl-args.log'), 'utf8')
+        .split('\n')
+        .filter((l) => l.includes('SHASUMS256.txt'))
+      expect(asked.length, `installer output:\n${r.output}`).toBeGreaterThan(0)
+      expect(asked[0]).toContain('registry.npmmirror.com')
+      expect(asked[0]).toContain('/v22.20.0/')
     } finally {
       box.cleanup()
     }

@@ -300,6 +300,46 @@ node_runtime_error() {
     或者直接用系统包管理器装 Node.js 20 及以上，再执行：npm install -g $NPM_PACKAGE"
 }
 
+# 下载前先确认系统的动态链接库够不够，缺了当场停下。
+#
+# 官方 Node 二进制是动态链接的，最小化系统（容器、server 版、部分精简发行版）
+# 常常没有 libatomic1，解压完一跑就 "error while loading shared libraries"。
+# 早先靠「系统里的 node 能不能跑」间接判断，但发行版自带的 node 常常打了补丁、
+# 不依赖 libatomic.so.1，于是判断通过、下载完 60MB 才发现装的那份跑不起来。
+# 这里改成直接找文件：ldconfig 认得的库、或是 ld.so 搜索路径里存在的库都算数。
+have_shared_lib() {
+  local name="$1" dir
+  # 测试要在没有这个库的机器上验证「缺库」，而宿主几乎一定有它；
+  # 用这个变量把路径收窄到沙箱目录，不然这分支永远测不到。
+  if [ -n "${CLAWBENCH_LIBDIR_OVERRIDE:-}" ]; then
+    for dir in $CLAWBENCH_LIBDIR_OVERRIDE; do
+      [ -e "$dir/$name" ] && return 0
+    done
+    return 1
+  fi
+  if command -v ldconfig >/dev/null 2>&1; then
+    ldconfig -p 2>/dev/null | grep -qF "$name" && return 0
+  fi
+  # ldconfig 不可用（或缓存过期）时退回到按路径找。
+  for dir in /lib /lib64 /usr/lib /usr/lib64 /usr/local/lib \
+    /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu \
+    /lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu; do
+    [ -e "$dir/$name" ] && return 0
+  done
+  return 1
+}
+
+preflight_node_libs() {
+  # 只有 Linux 的官方包链接 libatomic；macOS 不需要，也不会有 ldconfig。
+  [ "$OS" = linux ] || return 0
+  have_shared_lib libatomic.so.1 && return 0
+  die "系统缺少 libatomic.so.1，Node.js 装上也跑不起来，这次先不下载了。
+    Debian / Ubuntu：sudo apt-get install -y libatomic1
+    RHEL / CentOS / Rocky：sudo dnf install -y libatomic
+    Alpine / Termux 的官方包不依赖它，但那两个环境请走系统包管理器装 Node.js。
+    装好运行库后重跑本脚本即可。"
+}
+
 # 把一个 JSON 数组里的 version 字段全部抽出来。`" ]` 只出现在每个对象末尾，
 # 所以这条路径不会踩到 engines / files 之类嵌套数组里的 "version" 字段。
 json_lts_versions() {
@@ -352,6 +392,11 @@ elif command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
 fi
 
 if [ "$NODE_READY" = 0 ]; then
+  # 解压要用 tar，校验要用 sha256sum/shasum。缺了的话下面会以一条看起来像
+  # 「下载失败」的报错退出（tar: not found 混在一堆 curl 输出里），先讲清楚。
+  command -v tar >/dev/null 2>&1 || die "需要 tar 才能解压 Node.js，请先安装（Debian / Ubuntu：apt-get install -y tar）"
+  preflight_node_libs
+
   info "查询最新 LTS 版本..."
   # index.json 是可选内容：镜像取不到就换官方源，所以镜像那次不看 stderr
   # （换源时我们自己会打一行说明，curl 的报错只会让人以为安装失败了）。
@@ -366,26 +411,34 @@ if [ "$NODE_READY" = 0 ]; then
   version="$(pick_latest_lts "$index_file")"
   [ -n "$version" ] || die "拿不到 Node.js 版本列表，请检查网络"
 
-  file="node-$version-$OS-$ARCH.tar.gz"
+  # 目录名和文件名都带 v（index.json 里的 "version" 也带，但 pick_latest_lts
+  # 去掉过前缀，所以这里必须补回来）。少了这个 v 两个源都是 404。
+  file="node-v$version-$OS-$ARCH.tar.gz"
   info "下载 Node.js $version（$OS-$ARCH）"
 
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp" "$index_file"' EXIT
 
-  http_download "$MIRROR_BASE/$version/$file" "$tmp/$file" || {
+  http_download "$MIRROR_BASE/v$version/$file" "$tmp/$file" || {
     if [ "$MIRROR_BASE" != "$MIRROR_ALT" ]; then
       info "镜像下载失败，换官方源重试"
       MIRROR_BASE="$MIRROR_ALT"
-      http_download "$MIRROR_BASE/$version/$file" "$tmp/$file" || die "下载 Node.js 失败"
+      http_download "$MIRROR_BASE/v$version/$file" "$tmp/$file" || die "下载 Node.js 失败"
     else
       die "下载 Node.js 失败"
     fi
   }
 
   # 校验和能拿到就校验；拿不到不阻断（官方源偶尔抽风）。
+  # 先在国内镜像取：安装包本身就是从这个源下的，跟它比才有意义，也免得
+  # 国内直连官方源（实测几 KB/s）把「已经下完 60MB」的安装卡在一次多余下载上。
+  # 镜像取不到（比如刚才已经换成官方源了）再换官方源。
   # 这里吞掉 stderr 是刻意的：拿不到校验和不是用户能处理的问题，
   # 而真的校验不过会由下面的 die 明确说出来。
-  sums="$(http_get "$MIRROR_BASE/$version/SHASUMS256.txt" 2>/dev/null || true)"
+  sums="$(http_get "https://registry.npmmirror.com/-/binary/node/v$version/SHASUMS256.txt" 2>/dev/null || true)"
+  if [ -z "$sums" ] && [ "$MIRROR_BASE" != "$MIRROR_ALT" ]; then
+    sums="$(http_get "$MIRROR_BASE/v$version/SHASUMS256.txt" 2>/dev/null || true)"
+  fi
   expected="$(printf '%s\n' "$sums" | awk -v f="$file" '$2 == f { print $1 }')"
   if [ -n "$expected" ]; then
     if command -v sha256sum >/dev/null 2>&1; then
@@ -393,6 +446,8 @@ if [ "$NODE_READY" = 0 ]; then
     elif command -v shasum >/dev/null 2>&1; then
       actual="$(shasum -a 256 "$tmp/$file" | awk '{ print $1 }')"
     else
+      # 两个校验工具都没有：跳过校验，但要说出来，别让用户以为验过了。
+      info "系统里没有 sha256sum / shasum，跳过安装包校验"
       actual=""
     fi
     if [ -n "$actual" ] && [ "$actual" != "$expected" ]; then
@@ -403,7 +458,7 @@ if [ "$NODE_READY" = 0 ]; then
   tar -xzf "$tmp/$file" -C "$tmp"
   mkdir -p "$CLAWBENCH_HOME"
   rm -rf "$NODE_DIR"
-  mv "$tmp/node-$version-$OS-$ARCH" "$NODE_DIR"
+  mv "$tmp/node-v$version-$OS-$ARCH" "$NODE_DIR"
 
   if ! installed_version="$(node -v 2>&1)"; then
     node_runtime_error "$installed_version"
