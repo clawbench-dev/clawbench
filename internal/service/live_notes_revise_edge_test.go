@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,6 +38,30 @@ func TestReviseLiveNotesTranscript_OneUnusableChunkKeepsTheOtherChunksWork(t *te
 	assert.Contains(t, got, "正确甲", "the usable chunk's correction must land")
 	assert.NotContains(t, got, "错词甲")
 	assert.Contains(t, got, "第二段的内容。", "the unusable chunk keeps its raw text")
+}
+
+// A truncated answer is a prefix of the pair list, so its last line can be half
+// a pair. That chunk is dropped rather than writing a fragment into the text —
+// and dropping one chunk is not the meeting's problem.
+func TestReviseLiveNotesTranscript_OneTruncatedChunkIsTolerated(t *testing.T) {
+	segments := reviseFixture()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body := `{"choices":[{"message":{"content":"错词甲 => 正确甲"},"finish_reason":"stop"}]}`
+		if calls.Add(1) == 2 {
+			body = `{"choices":[{"message":{"content":"错词甲 => 正"},"finish_reason":"length"}]}`
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	withAISummary(t, srv.URL)
+
+	got, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{Segments: segments})
+	require.NoError(t, err, "one truncated chunk must not fail the meeting")
+	assert.Contains(t, got, "正确甲", "the usable chunk's correction must land")
+	assert.NotContains(t, got, "错词甲")
+	assert.Contains(t, got, "第二段的内容。", "the truncated chunk keeps its raw text")
 }
 
 // When every chunk answers unusably there is no proofread at all, and saying

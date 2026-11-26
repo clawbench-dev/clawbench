@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -164,49 +163,18 @@ func reviseLiveNotesTranscriptWithAgent(
 	}
 
 	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
-	pairs := make([]liveNotePair, 0, len(chunks)*8)
-	splits := make([]liveNoteSplit, 0, 2)
-	unusable := 0
-	var firstUnusable error
-	var firstUnusableChunk int
-	for i, chunk := range chunks {
-		block := liveNoteReviseBlock(background, glossary, chunk)
-		question := liveNotesReviseQuestion
-		if len(chunks) > 1 {
-			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), question)
-		}
-		answer, err := RunBuiltinAgentTask(ctx, BuiltinAgentTask{
-			Prompt:          block + "\n\n" + question,
+	pairs, splits, err := proofreadLiveNoteChunks("agent revise", chunks, func(i, total int, chunk string) (string, error) {
+		return RunBuiltinAgentTask(ctx, BuiltinAgentTask{
+			Prompt:          liveNoteReviseBlock(background, glossary, chunk) + "\n\n" + liveNoteChunkQuestion(i, total),
 			SystemPrompt:    systemPrompt,
 			WorkDir:         workDir,
 			Policy:          policy,
 			MaxOutputTokens: liveNotesReviseMaxTokens,
 			Timeout:         liveNotesAgentTimeout,
 		})
-		if err != nil {
-			return "", fmt.Errorf("live notes: agent revise chunk %d: %w", i+1, err)
-		}
-		chunkPairs, chunkSplits, err := parseLiveNoteAnswer(answer)
-		if err != nil {
-			// Same rule as the summary path: one chunk's unusable answer costs
-			// that chunk's corrections, not the meeting's.
-			unusable++
-			if firstUnusable == nil {
-				firstUnusable, firstUnusableChunk = err, i+1
-			}
-			slog.Warn("live notes: unusable proofread answer, chunk left unproofread",
-				"chunk", i+1, "chunks", len(chunks), "agent", true, "err", err,
-				"answer", truncateRunes(answer, liveNotesReviseLogRunes))
-		} else {
-			pairs = append(pairs, chunkPairs...)
-			splits = append(splits, chunkSplits...)
-		}
-		if len(progress) > 0 && progress[0] != nil {
-			progress[0](i+1, len(chunks))
-		}
-	}
-	if unusable == len(chunks) {
-		return "", fmt.Errorf("live notes: agent revise chunk %d: %w", firstUnusableChunk, firstUnusable)
+	}, progress)
+	if err != nil {
+		return "", err
 	}
 	return applyLiveNoteEdits(transcript, pairs, splits), nil
 }

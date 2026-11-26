@@ -25,15 +25,16 @@ const liveNotesReviseChunkRunes = 6000
 // The answer is a list of `原词 => 改词` lines, not a rewritten transcript, so a
 // few hundred tokens is the honest ceiling. Keeping the cap far below the chunk
 // size is intentional: a model that ignores the format and starts echoing the
-// transcript gets cut off (and therefore fails loudly) instead of returning a
-// half-rewritten chunk nobody notices.
+// transcript gets cut off, and a cut-off answer is skipped rather than applied
+// half-way — the cap is what keeps a runaway answer from being usable.
 const liveNotesReviseMaxTokens = 2000
 
 // liveNoteReviseNoChanges is what a chunk answers when it found nothing to fix.
 //
 // Without a sentinel, "no corrections" and "the model ignored the format" look
 // identical — both are answers with no replacement pair in them. The sentinel is
-// what makes the second one an error instead of a silent pass-through.
+// what keeps the second one distinguishable, so a chunk that answered in prose
+// is not recorded as "checked, nothing to fix".
 const liveNoteReviseNoChanges = "NO_CHANGES"
 
 // liveNoteRevisePairMaxRunes bounds one side of a replacement pair. A pair is a
@@ -232,37 +233,57 @@ func ReviseLiveNotesTranscript(
 	}
 
 	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
+	pairs, splits, err := proofreadLiveNoteChunks("revise", chunks, func(i, total int, chunk string) (string, error) {
+		return summarize.AskAboutContextLossless(ctx, summarizer, systemPrompt,
+			liveNoteReviseBlock(background, glossary, chunk), liveNoteChunkQuestion(i, total), liveNotesReviseMaxTokens)
+	}, progress)
+	if err != nil {
+		return "", err
+	}
+	return applyLiveNoteEdits(transcript, pairs, splits), nil
+}
+
+// liveNoteChunkQuestion numbers a chunk when the transcript has more than one,
+// so the model knows it is reading part of a longer meeting.
+func liveNoteChunkQuestion(i, total int) string {
+	if total <= 1 {
+		return liveNotesReviseQuestion
+	}
+	return fmt.Sprintf("这是第 %d/%d 段。%s", i+1, total, liveNotesReviseQuestion)
+}
+
+// proofreadLiveNoteChunks asks for every chunk's edits and merges them.
+//
+// label names the pass in the error ("revise" / "agent revise") so the message
+// still says which stage failed and at which chunk. A chunk that cannot be used
+// is skipped rather than aborting: its raw text is already in the output
+// verbatim, so the only thing lost is that chunk's corrections. Only when EVERY
+// chunk is unusable does the pass fail, because then nothing was proofread and
+// reporting success would be a lie.
+func proofreadLiveNoteChunks(
+	label string, chunks []string,
+	ask func(i, total int, chunk string) (string, error),
+	progress []func(done, total int),
+) ([]liveNotePair, []liveNoteSplit, error) {
 	pairs := make([]liveNotePair, 0, len(chunks)*8)
 	splits := make([]liveNoteSplit, 0, 2)
 	unusable := 0
 	var firstUnusable error
 	var firstUnusableChunk int
 	for i, chunk := range chunks {
-		block := liveNoteReviseBlock(background, glossary, chunk)
-		question := liveNotesReviseQuestion
-		if len(chunks) > 1 {
-			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), question)
+		answer, err := ask(i, len(chunks), chunk)
+		// Truncation is the one call error that is not fatal: the answer is
+		// still a prefix of the pair list, so it is skipped like an unusable
+		// one. Everything else (transport, auth, model) aborts the pass.
+		if err != nil && !errors.Is(err, summarize.ErrOutputTruncated) {
+			return nil, nil, fmt.Errorf("live notes: %s chunk %d: %w", label, i+1, err)
 		}
-		answer, err := summarize.AskAboutContextLossless(ctx, summarizer, systemPrompt, block, question, liveNotesReviseMaxTokens)
-		if err != nil {
-			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
-		}
-		chunkPairs, chunkSplits, err := parseLiveNoteAnswer(answer)
-		if err != nil {
-			// One chunk answering in the wrong shape costs this chunk's
-			// corrections and nothing else: the transcript it came from is
-			// already in the output verbatim, so the meeting keeps the other
-			// chunks' work instead of losing all of it.
+		chunkPairs, chunkSplits, skipErr := liveNoteChunkEdits(i+1, len(chunks), answer, err)
+		if skipErr != nil {
 			unusable++
 			if firstUnusable == nil {
-				firstUnusable, firstUnusableChunk = err, i+1
+				firstUnusable, firstUnusableChunk = skipErr, i+1
 			}
-			// The answer itself goes to the log: the error only carries one
-			// line, and diagnosing "the model ignored the format" needs to see
-			// what it wrote instead.
-			slog.Warn("live notes: unusable proofread answer, chunk left unproofread",
-				"chunk", i+1, "chunks", len(chunks), "err", err,
-				"answer", truncateRunes(answer, liveNotesReviseLogRunes))
 		} else {
 			pairs = append(pairs, chunkPairs...)
 			splits = append(splits, chunkSplits...)
@@ -272,9 +293,39 @@ func ReviseLiveNotesTranscript(
 		}
 	}
 	if unusable == len(chunks) {
-		return "", fmt.Errorf("live notes: revise chunk %d: %w", firstUnusableChunk, firstUnusable)
+		return nil, nil, fmt.Errorf("live notes: %s chunk %d: %w", label, firstUnusableChunk, firstUnusable)
 	}
-	return applyLiveNoteEdits(transcript, pairs, splits), nil
+	return pairs, splits, nil
+}
+
+// liveNoteChunkEdits turns one chunk's answer into edits, or reports that this
+// chunk has to be left unproofread.
+//
+// Two failures stop here instead of aborting the meeting, because both are
+// confined to this chunk's corrections: an answer in the wrong shape, and an
+// answer cut off at the output cap — a truncated list's last line can be half a
+// pair (`原词 => 半截改词`), and writing that fragment into the transcript is
+// worse than losing the chunk's corrections. The transcript of a skipped chunk
+// is already in the output verbatim, so nothing is lost but the corrections.
+//
+// A transport or model error is NOT handled here: the caller aborts on it.
+func liveNoteChunkEdits(chunk, chunks int, answer string, callErr error) ([]liveNotePair, []liveNoteSplit, error) {
+	if callErr != nil {
+		slog.Warn("live notes: proofread answer truncated, chunk left unproofread",
+			"chunk", chunk, "chunks", chunks, "err", callErr)
+		return nil, nil, callErr
+	}
+	pairs, splits, err := parseLiveNoteAnswer(answer)
+	if err != nil {
+		// The answer itself goes to the log: the error only carries one line,
+		// and diagnosing "the model ignored the format" needs to see what it
+		// wrote instead.
+		slog.Warn("live notes: unusable proofread answer, chunk left unproofread",
+			"chunk", chunk, "chunks", chunks, "err", err,
+			"answer", truncateRunes(answer, liveNotesReviseLogRunes))
+		return nil, nil, err
+	}
+	return pairs, splits, nil
 }
 
 // liveNoteReviseBlock frames one chunk for the proofreader.
