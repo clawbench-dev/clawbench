@@ -449,8 +449,12 @@ function main() {
       : [],
   }))
   const auxReasons = auxPreloadResults.flatMap((r) => r.reasons)
+  // Registering a bridge means its changes are judged by the members rule — an
+  // additive verb must NOT stay on the all-or-nothing path. Keying this off
+  // "has reasons" instead would leave the additive case exactly as broken as
+  // before there were reasons to report (v0.149.0 failed a second time on it).
   const auxPaths = new Set(
-    auxPreloadResults.filter((r) => r.reasons.length > 0).map((r) => r.path),
+    AUX_PRELOAD_BRIDGES.map((b) => b.path).filter((p) => contractChanged.includes(p)),
   )
   const breakingContractPaths = contractChanged.filter(
     (p) =>
