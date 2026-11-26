@@ -350,16 +350,6 @@ const hasBackendSpec = computed(() => agent.value?.backendHasSpec === true)
  */
 const isBuiltinBackend = computed(() => agent.value?.builtinBackend === true)
 
-/**
- * Whether this agent runs over ACP — true for everything except the built-in
- * agent, whose tools are this process. ACP agents own their system prompt, so
- * the page shows it read-only for them.
- */
-const agentUsesACP = computed(() => {
-  const a = agent.value
-  return !!a && !a.builtinBackend && !!a.acpCommand
-})
-
 interface AgentItem {
   key: string
   label: string
@@ -438,26 +428,19 @@ const items = computed<AgentItem[]>(() => {
     patchField: 'specialty',
   })
 
-  // System Prompt: editable for the in-process agent, read-only info for ACP
-  // agents (which own their system prompt).
-  if (agentUsesACP.value) {
-    result.push({
-      key: 'custom_system_prompt',
-      label: t('settings.items.agentSystemPrompt'),
-      description: t('settings.items.agentSystemPromptACPNote'),
-      type: 'info',
-    })
-  } else {
-    result.push({
-      key: 'custom_system_prompt',
-      label: t('settings.items.agentSystemPrompt'),
-      description: t('settings.items.agentSystemPromptDesc'),
-      note: t('settings.items.agentSystemPromptNote'),
-      type: 'textarea',
-      warning: t('settings.items.agentSystemPromptWarning'),
-      patchField: 'custom_system_prompt',
-    })
-  }
+  // System Prompt: editable for every agent. An ACP agent has its own prompt,
+  // but ClawBench still injects this text into the first user turn as
+  // `[System Instructions: …]` (and again after a compaction), so the field is
+  // live for ACP agents too — it appends to what the agent already carries.
+  result.push({
+    key: 'custom_system_prompt',
+    label: t('settings.items.agentSystemPrompt'),
+    description: t('settings.items.agentSystemPromptDesc'),
+    note: t('settings.items.agentSystemPromptNote'),
+    type: 'textarea',
+    warning: t('settings.items.agentSystemPromptWarning'),
+    patchField: 'custom_system_prompt',
+  })
 
   // -- Preference section --
   result.push({ key: 'header-preference', label: t('settings.items.agentSectionPreference'), type: 'header' })

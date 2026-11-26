@@ -63,7 +63,6 @@ vi.mock('vue-i18n', async (importOriginal) => {
         'settings.items.agentSystemPromptDesc': 'Custom system prompt',
         'settings.items.agentSystemPromptNote': 'May not apply mid-session',
         'settings.items.agentSystemPromptWarning': 'Warning',
-        'settings.items.agentSystemPromptACPNote': 'ACP note',
         'settings.items.agentSectionInfo': 'Info',
         'settings.items.agentBackend': 'Backend',
         'settings.items.agentModels': 'Models',
@@ -419,13 +418,27 @@ describe('SettingsAgentDetail', () => {
     const wrapper1 = mountDetail({ acpCommand: '', canRefreshModels: true })
     const count1 = wrapper1.findAllComponents({ name: 'SettingsItem' }).length
 
-    // An ACP agent: no transport select, system prompt shown as info.
     const wrapper2 = mountDetail({ acpCommand: 'grok agent stdio' })
     const count2 = wrapper2.findAllComponents({ name: 'SettingsItem' }).length
 
     // Both should have items
     expect(count1).toBeGreaterThan(0)
     expect(count2).toBeGreaterThan(0)
+  })
+
+  // The custom system prompt is NOT the agent's own prompt: ClawBench still
+  // prepends it to the first user turn as `[System Instructions: …]` for ACP
+  // backends, so an ACP agent must keep an editable field. It used to be shown
+  // as read-only info for every ACP agent after the CLI transport was removed.
+  it('keeps the System Prompt editable for an ACP agent', () => {
+    const wrapper = mountDetail({ acpCommand: 'grok agent stdio', backend: 'grok' })
+    const item = wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find(it => it.props('label') === 'System Prompt')
+
+    expect(item, 'System Prompt item must exist').toBeTruthy()
+    expect(item!.props('type')).toBe('textarea')
+    expect(item!.props('description')).toBe('Custom system prompt')
+    expect(item!.props('note')).toBe('May not apply mid-session')
   })
 
   it('loads agents on mount', () => {
