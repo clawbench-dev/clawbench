@@ -49,3 +49,27 @@ describe('meeting key-frame wiring', () => {
     expect(closedHandler.slice(0, closedHandler.indexOf('})'))).toContain('share.endAnnotation()')
   })
 })
+
+/**
+ * Which endpoint the picture comes from.
+ *
+ * The owner's two surfaces must use the authenticated path: the public one
+ * follows the record's publication switch, and while the room was open that
+ * switch never mattered — after it closed, every frame in the record answered
+ * 404 and the transcript rendered with broken images. A member's share page
+ * must stay on the public path (it has no session to authenticate with).
+ */
+describe('meeting shot image scope', () => {
+  it('points the owner surfaces at the authenticated endpoint', () => {
+    for (const file of ['src/components/live/MeetingDetail.vue', 'src/components/live/MeetingStage.vue']) {
+      const source = readWebFile(file)
+      expect(source, file).toContain("'owner'")
+    }
+  })
+
+  it('keeps the public share page on the token endpoint', () => {
+    const share = readWebFile('src/share/MeetingShareDetail.vue')
+    expect(share).toContain('shotThumbUrl(token, s.id)')
+    expect(share).not.toContain("'owner'")
+  })
+})

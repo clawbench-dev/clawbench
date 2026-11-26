@@ -2294,8 +2294,7 @@ func ServeShareLiveNoteShotImage(w http.ResponseWriter, r *http.Request, token s
 	if !httpx.RequireMethod(w, r, http.MethodGet, http.MethodHead) {
 		return
 	}
-	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
-	if err != nil || id <= 0 || !sharecore.ValidToken(token) {
+	if !sharecore.ValidToken(token) {
 		http.NotFound(w, r)
 		return
 	}
@@ -2313,6 +2312,43 @@ func ServeShareLiveNoteShotImage(w http.ResponseWriter, r *http.Request, token s
 			http.NotFound(w, r)
 			return
 		}
+	}
+	serveLiveNoteShotImage(w, r, token)
+}
+
+// ServeLiveNoteShotImage handles GET /api/live-share/notes/shot/image?token=&id=&w=
+// (authenticated): the owner reading a frame of their own record.
+//
+// The public endpoint gates frames on the record's publication switch because a
+// stranger must not read an unshared record. The owner is not a stranger — the
+// record is theirs whether or not the link was published, and the live
+// transcript they were reading seconds earlier showed the very same frames.
+// Without this path the owner's record 404s every picture the moment the room
+// closes (the room's presence was the only thing letting them through), which
+// renders the transcript with broken images.
+func ServeLiveNoteShotImage(w http.ResponseWriter, r *http.Request) {
+	if !httpx.RequireMethod(w, r, http.MethodGet, http.MethodHead) {
+		return
+	}
+	projectPath, projectID, ok := liveNotesProject(w, r)
+	if !ok {
+		return
+	}
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	if token == "" || !liveNotesOwnedByProject(token, projectPath, projectID) {
+		http.NotFound(w, r)
+		return
+	}
+	serveLiveNoteShotImage(w, r, token)
+}
+
+// serveLiveNoteShotImage resolves the frame from the database row and writes it
+// as a thumbnail. The caller has already decided who may read it.
+func serveLiveNoteShotImage(w http.ResponseWriter, r *http.Request, token string) {
+	id, err := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.NotFound(w, r)
+		return
 	}
 	absPath, found, lookupErr := service.LiveNoteShotFile(token, id)
 	if lookupErr != nil {

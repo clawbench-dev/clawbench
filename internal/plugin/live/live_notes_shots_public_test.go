@@ -168,3 +168,66 @@ func TestServeShareLiveNoteShotImage_RejectsUnknownID(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// The owner's record must not depend on the publication switch. The room is
+// what used to let the owner through the public endpoint; once it is gone and
+// the record was never published, every picture in the transcript answered
+// 404 while the text still rendered — the exact "broken image" the record
+// showed after a meeting ended.
+func TestServeLiveNoteShotImage_OwnerKeepsFramesAfterRoomEnds(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	token := createShotMeeting(t, project)
+	shot := uploadShot(t, project, token, realPNG(t, 40, 30))
+	// The meeting ends: the in-memory room is torn down, the record remains.
+	LiveRegistry.Delete(token)
+
+	// A stranger's path now follows the (off) publication switch.
+	pub := httptest.NewRecorder()
+	ServeShareLiveNoteShotImage(pub, httptest.NewRequest(
+		http.MethodGet,
+		"/api/share/"+token+"/notes/shot?id="+strconv.FormatInt(shot.ID, 10),
+		http.NoBody,
+	), token)
+	require.Equal(t, http.StatusNotFound, pub.Code)
+
+	// The owner still reads their own frame.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/live-share/notes/shot/image?token="+token+"&id="+strconv.FormatInt(shot.ID, 10)+"&w=100",
+		http.NoBody,
+	)
+	req.AddCookie(shotProjectCookie(project))
+	ServeLiveNoteShotImage(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "image/jpeg", rec.Header().Get("Content-Type"))
+	assert.NotEmpty(t, rec.Body.Bytes())
+}
+
+// The owner endpoint is authenticated, but authentication alone is not enough:
+// a token from another project must stay unreadable, exactly like the list and
+// delete endpoints.
+func TestServeLiveNoteShotImage_RejectsForeignProject(t *testing.T) {
+	db := setupLiveNotesDB(t)
+	defer func() { _ = db.Close() }()
+	resetLiveRegistry(t)
+	project := t.TempDir()
+	token := createShotMeeting(t, project)
+	shot := uploadShot(t, project, token, realPNG(t, 4, 3))
+	LiveRegistry.Delete(token)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/live-share/notes/shot/image?token="+token+"&id="+strconv.FormatInt(shot.ID, 10),
+		http.NoBody,
+	)
+	req.AddCookie(shotProjectCookie(t.TempDir()))
+	ServeLiveNoteShotImage(rec, req)
+
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}

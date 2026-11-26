@@ -616,8 +616,8 @@ const transcriptLines = computed<NoteBlock[]>(() => {
         at: shot.offsetMs,
         reason: shot.reason,
         ref: shot.ref,
-        thumbUrl: shotThumbUrl(props.token, shot.id),
-        fullUrl: shotFullUrl(props.token, shot.id),
+        thumbUrl: shotThumbUrl(props.token, shot.id, 480, 'owner'),
+        fullUrl: shotFullUrl(props.token, shot.id, 'owner'),
       })),
     ),
   )

@@ -51,6 +51,10 @@ func MountLiveRoutes(m plugins.Mount) {
 	// uploads one, DELETE removes one, GET (below) lists them.
 	m.Auth("/api/live-share/notes/shot", ServeLiveShareNoteShot)
 	m.Auth("/api/live-share/notes/shots", ServeLiveNotesShots)
+	// The owner's own copy of a frame. The public endpoint under /api/share
+	// follows the record's publication switch; the owner's record must not need
+	// it (their transcript showed these pictures while the room was open).
+	m.Auth("/api/live-share/notes/shot/image", ServeLiveNoteShotImage)
 	// Screen recording (picture + annotations + the meeting's audio mix). The
 	// publisher appends ordered chunks while the switch is on; finish closes the
 	// session. The file lives beside the other artifacts, so the record's

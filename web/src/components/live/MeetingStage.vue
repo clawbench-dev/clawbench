@@ -1170,8 +1170,8 @@ const noteBlocks = computed(() => {
       at: s.at,
       reason: s.reason,
       ref: s.ref,
-      thumbUrl: shotThumbUrl(token, s.id),
-      fullUrl: shotFullUrl(token, s.id),
+      thumbUrl: shotThumbUrl(token, s.id, 480, 'owner'),
+      fullUrl: shotFullUrl(token, s.id, 'owner'),
     })),
   )
   // What the microphone is hearing right now, per channel. It sits at the end

@@ -5130,6 +5130,31 @@ paths:
         "404":
           description: token 不存在或不属于当前项目
 
+  /api/live-share/notes/shot/image:
+    get:
+      tags: [LiveShare]
+      summary: 读取一张会议关键画面的缩略图（发布者）
+      description: |
+        与 `/api/share/{token}/notes/shot` 返回同一张图，但走登录鉴权并按项目归属
+        校验。公开端点受「归档公开分享」开关约束（分享关闭时 404），发布者自己的
+        记录页不该受它影响——开会时转写里看得到这些画面，开完会打开同一条记录也
+        应当看得到。分享页仍走公开端点。
+      operationId: liveShareNoteShotImage
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+        - { name: id, in: query, required: true, schema: { type: integer, format: int64 } }
+        - { name: w, in: query, schema: { type: integer, description: 目标宽度，服务端会夹到上限 } }
+      responses:
+        "200":
+          description: JPEG 缩略图
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: token 不存在、不属于当前项目，或画面不存在
+
   /api/live-share/notes/recording:
     post:
       tags: [LiveShare]

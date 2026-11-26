@@ -49,24 +49,41 @@ export function shotLabel(reason: string, ref = ''): string {
 }
 
 /**
+ * Who is asking for the picture.
+ *
+ * `share` is the public token-scoped endpoint a member's link uses. It follows
+ * the record's publication switch, so a closed meeting without that switch
+ * answers 404 — correct for a stranger, wrong for the owner.
+ *
+ * `owner` is the authenticated endpoint: the publisher reading their own
+ * record, or the live panel while the meeting runs. It checks project ownership
+ * instead of the publication switch, so the pictures the host was just watching
+ * in the live transcript do not turn into broken images the moment the room
+ * closes.
+ */
+export type ShotScope = 'share' | 'owner'
+
+/**
  * Thumbnail URL for one stored frame.
  *
- * Token-scoped, so it works for the publisher (who has the token in hand) and
- * for a member (for whom the token IS the credential). The server resolves the
- * file from the frame id: no project path ever reaches the browser.
+ * The server resolves the file from the frame id in both scopes: no project
+ * path ever reaches the browser.
  */
-export function shotThumbUrl(token: string, id: number, width = 480): string {
+export function shotThumbUrl(token: string, id: number, width = 480, scope: ShotScope = 'share'): string {
+  if (scope === 'owner') {
+    return `/api/live-share/notes/shot/image?token=${encodeURIComponent(token)}&id=${id}&w=${width}`
+  }
   return `/api/share/${encodeURIComponent(token)}/notes/shot?id=${id}&w=${width}`
 }
 
 /**
- * The image the viewer opens, from the same token-scoped endpoint.
+ * The image the viewer opens, from the same endpoint pair.
  *
  * There is no "original" URL: the endpoint resizes on demand and clamps to its
  * own maximum, so the widest it will render is what the reader gets. Asking for
  * it explicitly keeps the inline `<img>` a thumbnail (fast, small) while the
  * lightbox shows the frame at a size the text on it can actually be read at.
  */
-export function shotFullUrl(token: string, id: number): string {
-  return shotThumbUrl(token, id, 1600)
+export function shotFullUrl(token: string, id: number, scope: ShotScope = 'share'): string {
+  return shotThumbUrl(token, id, 1600, scope)
 }
