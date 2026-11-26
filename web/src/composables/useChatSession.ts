@@ -44,6 +44,26 @@ let _sessionsLoadPromise: Promise<void> | null = null
 let _lastBadgeSignature: string | null = null
 
 /**
+ * The session creation currently in flight, if any — shared so that every
+ * caller which independently decided "this project has no session left, create
+ * one" lands on the SAME new session.
+ *
+ * That decision is made in three places: the local archive/destroy response
+ * handler, App.vue's `session_removed` handler, and the 404 recovery path. They
+ * can all observe an empty list at the same moment, because archiving the LAST
+ * session broadcasts `session_removed` to every client INCLUDING the one that
+ * initiated it (BroadcastEvent has no sender exclusion) while that client's
+ * archive response handler is already re-fetching the list. Each POST inserts
+ * its own row, producing the reported pair of "新会话 1" + "新会话 2".
+ *
+ * Keyed by the requested agent so an explicit "new session with agent B" is
+ * never swallowed by a concurrent default creation. Module-level (like
+ * `_sessionsLoadPromise`) so `resetChatSessionState` can drop it on a project
+ * switch; a hung request must not block creation in the next project.
+ */
+let _createInFlight: { agentId: string; promise: Promise<void> } | null = null
+
+/**
  * True while a session switch is in flight (old messages cleared, new history
  * loading) — distinct from `loading`, which means "AI is generating".
  *
@@ -136,6 +156,7 @@ export async function loadSessionsOnce(): Promise<void> {
 export function resetChatSessionState(): void {
   _sessionsLoadPromise = null
   _lastBadgeSignature = null
+  _createInFlight = null
   // Module-level state: without this a test that leaves a switch in flight would
   // leak `switching=true` into the next one (the header/bubble skeletons would
   // then render when they must not).
@@ -1184,7 +1205,28 @@ export function useChatSession(options: UseChatSessionOptions) {
     onResubscribeStream?.(sid)
   }
 
+  /**
+   * Create a new session, coalescing concurrent calls that ask for the same
+   * agent. See `_createInFlight` for why: "the project is empty, create one" is
+   * decided independently by the archive/destroy handlers, App.vue's
+   * `session_removed` handler and the 404 recovery path, and two of them firing
+   * together must not insert two rows.
+   */
   async function createSession(agentId: string) {
+    const key = agentId || ''
+    if (_createInFlight && _createInFlight.agentId === key) {
+      return _createInFlight.promise
+    }
+    const promise = createSessionOnce(agentId)
+    _createInFlight = { agentId: key, promise }
+    try {
+      await promise
+    } finally {
+      if (_createInFlight?.promise === promise) _createInFlight = null
+    }
+  }
+
+  async function createSessionOnce(agentId: string) {
     // Pre-check session limit before clearing identity or making any request.
     // This avoids wiping currentSessionId (which disables the delete button)
     // when we already know creation will fail.

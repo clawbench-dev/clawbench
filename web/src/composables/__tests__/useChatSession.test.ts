@@ -5105,6 +5105,123 @@ describe('createSession', () => {
     expect(currentSessionId.value).toBe('new-s1')
     expect(messages.value).toEqual([])
   })
+
+  it('coalesces concurrent creations so archiving the last session cannot create two', async () => {
+    // Archiving the last session makes TWO callers decide "the project is
+    // empty, create one": the archive response handler and App.vue's
+    // session_removed handler (the broadcast reaches the client that initiated
+    // it too). They used to POST independently, producing 「新会话 1」+
+    // 「新会话 2」. The second call must join the in-flight creation instead.
+    let postResolve!: (v: any) => void
+    const postPromise = new Promise(resolve => { postResolve = resolve })
+    let sessionPosts = 0
+
+    // Routed by URL, not by call order: switchSession also fires
+    // POST /api/ai/chat/read and GET /api/ai/sessions, which made a sequential
+    // mock list fragile.
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/ai/sessions' && init?.method === 'POST') {
+        sessionPosts++
+        return postPromise
+      }
+      if (url.startsWith('/api/ai/chat?')) {
+        const id = new URLSearchParams(url.split('?')[1]).get('session_id') || 'new-s1'
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessionId: id,
+            sessionTitle: id,
+            messages: [],
+            total: 0,
+            backend: 'codebuddy',
+            agentId: 'agent1',
+            running: false,
+          }),
+        })
+      }
+      if (url === '/api/ai/sessions') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const { session } = createSessionInternal()
+
+    const first = session.createSession('')
+    const second = session.createSession('')
+
+    // While the POST is still in flight the second caller must not start its
+    // own creation.
+    expect(sessionPosts).toBe(1)
+
+    postResolve({
+      ok: true,
+      json: () => Promise.resolve({
+        ok: true,
+        sessionId: 'new-s1',
+        title: 'New Session 1',
+        backend: 'codebuddy',
+        agentId: 'agent1',
+        sessionCount: 1,
+      }),
+    })
+    await Promise.all([first, second])
+
+    expect(sessionPosts).toBe(1)
+    expect(lastSessionOptions!.currentSessionId.value).toBe('new-s1')
+  })
+
+  it('creates a second session once the previous creation has settled', async () => {
+    // The dedupe is per in-flight request, not a permanent lock: an explicit
+    // "new session" after the previous one finished must still create a row.
+    let sessionPosts = 0
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/ai/sessions' && init?.method === 'POST') {
+        sessionPosts++
+        const id = `new-s${sessionPosts}`
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ok: true,
+            sessionId: id,
+            title: id,
+            backend: 'codebuddy',
+            agentId: 'agent1',
+            sessionCount: sessionPosts,
+          }),
+        })
+      }
+      if (url.startsWith('/api/ai/chat?')) {
+        const id = new URLSearchParams(url.split('?')[1]).get('session_id') || ''
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessionId: id,
+            sessionTitle: id,
+            messages: [],
+            total: 0,
+            backend: 'codebuddy',
+            agentId: 'agent1',
+            running: false,
+          }),
+        })
+      }
+      if (url === '/api/ai/sessions') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const { session } = createSessionInternal()
+    await session.createSession('')
+    expect(sessionPosts).toBe(1)
+    await session.createSession('')
+
+    expect(sessionPosts).toBe(2)
+    expect(lastSessionOptions!.currentSessionId.value).toBe('new-s2')
+  })
 })
 
 // ───────────────────────────────────────────────────────────
