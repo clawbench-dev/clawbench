@@ -25,6 +25,8 @@ interface FakeSocket {
 }
 
 let sockets: FakeSocket[] = []
+/** Set false to simulate a handshake that never completes (the reported bug). */
+let autoOpen = true
 /** One shared toast spy: the real toast is a single slot, so two calls in the
  *  same tick overwrite each other — the count is what proves they do not. */
 let toastShow: ReturnType<typeof vi.fn>
@@ -40,6 +42,7 @@ let cueUnlocked: ReturnType<typeof vi.fn>
 
 function installFakes() {
   sockets = []
+  autoOpen = true
   class FakeWebSocket {
     static OPEN = 1
     static CONNECTING = 0
@@ -54,8 +57,10 @@ function installFakes() {
     constructor(url: string) {
       this.url = url
       sockets.push(this as unknown as FakeSocket)
-      // Deliver `open` asynchronously, like the real thing.
-      queueMicrotask(() => this.onopen?.())
+      // Deliver `open` asynchronously, like the real thing. `autoOpen` lets a
+      // test hold it back: a handshake that never completes is the failure the
+      // watchdog and the retry exist for.
+      if (autoOpen) queueMicrotask(() => this.onopen?.())
     }
     send(data: unknown) { this.sent.push(data) }
     close() {
@@ -177,6 +182,22 @@ async function flush() {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
+}
+
+/**
+ * Advances fake time while keeping the capture watchdog fed.
+ *
+ * The loop tears down a capture that hands over no frame for 3 s (a stalled
+ * graph), so a test that simply jumps forward would trigger a re-acquisition
+ * in the middle of what it is asserting. A level every 250 ms is what a healthy
+ * microphone looks like to that watchdog.
+ */
+function advance(ms: number) {
+  for (let t = 0; t < ms; t += 250) {
+    vi.advanceTimersByTime(250)
+    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    streamer?.emit(0.02)
+  }
 }
 
 describe('useFreeDialog', () => {
@@ -797,6 +818,65 @@ describe('useFreeDialog', () => {
     expect(useFreeDialog().phase.value).toBe('listening')
     vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('retries a handshake that never opens instead of dropping the conversation', async () => {
+    // The reported failure: a new recogniser socket sat in CONNECTING for tens
+    // of seconds — the server never logged the request at all — and the mode
+    // then ended with "语音识别连接失败". One failed handshake used to kill the
+    // whole conversation; a retry turns the transient cases into a session.
+    autoOpen = false
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+    expect(sockets).toHaveLength(1)
+    expect(useFreeDialog().phase.value).toBe('listening')
+
+    // The watchdog abandons the silent handshake and schedules a retry.
+    advance(4000)
+    expect(toastShow).not.toHaveBeenCalled()
+    expect(sockets).toHaveLength(1)
+    advance(400)
+    expect(sockets).toHaveLength(2)
+    expect(sockets[0].readyState).toBe(3)
+
+    // The second attempt connects: dictation resumes on it.
+    sockets[1].onopen?.()
+    expect(useFreeDialog().phase.value).toBe('listening')
+    const streamer = (globalThis as Record<string, { frame: () => void }>).__streamer
+    streamer.frame()
+    // The start control frame plus the audio frame the new sink forwarded.
+    expect(sockets[1].sent).toHaveLength(2)
+  })
+
+  it('gives up after three failed handshakes and logs why', async () => {
+    autoOpen = false
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+
+    for (let i = 0; i < 2; i++) {
+      advance(4000)
+      advance(400)
+    }
+    expect(sockets).toHaveLength(3)
+    // Nothing is said until every attempt has failed: a retry that still might
+    // work must not look like a failure to the user.
+    expect(toastShow).not.toHaveBeenCalled()
+    advance(4000)
+
+    expect(useFreeDialog().phase.value).toBe('idle')
+    expect(toastShow).toHaveBeenCalledTimes(1)
+    expect(String(toastShow.mock.calls[0][0])).toMatch(/连接失败|connect/i)
+    // The reason has to survive in the log: the server has no record of a
+    // handshake that never arrived, so "连接失败" alone is undiagnosable.
+    const lines = warn.mock.calls.map((c) => String(c[1] ?? ''))
+    expect(lines.filter((l) => l.includes('handshake failed'))).toHaveLength(3)
+    expect(lines.some((l) => l.includes('attempt 3/3'))).toBe(true)
+    warn.mockRestore()
   })
 
   it('does not send a sentence the user abandoned by closing the mode', async () => {
@@ -1467,9 +1547,13 @@ describe('useFreeDialog', () => {
     toastShow.mockClear()
 
     // Three spans in a row where the graph delivers nothing at all: the third
-    // one exhausts the budget.
+    // one exhausts the budget. Split at the watchdog's own deadline so the
+    // recogniser socket a re-acquisition opens is allowed to finish its
+    // handshake before the 4 s connect watchdog is reached.
     for (let round = 0; round < 3; round++) {
-      vi.advanceTimersByTime(4000)
+      vi.advanceTimersByTime(3000)
+      await flush()
+      vi.advanceTimersByTime(1000)
       await flush()
       streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
     }
