@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -24,21 +25,29 @@ const liveNotesReviseChunkRunes = 6000
 // The answer is a list of `原词 => 改词` lines, not a rewritten transcript, so a
 // few hundred tokens is the honest ceiling. Keeping the cap far below the chunk
 // size is intentional: a model that ignores the format and starts echoing the
-// transcript gets cut off (and therefore fails loudly) instead of returning a
-// half-rewritten chunk nobody notices.
+// transcript gets cut off, and a cut-off answer is skipped rather than applied
+// half-way — the cap is what keeps a runaway answer from being usable.
 const liveNotesReviseMaxTokens = 2000
 
 // liveNoteReviseNoChanges is what a chunk answers when it found nothing to fix.
 //
 // Without a sentinel, "no corrections" and "the model ignored the format" look
 // identical — both are answers with no replacement pair in them. The sentinel is
-// what makes the second one an error instead of a silent pass-through.
+// what keeps the second one distinguishable, so a chunk that answered in prose
+// is not recorded as "checked, nothing to fix".
 const liveNoteReviseNoChanges = "NO_CHANGES"
 
 // liveNoteRevisePairMaxRunes bounds one side of a replacement pair. A pair is a
 // word or a short phrase; anything longer is a paraphrase, which this stage is
 // not allowed to produce.
 const liveNoteRevisePairMaxRunes = 60
+
+// liveNotesReviseLogRunes bounds how much of a rejected answer reaches the log.
+//
+// Long enough to show the shape of the answer (a few lines) and short enough
+// that a model that echoed the whole chunk cannot flood the log with meeting
+// content.
+const liveNotesReviseLogRunes = 600
 
 // liveNoteSplitMinRunes is how long the phrase after `==>` must be.
 //
@@ -55,11 +64,16 @@ const liveNoteSplitSpeakerMaxRunes = 20
 // ErrLiveNoteReviseFormat is returned when a chunk's answer is not a list of
 // replacement pairs.
 //
-// Deliberately fatal rather than falling back to "keep the raw text": the pair
-// format is what guarantees every timestamp, speaker and line survives, and a
-// proofreader that answered in some other shape has not demonstrated that. The
-// chain turns this into the usual proofread failure (raw transcript for the
-// initial job, a visible error for a manual regeneration).
+// One such chunk is no longer fatal. The pair format is what guarantees every
+// timestamp, speaker and line survives, so an answer in some other shape simply
+// contributes no edits — the chunk's raw text is already what the output keeps,
+// and the other chunks' corrections are unaffected. Failing the whole meeting
+// for it threw away every good chunk too, which is a worse trade than a chunk
+// that stays unproofread.
+//
+// It is still returned when EVERY chunk answered unusably: that is a model or
+// prompt problem, and a "proofread" that proofread nothing should say so rather
+// than hand back the raw transcript as if it had worked.
 var ErrLiveNoteReviseFormat = errors.New("live notes: proofreader did not answer with replacement pairs")
 
 // liveNotesRevisePrompt turns the proofreader into a diff generator.
@@ -219,29 +233,99 @@ func ReviseLiveNotesTranscript(
 	}
 
 	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
+	pairs, splits, err := proofreadLiveNoteChunks("revise", chunks, func(i, total int, chunk string) (string, error) {
+		return summarize.AskAboutContextLossless(ctx, summarizer, systemPrompt,
+			liveNoteReviseBlock(background, glossary, chunk), liveNoteChunkQuestion(i, total), liveNotesReviseMaxTokens)
+	}, progress)
+	if err != nil {
+		return "", err
+	}
+	return applyLiveNoteEdits(transcript, pairs, splits), nil
+}
+
+// liveNoteChunkQuestion numbers a chunk when the transcript has more than one,
+// so the model knows it is reading part of a longer meeting.
+func liveNoteChunkQuestion(i, total int) string {
+	if total <= 1 {
+		return liveNotesReviseQuestion
+	}
+	return fmt.Sprintf("这是第 %d/%d 段。%s", i+1, total, liveNotesReviseQuestion)
+}
+
+// proofreadLiveNoteChunks asks for every chunk's edits and merges them.
+//
+// label names the pass in the error ("revise" / "agent revise") so the message
+// still says which stage failed and at which chunk. A chunk that cannot be used
+// is skipped rather than aborting: its raw text is already in the output
+// verbatim, so the only thing lost is that chunk's corrections. Only when EVERY
+// chunk is unusable does the pass fail, because then nothing was proofread and
+// reporting success would be a lie.
+func proofreadLiveNoteChunks(
+	label string, chunks []string,
+	ask func(i, total int, chunk string) (string, error),
+	progress []func(done, total int),
+) ([]liveNotePair, []liveNoteSplit, error) {
 	pairs := make([]liveNotePair, 0, len(chunks)*8)
 	splits := make([]liveNoteSplit, 0, 2)
+	unusable := 0
+	var firstUnusable error
+	var firstUnusableChunk int
 	for i, chunk := range chunks {
-		block := liveNoteReviseBlock(background, glossary, chunk)
-		question := liveNotesReviseQuestion
-		if len(chunks) > 1 {
-			question = fmt.Sprintf("这是第 %d/%d 段。%s", i+1, len(chunks), question)
+		answer, err := ask(i, len(chunks), chunk)
+		// Truncation is the one call error that is not fatal: the answer is
+		// still a prefix of the pair list, so it is skipped like an unusable
+		// one. Everything else (transport, auth, model) aborts the pass.
+		if err != nil && !errors.Is(err, summarize.ErrOutputTruncated) {
+			return nil, nil, fmt.Errorf("live notes: %s chunk %d: %w", label, i+1, err)
 		}
-		answer, err := summarize.AskAboutContextLossless(ctx, summarizer, systemPrompt, block, question, liveNotesReviseMaxTokens)
-		if err != nil {
-			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
+		chunkPairs, chunkSplits, skipErr := liveNoteChunkEdits(i+1, len(chunks), answer, err)
+		if skipErr != nil {
+			unusable++
+			if firstUnusable == nil {
+				firstUnusable, firstUnusableChunk = skipErr, i+1
+			}
+		} else {
+			pairs = append(pairs, chunkPairs...)
+			splits = append(splits, chunkSplits...)
 		}
-		chunkPairs, chunkSplits, err := parseLiveNoteAnswer(answer)
-		if err != nil {
-			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
-		}
-		pairs = append(pairs, chunkPairs...)
-		splits = append(splits, chunkSplits...)
 		if len(progress) > 0 && progress[0] != nil {
 			progress[0](i+1, len(chunks))
 		}
 	}
-	return applyLiveNoteEdits(transcript, pairs, splits), nil
+	if unusable == len(chunks) {
+		return nil, nil, fmt.Errorf("live notes: %s chunk %d: %w", label, firstUnusableChunk, firstUnusable)
+	}
+	return pairs, splits, nil
+}
+
+// liveNoteChunkEdits turns one chunk's answer into edits, or reports that this
+// chunk has to be left unproofread.
+//
+// Two failures stop here instead of aborting the meeting, because both are
+// confined to this chunk's corrections: an answer in the wrong shape, and an
+// answer cut off at the output cap — a truncated list's last line can be half a
+// pair (`原词 => 半截改词`), and writing that fragment into the transcript is
+// worse than losing the chunk's corrections. The transcript of a skipped chunk
+// is already in the output verbatim, so nothing is lost but the corrections.
+//
+// A transport or model error is NOT handled here: the caller aborts on it.
+func liveNoteChunkEdits(chunk, chunks int, answer string, callErr error) ([]liveNotePair, []liveNoteSplit, error) {
+	if callErr != nil {
+		slog.Warn("live notes: proofread answer truncated, chunk left unproofread",
+			"chunk", chunk, "chunks", chunks, "err", callErr)
+		return nil, nil, callErr
+	}
+	pairs, splits, err := parseLiveNoteAnswer(answer)
+	if err != nil {
+		// The answer itself goes to the log: the error only carries one line,
+		// and diagnosing "the model ignored the format" needs to see what it
+		// wrote instead.
+		slog.Warn("live notes: unusable proofread answer, chunk left unproofread",
+			"chunk", chunk, "chunks", chunks, "err", err,
+			"answer", truncateRunes(answer, liveNotesReviseLogRunes))
+		return nil, nil, err
+	}
+	return pairs, splits, nil
 }
 
 // liveNoteReviseBlock frames one chunk for the proofreader.
@@ -264,6 +348,19 @@ func liveNoteReviseBlock(background, glossary, chunk string) string {
 	b.WriteString("## 待校对转写\n")
 	b.WriteString(chunk)
 	return b.String()
+}
+
+// liveNoteReject is one answer line that produced no edit, with the reason.
+//
+// The reason is kept because the failure it explains is read by a person, not a
+// program: the error lands in the UI as 「校对稿生成失败：…」 and the only
+// actionable thing in it is what the model actually wrote. The previous version
+// quoted only lines with no `=>`, so an answer whose every line carried an arrow
+// reported `(first line: "")` — the answer closest to the format was the one
+// that said nothing about itself.
+type liveNoteReject struct {
+	Line   string
+	Reason string
 }
 
 // parseLiveNoteAnswer reads one chunk's answer as replacement pairs and speaker
@@ -289,36 +386,69 @@ func parseLiveNoteAnswer(raw string) ([]liveNotePair, []liveNoteSplit, error) {
 
 	pairs := make([]liveNotePair, 0, 8)
 	splits := make([]liveNoteSplit, 0, 2)
-	var unparsed []string
+	var rejected []liveNoteReject
 	for _, line := range strings.Split(text, "\n") {
 		line = trimLiveNoteListMarker(strings.TrimSpace(line))
 		if line == "" || strings.EqualFold(line, liveNoteReviseNoChanges) {
 			continue
 		}
 		if strings.Contains(line, "==>") {
-			if split, ok := parseLiveNoteSplitLine(line); ok {
-				splits = append(splits, split)
+			split, reason := parseLiveNoteSplitLine(line)
+			if reason != "" {
+				rejected = append(rejected, liveNoteReject{Line: line, Reason: reason})
+				continue
 			}
+			splits = append(splits, split)
 			continue
 		}
-		pair, isPair, ok := parseLiveNotePairLine(line)
+		pair, isPair, reason := parseLiveNotePairLine(line)
 		if !isPair {
-			unparsed = append(unparsed, line)
+			rejected = append(rejected, liveNoteReject{Line: line, Reason: "no `=>` in the line"})
 			continue
 		}
-		if !ok {
+		if reason != "" {
+			rejected = append(rejected, liveNoteReject{Line: line, Reason: reason})
 			continue
 		}
 		pairs = append(pairs, pair)
 	}
 	if len(pairs) == 0 && len(splits) == 0 {
-		sample := ""
-		if len(unparsed) > 0 {
-			sample = truncateRunes(unparsed[0], 60)
-		}
-		return nil, nil, fmt.Errorf("%w (first line: %q)", ErrLiveNoteReviseFormat, sample)
+		return nil, nil, liveNoteFormatError(rejected)
 	}
 	return pairs, splits, nil
+}
+
+// liveNoteFormatError builds the failure for a chunk whose answer yielded no
+// edit at all.
+//
+// It always names one real line and why it was rejected: "the model ignored the
+// format" is a conclusion the reader has to be able to check, and a chunk number
+// alone is not enough to tell a wrong arrow from a wrong model.
+func liveNoteFormatError(rejected []liveNoteReject) error {
+	if len(rejected) == 0 {
+		return fmt.Errorf("%w (no usable line in the answer)", ErrLiveNoteReviseFormat)
+	}
+	detail := fmt.Sprintf("%d unusable line(s); first: %q — %s",
+		len(rejected), truncateRunes(rejected[0].Line, 60), rejected[0].Reason)
+	if hint := liveNoteRejectHint(rejected); hint != "" {
+		detail += "; " + hint
+	}
+	return fmt.Errorf("%w (%s)", ErrLiveNoteReviseFormat, detail)
+}
+
+// liveNoteRejectHint names a whole-answer pattern that no single line shows.
+//
+// The one worth naming is an answer that is nothing but clock-less `==>` lines:
+// that is the model using the speaker-split arrow for plain replacements, which
+// reads exactly like a model that ignored the format but is fixed by a different
+// decision (sharpen the prompt, or retry) than a model answering in prose.
+func liveNoteRejectHint(rejected []liveNoteReject) string {
+	for _, r := range rejected {
+		if !strings.Contains(r.Line, "==>") {
+			return ""
+		}
+	}
+	return "every line of the answer is a clock-less `==>` line, so the model is probably using the speaker-split arrow for plain replacements"
 }
 
 // parseLiveNotePairLine reads one `原词 => 新词` replacement line.
@@ -329,55 +459,66 @@ func parseLiveNoteAnswer(raw string) ([]liveNotePair, []liveNoteSplit, error) {
 //   - isPair: the line actually carries a `=>` separator. A line without one is
 //     not a malformed pair, it is a line the model did not answer in the
 //     requested format — and that IS a format error.
-//   - ok: the pair can be applied. A pair that cannot be applied is dropped
-//     rather than fatal: the rest of the chunk's corrections are still good,
-//     and the raw text is what survives for this one.
+//   - reason: why the pair cannot be applied, empty when it can. A pair that
+//     cannot be applied is dropped rather than fatal on its own: the rest of
+//     the chunk's corrections are still good, and the raw text is what survives
+//     for this one.
 //
 // A pair is applicable when both sides are non-empty, differ from each other,
 // the source side is at least two runes long, and neither side exceeds
 // liveNoteRevisePairMaxRunes.
-func parseLiveNotePairLine(line string) (pair liveNotePair, isPair bool, ok bool) {
+func parseLiveNotePairLine(line string) (pair liveNotePair, isPair bool, reason string) {
 	left, right, found := strings.Cut(line, "=>")
 	if !found {
-		return liveNotePair{}, false, false
+		return liveNotePair{}, false, ""
 	}
 	from := liveNotePairSide(left)
 	to := liveNotePairSide(right)
-	if from == "" || to == "" || from == to {
-		return liveNotePair{}, true, false
+	switch {
+	case from == "":
+		return liveNotePair{}, true, "empty original"
+	case to == "":
+		return liveNotePair{}, true, "empty replacement"
+	case from == to:
+		return liveNotePair{}, true, "original and replacement are the same"
 	}
-	if n := utf8.RuneCountInString(from); n < 2 || n > liveNoteRevisePairMaxRunes {
-		return liveNotePair{}, true, false
+	if n := utf8.RuneCountInString(from); n < 2 {
+		return liveNotePair{}, true, fmt.Sprintf("original is %d rune, needs 2 to be locatable", n)
+	} else if n > liveNoteRevisePairMaxRunes {
+		return liveNotePair{}, true, fmt.Sprintf("original is %d runes, the limit is %d", n, liveNoteRevisePairMaxRunes)
 	}
-	if utf8.RuneCountInString(to) > liveNoteRevisePairMaxRunes {
-		return liveNotePair{}, true, false
+	if n := utf8.RuneCountInString(to); n > liveNoteRevisePairMaxRunes {
+		return liveNotePair{}, true, fmt.Sprintf("replacement is %d runes, the limit is %d", n, liveNoteRevisePairMaxRunes)
 	}
-	return liveNotePair{From: from, To: to}, true, true
+	return liveNotePair{From: from, To: to}, true, ""
 }
 
 // parseLiveNoteSplitLine reads one `[mm:ss] 原词 ==> 新说话人` line.
 //
 // The clock is required rather than optional: it is the only thing that keeps a
 // split from being applied to a line that merely happens to contain the same
-// words, and every line in the transcript carries one.
-func parseLiveNoteSplitLine(line string) (liveNoteSplit, bool) {
+// words, and every line in the transcript carries one. The reason string is
+// empty when the split is usable.
+func parseLiveNoteSplitLine(line string) (liveNoteSplit, string) {
 	clock, body, ok := liveNoteClockBody(line)
 	if !ok {
-		return liveNoteSplit{}, false
+		return liveNoteSplit{}, "`==>` line with no leading [mm:ss], so the cut has no place on the timeline"
 	}
 	left, right, ok := strings.Cut(body, "==>")
 	if !ok {
-		return liveNoteSplit{}, false
+		return liveNoteSplit{}, "`==>` line with no arrow"
 	}
 	from := liveNotePairSide(left)
-	if n := utf8.RuneCountInString(from); n < liveNoteSplitMinRunes || n > liveNoteRevisePairMaxRunes {
-		return liveNoteSplit{}, false
+	if n := utf8.RuneCountInString(from); n < liveNoteSplitMinRunes {
+		return liveNoteSplit{}, fmt.Sprintf("the words to cut at are %d rune(s), the minimum is %d", n, liveNoteSplitMinRunes)
+	} else if n > liveNoteRevisePairMaxRunes {
+		return liveNoteSplit{}, fmt.Sprintf("the words to cut at are %d runes, the limit is %d", n, liveNoteRevisePairMaxRunes)
 	}
 	speaker := liveNoteSplitSpeaker(right)
 	if speaker == "" {
-		return liveNoteSplit{}, false
+		return liveNoteSplit{}, "no usable speaker label after `==>`"
 	}
-	return liveNoteSplit{Clock: clock, From: from, Speaker: speaker}, true
+	return liveNoteSplit{Clock: clock, From: from, Speaker: speaker}, ""
 }
 
 // liveNoteSplitSpeaker normalizes a synthesized speaker label, or "" when it
