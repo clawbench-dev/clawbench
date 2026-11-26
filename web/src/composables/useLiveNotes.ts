@@ -45,6 +45,18 @@ const FINISH_UPLOAD_TIMEOUT_MS = 180_000
 const NOTES_STREAM_RECONNECT_MS = 2_000
 
 /**
+ * How long a transcript handshake may take before the socket is abandoned.
+ *
+ * The same failure the continuous-dialog recogniser hit: a NEW wss connection
+ * can sit in CONNECTING for half a minute while sockets that are already open
+ * keep working. The redial below only runs on `close`, and a handshake that
+ * never completes does not close on its own until the browser gives up — with
+ * every frame dropped by `send` in the meantime, so that stretch of the meeting
+ * is missing from the transcript and nothing anywhere says why.
+ */
+const NOTES_STREAM_CONNECT_TIMEOUT_MS = 4_000
+
+/**
  * A channel that has carried no speech for this long is called out.
  *
  * Two minutes is long enough that a normal pause, a question being typed or a
@@ -148,6 +160,15 @@ const truncated = ref(false)
 
 /** The publisher's socket, as far as the panel cares. */
 const connection = ref<'online' | 'reconnecting' | 'offline'>('online')
+/**
+ * Transcript sockets that are currently NOT open, across every channel.
+ *
+ * Kept apart from `connection`, which is the share socket that carries the
+ * uploads: transcription can be dead while uploads still work, and that used to
+ * read as "ok" in the panel — exactly the "listening but no words appear" shape
+ * this counter exists to expose. One channel being down is enough to say so.
+ */
+const streamsDown = ref(0)
 /** The audio graph was suspended by the system (the recorder hears nothing). */
 const audioSuspended = ref(false)
 /** Channels whose audio source disappeared. */
@@ -258,6 +279,19 @@ function uploadArchiveSegment(token: string): NotesUploader {
   }
 }
 
+/**
+ * One line of evidence for a transcript socket that failed.
+ *
+ * The server cannot help here: a handshake that never arrives leaves no request
+ * in its log at all. Elapsed time separates "never connected" from "connected
+ * and died", and visibility is part of the line because a hidden page is when
+ * the browser is allowed to stall a new socket.
+ */
+function describeStreamFailure(sock: WebSocket, detail: string, elapsedMs: number): string {
+  const visibility = typeof document === 'undefined' ? 'n/a' : document.visibilityState
+  return `after ${elapsedMs}ms (${detail}; readyState=${sock.readyState} visibility=${visibility})`
+}
+
 /** One live transcript socket, with its own reconnect. */
 function openLiveStream(
   token: string,
@@ -268,19 +302,90 @@ function openLiveStream(
 ): NotesStreamHandle {
   let closed = false
   let sock: WebSocket | null = null
+  // Counted once per socket, however many attempts it takes: the panel only
+  // needs "this channel is down", not how many times it failed.
+  let down = false
+  const markDown = () => {
+    if (down) return
+    down = true
+    streamsDown.value += 1
+  }
+  const markUp = () => {
+    if (!down) return
+    down = false
+    streamsDown.value = Math.max(0, streamsDown.value - 1)
+  }
+  let attempts = 0
+  let attemptStartedAt = 0
+  let connectTimer: ReturnType<typeof setTimeout> | null = null
+  let retryTimer: ReturnType<typeof setTimeout> | null = null
+  const clearTimers = () => {
+    if (connectTimer !== null) {
+      clearTimeout(connectTimer)
+      connectTimer = null
+    }
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
+  }
   const url = () => {
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
     return `${proto}://${window.location.host}/api/live-share/notes/stream?token=${encodeURIComponent(token)}` +
       `&channel=${encodeURIComponent(channel)}&speaker=${encodeURIComponent(speaker)}`
   }
+  const scheduleRedial = () => {
+    if (closed || retryTimer !== null) return
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      dial()
+    }, NOTES_STREAM_RECONNECT_MS)
+  }
+
+  /**
+   * Abandons a handshake that never completed.
+   *
+   * Not left to `onclose`: a CONNECTING socket does not close on its own until
+   * the browser's own timeout, which is tens of seconds, and every frame sent
+   * meanwhile is dropped by `send`.
+   */
+  const abandon = (ws: WebSocket, detail: string) => {
+    if (closed || sock !== ws) return
+    clearTimers()
+    appLog.w(
+      TAG,
+      `transcript handshake failed ${describeStreamFailure(ws, detail, Date.now() - attemptStartedAt)} (channel ${channel}, attempt ${attempts})`,
+    )
+    sock = null
+    ws.onmessage = null
+    ws.onopen = null
+    ws.onerror = null
+    ws.onclose = null
+    try { ws.close() } catch { /* already closed */ }
+    markDown()
+    scheduleRedial()
+  }
+
   const dial = () => {
     if (closed) return
+    attempts += 1
+    attemptStartedAt = Date.now()
     const ws = new WebSocket(url())
     sock = ws
+    connectTimer = setTimeout(() => {
+      connectTimer = null
+      abandon(ws, `no open event within ${NOTES_STREAM_CONNECT_TIMEOUT_MS}ms`)
+    }, NOTES_STREAM_CONNECT_TIMEOUT_MS)
+    ws.onopen = () => {
+      if (closed || sock !== ws) return
+      clearTimers()
+      markUp()
+      appLog.i(TAG, `transcript stream open (channel ${channel}, attempt ${attempts})`)
+    }
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data as string) as {
-          type?: string; id?: number; text?: string; channel?: string; speaker?: string
+          type?: string; id?: number; text?: string; message?: string; channel?: string; speaker?: string
           startedAt?: number; durationMs?: number
         }
         if (msg.type === 'partial' && msg.text) {
@@ -298,15 +403,27 @@ function openLiveStream(
             text: msg.text,
           })
         } else if (msg.type === 'error') {
-          appLog.w(TAG, 'live transcript stream error', channel, msg.text)
+          // The stream endpoint reports failures in `message` (the text
+          // messages use `text`); reading only `text` logged `undefined`.
+          appLog.w(TAG, 'live transcript stream error', channel, msg.message ?? msg.text)
         }
       } catch { /* ignore malformed */ }
     }
     // A dropped socket means the sentence in flight is lost, so reconnect
     // rather than silently ending the transcript for the rest of the meeting.
-    ws.onclose = () => {
-      if (closed) return
-      setTimeout(dial, NOTES_STREAM_RECONNECT_MS)
+    ws.onerror = () => {
+      if (closed || sock !== ws) return
+      appLog.w(TAG, `transcript stream error ${describeStreamFailure(ws, 'error', Date.now() - attemptStartedAt)} (channel ${channel})`)
+    }
+    ws.onclose = (ev) => {
+      if (closed || sock !== ws) return
+      const code = (ev as CloseEvent | undefined)?.code ?? 0
+      const clean = (ev as CloseEvent | undefined)?.wasClean === true
+      clearTimers()
+      sock = null
+      appLog.w(TAG, `transcript stream closed (channel ${channel}, code=${code} clean=${clean} after ${Date.now() - attemptStartedAt}ms)`)
+      markDown()
+      scheduleRedial()
     }
   }
   dial()
@@ -316,8 +433,10 @@ function openLiveStream(
     },
     close: () => {
       closed = true
+      clearTimers()
       sock?.close()
       sock = null
+      markUp()
     },
   }
 }
@@ -336,7 +455,9 @@ export function useLiveNotes() {
     if (deadChannels.value.length > 0) return 'micDead'
     if (audioSuspended.value) return 'suspended'
     if (connection.value === 'offline') return 'offline'
-    if (connection.value === 'reconnecting') return 'reconnecting'
+    // A transcript socket that is down explains "nothing appears" just as well
+    // as the share socket does, and it used to be invisible here.
+    if (connection.value === 'reconnecting' || streamsDown.value > 0) return 'reconnecting'
     if (pending.value >= NOTES_BACKLOG_ALERT) return 'queued'
     const since = Math.max(lastVoiceAt.value, recordingSince.value)
     if (since > 0 && healthClock.value - since >= NOTES_SILENCE_ALERT_MS) return 'silent'
@@ -775,6 +896,7 @@ export function useLiveNotes() {
     lost.value = 0
     truncated.value = false
     connection.value = 'online'
+    streamsDown.value = 0
     audioSuspended.value = false
     deadChannels.value = []
     lastVoiceAt.value = 0
