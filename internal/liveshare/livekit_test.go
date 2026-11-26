@@ -66,6 +66,8 @@ func TestJoinToken_CarriesRoomAndPublishGrant(t *testing.T) {
 	assert.Equal(t, true, video["roomJoin"])
 	assert.Equal(t, true, video["canSubscribe"])
 	assert.Equal(t, true, video["canPublish"])
+	assert.Equal(t, true, video["canPublishData"],
+		"data is the control bus: chat/annotation/remote control/history requests")
 
 	// The signature must verify with the configured secret — otherwise the token
 	// looks right and LiveKit rejects it.
@@ -107,13 +109,26 @@ func TestJoinToken_RefusesWithoutConfiguration(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestJoinToken_AudienceCannotPublish(t *testing.T) {
+// The data grant must NOT follow the speech grant.
+//
+// canPublishData defaults to canPublish in LiveKit, so an audience member whose
+// speech is off would also lose the control bus: chat, annotation, remote
+// control, and the chat-history request a late joiner sends. That failed
+// silently — the viewer's own line still showed locally, and a member joining
+// later got no replay, so the chat panel stayed empty with nothing in any log.
+//
+// canPublish itself stays omitted when false (LiveKit then grants it): the same
+// grant also carries a member's screen share, which is a separate switch from
+// speech, so the media permission cannot be derived from the talk switch alone.
+func TestJoinToken_AudienceKeepsTheDataGrant(t *testing.T) {
 	cfg := testConfig("http://127.0.0.1:7880")
 	token, err := cfg.JoinToken("room-1", "viewer:4", "", false, time.Hour)
 	require.NoError(t, err)
 
 	video := decodeSegment(t, strings.Split(token, ".")[1])["video"].(map[string]any)
-	assert.Nil(t, video["canPublish"], "false is omitted, and that must mean 'cannot publish'")
+	assert.Nil(t, video["canPublish"], "omitted on purpose — see the comment above")
+	assert.Equal(t, true, video["canPublishData"],
+		"data is the control bus and must survive a muted room")
 }
 
 func TestListRooms_CountsRooms(t *testing.T) {
@@ -199,8 +214,10 @@ func TestListRooms_Unreachable(t *testing.T) {
 }
 
 // UpdateParticipant REPLACES the permission. Sending only canPublish would make
-// the participant deaf, so canSubscribe has to be restated on every call.
-func TestUpdateParticipantPermission_RestatesCanSubscribe(t *testing.T) {
+// the participant deaf, so canSubscribe has to be restated on every call — and
+// canPublishData has to stay on, because it carries the control bus rather than
+// anything the speech switch is about.
+func TestUpdateParticipantPermission_RestatesCanSubscribeAndKeepsData(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/twirp/livekit.RoomService/UpdateParticipant", r.URL.Path)
@@ -219,6 +236,8 @@ func TestUpdateParticipantPermission_RestatesCanSubscribe(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, true, perm["canSubscribe"], "dropping this makes the participant deaf")
 	assert.Equal(t, true, perm["canPublish"])
+	assert.Equal(t, true, perm["canPublishData"],
+		"revoking data cuts the viewer's chat, annotation, remote control and history request")
 }
 
 func TestRemoveParticipant_SendsIdentity(t *testing.T) {

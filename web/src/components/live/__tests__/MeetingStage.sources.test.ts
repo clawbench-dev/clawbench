@@ -105,8 +105,9 @@ vi.mock('@/composables/useLiveShare', async () => {
     sendControlTo: vi.fn(),
     onControl: vi.fn(() => () => undefined),
     switchSource: vi.fn(async () => true),
-    // Unmounting the stage closes the annotation surface, which clears the ink
-    // mirror it kept.
+    // Unmounting the stage closes the annotation surface, which ends the
+    // annotation: the audience's ink and the mirror both go.
+    endAnnotation: vi.fn(),
     clearInkMirror: vi.fn(),
     // The panel pushes the native injector probe into the room so
     // viewers can grey their "request control" button.

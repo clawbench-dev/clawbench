@@ -802,7 +802,6 @@ import {
   shouldLeaveUnavailableDockTab,
 } from './composables/dockPluginRuntime'
 import { useBadgePop } from './composables/useBadgePop'
-import { planRemoteRemoval } from './composables/useRemoteSessionRemoval'
 import type {
   DockPanelHost as DockPanelHostContext,
   DockPanelHostExtras as DockPanelHostExtrasContext,
@@ -1478,8 +1477,8 @@ function handleSessionTitleUpdate(e: Event) {
 }
 
 /**
- * Handle clawbench-session-removed: a session was archived or destroyed on
- * another device. Two jobs, and the order matters:
+ * Handle clawbench-session-removed: a session was archived or destroyed. Two
+ * jobs, and the order matters:
  *
  *  1. If it is the session this client has OPEN, leave it. Otherwise the chat
  *     panel keeps rendering a conversation whose rows are gone — and the only
@@ -1489,18 +1488,19 @@ function handleSessionTitleUpdate(e: Event) {
  *  2. Refresh the list either way, so the row disappears without waiting for an
  *     unrelated event to trigger a reload.
  *
- * The replacement is picked exactly like a LOCAL archive picks it (see
- * useChatSession.archiveSession): first remaining session, else a fresh one.
- * Sharing the rule keeps "I archived it" and "another device archived it"
- * indistinguishable to the user.
+ * This handler does NOT pick a replacement and does not create sessions. The
+ * server keeps every project at one session at minimum and names the successor
+ * in `replacement_session_id`; leaving the session is all that is left to do
+ * here. A removal this client initiated arrives here too and takes the same
+ * path — harmless, because switching to the session it is already on is a no-op.
  */
 function handleSessionRemoved(e: Event) {
-  const detail = (e as CustomEvent<{ session_id?: string; project_path?: string }>).detail
+  const detail = (e as CustomEvent<{ session_id?: string; project_path?: string; replacement_session_id?: string }>).detail
   const removedId = detail?.session_id
   if (!removedId) return
 
   // Always reload the list — a removed row must not linger, whatever project it
-  // belonged to.
+  // belonged to, and whoever removed it.
   store.state.sessionListVersion++
 
   if (removedId !== sessionIdentity.currentSessionId.value) return
@@ -1508,27 +1508,8 @@ function handleSessionRemoved(e: Event) {
   // The broadcast reaches every client, so this can also fire for a session in
   // another project — but the id matched the session this client has OPEN, so it
   // is unambiguously the one on screen.
-  appLog.i(TAG, `session ${removedId} removed remotely, leaving it`)
-
-  void (async () => {
-    try {
-      const resp = await fetch('/api/ai/sessions')
-      const data = await resp.json()
-      const sessions: Array<{ id: string }> = data?.sessions || []
-      // The switch is asynchronous and the user is not blocked while it runs, so
-      // they may have opened another session by now. planRemoteRemoval returns
-      // `none` in that case instead of dragging them off the session they chose.
-      const outcome = planRemoteRemoval(removedId, sessionIdentity.currentSessionId.value, sessions)
-      if (outcome.action === 'switch') {
-        await sessionIdentity.switchSession(outcome.sessionId)
-      } else if (outcome.action === 'create') {
-        // Nothing left — the same thing a local archive of the last session does.
-        await sessionIdentity.createSession('')
-      }
-    } catch (err) {
-      appLog.w(TAG, 'failed to leave remotely removed session:', err)
-    }
-  })()
+  appLog.i(TAG, `session ${removedId} removed, leaving it`)
+  void sessionIdentity.leaveGoneSession(removedId, detail.replacement_session_id)
 }
 
 function handleOpenSession(e: Event) {

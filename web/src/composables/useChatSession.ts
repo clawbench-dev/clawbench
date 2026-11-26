@@ -26,7 +26,6 @@ import { hasChatScrollPosition, shouldRestoreChatScroll } from '@/utils/chatScro
 import { markSessionRead as markSessionReadRequest } from '@/utils/sessionRead'
 import { markVisibleSessionRead } from '@/composables/sessionReadGate'
 import { takePendingOpenSession } from '@/composables/usePendingSessionOpen'
-import { planRemoteRemoval } from '@/composables/useRemoteSessionRemoval'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -42,6 +41,26 @@ let _sessionsLoadPromise: Promise<void> | null = null
  * load yet", which forces a bump on the first one.
  */
 let _lastBadgeSignature: string | null = null
+
+/**
+ * The session creation currently in flight, if any — shared so that every
+ * caller which independently decided "this project has no session left, create
+ * one" lands on the SAME new session.
+ *
+ * That decision is made in three places: the local archive/destroy response
+ * handler, App.vue's `session_removed` handler, and the 404 recovery path. They
+ * can all observe an empty list at the same moment, because archiving the LAST
+ * session broadcasts `session_removed` to every client INCLUDING the one that
+ * initiated it (BroadcastEvent has no sender exclusion) while that client's
+ * archive response handler is already re-fetching the list. Each POST inserts
+ * its own row, producing the reported pair of "新会话 1" + "新会话 2".
+ *
+ * Keyed by the requested agent so an explicit "new session with agent B" is
+ * never swallowed by a concurrent default creation. Module-level (like
+ * `_sessionsLoadPromise`) so `resetChatSessionState` can drop it on a project
+ * switch; a hung request must not block creation in the next project.
+ */
+let _createInFlight: { agentId: string; promise: Promise<void> } | null = null
 
 /**
  * True while a session switch is in flight (old messages cleared, new history
@@ -136,6 +155,7 @@ export async function loadSessionsOnce(): Promise<void> {
 export function resetChatSessionState(): void {
   _sessionsLoadPromise = null
   _lastBadgeSignature = null
+  _createInFlight = null
   // Module-level state: without this a test that leaves a switch in flight would
   // leak `switching=true` into the next one (the header/bubble skeletons would
   // then render when they must not).
@@ -1184,7 +1204,28 @@ export function useChatSession(options: UseChatSessionOptions) {
     onResubscribeStream?.(sid)
   }
 
+  /**
+   * Create a new session, coalescing concurrent calls that ask for the same
+   * agent. See `_createInFlight` for why: "the project is empty, create one" is
+   * decided independently by the archive/destroy handlers, App.vue's
+   * `session_removed` handler and the 404 recovery path, and two of them firing
+   * together must not insert two rows.
+   */
   async function createSession(agentId: string) {
+    const key = agentId || ''
+    if (_createInFlight && _createInFlight.agentId === key) {
+      return _createInFlight.promise
+    }
+    const promise = createSessionOnce(agentId)
+    _createInFlight = { agentId: key, promise }
+    try {
+      await promise
+    } finally {
+      if (_createInFlight?.promise === promise) _createInFlight = null
+    }
+  }
+
+  async function createSessionOnce(agentId: string) {
     // Pre-check session limit before clearing identity or making any request.
     // This avoids wiping currentSessionId (which disables the delete button)
     // when we already know creation will fail.
@@ -1293,26 +1334,52 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
-   * Leave a session that no longer exists on the server (deleted or archived
-   * by another device, discovered by a 404). Behaves exactly like a LOCAL
-   * archive of the open session: switch to the first remaining session, or
-   * create a fresh one when the project has none left. Never leaves the panel
-   * empty and never re-selects the session that just vanished.
+   * Leave a session that no longer exists, by switching to whichever session
+   * the project has now.
+   *
+   * The REPLACEMENT IS NEVER CHOSEN HERE. The server guarantees a project always
+   * keeps at least one session — removing the last one makes it create the
+   * successor (see backfillSessionAfterRemoval) — so every client does the same
+   * single thing: take the project's current session.
+   *
+   * That is deliberate. When this file, App.vue's session_removed handler and
+   * the 404 path each decided "nothing is left, create one", removing a
+   * project's only session ran that decision three times and produced two new
+   * sessions with the toast still saying one was removed.
+   *
+   * `replacementId` is what the caller already knows (the DELETE response or
+   * the broadcast named it); it is used directly if it still exists, which
+   * avoids racing a list that may not be refreshed yet.
    */
-  async function leaveGoneSession(goneId: string) {
+  async function leaveGoneSession(goneId: string, replacementId?: string) {
     try {
+      // The await below is an async gap: the user may have opened a session of
+      // their own by now, which takes precedence over anything picked here.
+      if (currentSessionId.value && currentSessionId.value !== goneId) return
+
+      const preferred = replacementId && replacementId !== goneId ? replacementId : ''
+      if (preferred) {
+        await switchSession(preferred)
+        return
+      }
+
       const resp = await fetch('/api/ai/sessions')
       const data = await resp.json()
-      // The list fetch is an async gap: the user may have opened a session of
-      // their own by now, which takes precedence over anything we pick.
-      if (currentSessionId.value) return
+      if (currentSessionId.value && currentSessionId.value !== goneId) return
       const sessions: Array<{ id: string }> = Array.isArray(data?.sessions) ? data.sessions : []
-      // planRemoteRemoval is the shared rule for "which session takes over";
-      // passing goneId as the current id means "the one that just went away",
-      // which is exactly what it filters out.
-      const outcome = planRemoteRemoval(goneId, goneId, sessions)
-      if (outcome.action === 'switch') await switchSession(outcome.sessionId)
-      else if (outcome.action === 'create') await createSession('')
+      // A stale/partial response could still list the session the server just
+      // removed; switching back into it would land on a panel whose every
+      // request 404s.
+      const next = sessions.find(s => s?.id && s.id !== goneId)
+      if (next) {
+        await switchSession(next.id)
+        return
+      }
+      // No session is listed and none was named. This is the one case the server
+      // is supposed to have prevented, so take the ordinary "new session" path
+      // rather than leaving the panel empty.
+      appLog.w(TAG, `no session left after ${goneId} disappeared; creating one`)
+      await createSession('')
     } catch (e) {
       appLog.w(TAG, 'recover after session disappeared failed:', e)
     }
@@ -1330,16 +1397,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.ok) {
         // Evict usage cache for the deleted session
         clearUsageStateById(sessionId)
-        // If deleted current session, switch to another
         if (sessionId === currentSessionId.value) {
-          const sessionsResp = await fetch('/api/ai/sessions')
-          const sessionsData = await sessionsResp.json()
-          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
-            await switchSession(sessionsData.sessions[0].id)
-          } else {
-            // No sessions left, create a default one
-            await createSession('')
-          }
+          // The server names the session that takes over when this removal left
+          // the project empty; it never leaves a project without one.
+          await leaveGoneSession(sessionId, data.replacementSessionId)
         } else {
           // Deleted a non-current session — refresh global state (chatUnread, runningSessions)
           await loadSessionsOnce()
@@ -1374,15 +1435,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       const data = await resp.json()
       if (data.ok) {
         clearUsageStateById(sessionId)
-        // After destroying current session, switch to another or create new
         if (sessionId === currentSessionId.value) {
-          const sessionsResp = await fetch('/api/ai/sessions')
-          const sessionsData = await sessionsResp.json()
-          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
-            await switchSession(sessionsData.sessions[0].id)
-          } else {
-            await createSession('')
-          }
+          await leaveGoneSession(sessionId, data.replacementSessionId)
         } else {
           await loadSessionsOnce()
         }
@@ -1999,6 +2053,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     createSession,
     archiveSession,
     destroySession,
+    leaveGoneSession,
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
     handleWsReconnect,

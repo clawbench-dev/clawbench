@@ -147,6 +147,18 @@ export function startFlushTimer(): void {
   flushTimer = setInterval(doFlush, FLUSH_INTERVAL_MS)
 }
 
+/**
+ * Push buffered entries out now instead of waiting for the flush timer.
+ *
+ * Used right before a forced page reload: without it the last error (e.g. the
+ * component name of a render crash) would still sit in the buffer and die with
+ * the page — the one line needed to diagnose the crash. The relay's fetch is
+ * `keepalive`, so a request started just before the unload still lands.
+ */
+export function flushLogNow(): void {
+  void doFlush()
+}
+
 /** Stop the periodic flush timer and flush remaining entries. Call at app teardown. */
 export function stopFlushTimer(): void {
   if (flushTimer !== null) {

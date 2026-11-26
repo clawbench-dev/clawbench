@@ -2602,8 +2602,25 @@ export function useLiveShare() {
   }
 
   /**
-   * Sample every microphone 5×/s and broadcast the ones that changed.
+   * End an annotation: wipe the ink everywhere, then drop the mirror.
    *
+   * The audience's board is fed by live frames only, so `ink-clear` is the ONLY
+   * frame that can empty it — and the toolbar's own 清空 button is otherwise the
+   * only source of one. Closing the surface without sending it leaves every
+   * viewer looking at strokes the presenter can no longer see or remove (they
+   * have no handle on that surface any more), and `ink-sync` replays them to
+   * whoever rejoins. So closing and clearing are the same act.
+   *
+   * `sendControl` feeds the mirror too, so this already empties the local board;
+   * the clear afterwards keeps a frame captured in the same tick clean.
+   */
+  function endAnnotation(): void {
+    sendControl({ t: 'ink-clear' })
+    clearInkMirror()
+  }
+
+  /**
+   * Sample every microphone 5×/s and broadcast the ones that changed.
    * Only meaningful levels are sent: a channel that is silent in both the
    * previous and the current window is skipped, so an idle room produces no
    * traffic at all.
@@ -2879,6 +2896,7 @@ export function useLiveShare() {
     startRecording,
     stopRecording,
     sendControl,
+    endAnnotation,
     sendControlTo,
     onControl,
     levels,

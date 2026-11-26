@@ -37,6 +37,19 @@ const RETRY_NOTICE_END_TYPES = new Set([
   'warning',
 ])
 
+export interface StreamEndOptions {
+  /**
+   * True when this terminal frame came from the server's reconnect replay
+   * buffer, i.e. the turn ended while THIS client was disconnected. The UI must
+   * still finalize (that is the only terminal event this client will get), but
+   * anything that ANNOUNCES a completion — chime, read-aloud, toast — must not
+   * fire: the user was not watching. On mobile the replay arrives right after
+   * the app becomes visible again, so a hidden-page deferral alone (#728) does
+   * not cover it; this is how the host tells the two apart.
+   */
+  replayed?: boolean
+}
+
 export interface UseChatStreamOptions {
   messages: Ref<ChatMessage[]>
   /** Single write channel for the messages array (chatMessageReducer). */
@@ -54,7 +67,7 @@ export interface UseChatStreamOptions {
   onParseAssistantContent: (content: string, opts?: { liveStreaming?: boolean }) => { blocks: ContentBlock[]; metadata?: Record<string, unknown>; cancelled?: boolean; stopped?: boolean }
   onToast: (msg: string, opts?: { icon?: ToastIconKey; type?: string; duration?: number; onClick?: () => void }) => void
   onNotification: (title: string, opts?: { body?: string; onClick?: () => void }) => void
-  onStreamEnd?: (reason: 'done' | 'cancelled' | 'error') => void
+  onStreamEnd?: (reason: 'done' | 'cancelled' | 'error', opts?: StreamEndOptions) => void
   /**
    * Fires at every "producer turn ended" boundary for the current session — a
    * reply just finalized (stamping its completed_at), so the session is
@@ -788,7 +801,10 @@ export function useChatStream(options: UseChatStreamOptions) {
           // One producer turn (group chats: one member) just ended. The host
           // uses this to auto-speak THIS speaker's reply, so a multi-member run
           // is read speaker by speaker rather than only at the terminal 'done'.
-          onMemberFinalize?.(finishId)
+          // A replayed finalize means the member spoke while this client was
+          // disconnected — reading it aloud on return would be the same stale
+          // announcement as a replayed `done`.
+          if (!isReplayingEvents.value) onMemberFinalize?.(finishId)
         }
         break
       }
@@ -937,6 +953,11 @@ export function useChatStream(options: UseChatStreamOptions) {
 
       case 'done': {
         if (sessionChanged()) return
+        // Caught-up history, not a live completion: the frame came from the
+        // server's reconnect buffer, so this turn ended while the client was
+        // away. The host suppresses the announcement (chime / read-aloud /
+        // toast) but still finalizes — see StreamEndOptions.
+        const replayed = isReplayingEvents.value
         // The turn is over. Anything still buffered belongs to a placeholder
         // that never appeared; replaying it later (e.g. on a reconnect's stale
         // stream_start) would build a zombie streaming bubble that never
@@ -967,8 +988,8 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (isOpen.value) {
           onScrollBottom(false)
         }
-        onStreamEnd?.('done')
-        if (!isOpen.value) {
+        onStreamEnd?.('done', { replayed })
+        if (!isOpen.value && !replayed) {
           const lastMsg = messages.value[messages.value.length - 1]
           if (lastMsg?.role === 'assistant') {
             // In-app toast bubble removed — the completion popover now covers
@@ -1034,7 +1055,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks })
         loading.value = false
         reportCancelRoundTrip('cancelled')
-        onStreamEnd?.('cancelled')
+        onStreamEnd?.('cancelled', { replayed: isReplayingEvents.value })
         // Sync from DB in the background, exactly like 'done'/'error'/
         // 'replay_done'. This branch used to skip it, which lost any block the
         // backend persisted for this turn but never streamed — most visibly a
@@ -1070,7 +1091,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         dispatch({ type: 'ws_error', messageId: streamMsgId, text: errorData?.error || 'Unknown error', reason: errorData?.reason, errorCode: errorData?.error_code, httpStatus: errorData?.http_status, errorSource: errorData?.error_source, errorDetail: errorData?.error_detail, loginCmd: errorData?.login_cmd })
         _forceCleanupStreamingState(messages.value, { onRenderNeeded, onExtractScheduledTasks }, streamMsgId)
         loading.value = false
-        onStreamEnd?.('error')
+        onStreamEnd?.('error', { replayed: isReplayingEvents.value })
         // Sync from DB in the background (same pattern as 'done' handler).
         onLoadHistory().then(() => {
           onRenderNeeded(true)

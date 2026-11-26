@@ -98,6 +98,15 @@
         <span class="free-dialog-text" :class="{ 'is-hint': !freeDialogTranscript }">
           {{ freeDialogTranscript || freeDialogHint }}
         </span>
+        <!-- What this conversation has cost so far: how much audio the
+             recogniser has actually been handed since the mode started. Shown
+             next to the transcript rather than inside it, because the transcript
+             is two scrolling lines and a counter at the end of it would be
+             scrolled out of view exactly when the user looks for it. -->
+        <span v-if="freeDialogCapturedLabel" class="free-dialog-usage" data-role="free-dialog-usage">
+          <Timer :size="12" aria-hidden="true" />
+          <span>{{ freeDialogCapturedLabel }}</span>
+        </span>
       </div>
     </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space.
@@ -370,7 +379,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert, Mic, MessageCircleMore, AudioLines } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Activity, MessagesSquare, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check, Users, Navigation, ShieldAlert, Mic, MessageCircleMore, AudioLines, Timer } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseHashQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
@@ -420,6 +429,7 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useShareIn } from '@/composables/useShareIn'
 import { useUploadRecent } from '@/composables/useUploadRecent'
 import { useAtFileSearch } from '@/composables/useAtFileSearch'
+import { formatSpanDuration } from '@/utils/format'
 import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import ActionBar from '@/components/common/ActionBar.vue'
@@ -469,6 +479,20 @@ const freeDialogHint = computed(() => {
     default: return ''
   }
 })
+
+/**
+ * The "X" beside the timer icon on the strip; empty until any audio has been
+ * captured. Just the duration — the icon already says what it measures, and a
+ * sentence-shaped label crowded the transcript out of a one-line strip.
+ *
+ * Counts up rather than down: this is what the conversation has used, and the
+ * number only moves while the microphone is open.
+ */
+const freeDialogCapturedLabel = computed(() => (
+  props.freeDialogCapturedMs > 0
+    ? formatSpanDuration(props.freeDialogCapturedMs)
+    : ''
+))
 
 const freeDialogTitle = computed(() => {
   switch (props.freeDialogPhase) {
@@ -736,6 +760,8 @@ const props = defineProps({
   freeDialogTranscript: { type: String, default: '' },
   /** Whether speaking cuts the reply short (`stt.barge_in` is not 'off'). */
   freeDialogCanInterrupt: { type: Boolean, default: false },
+  /** Audio captured by the recogniser during this conversation, in ms. */
+  freeDialogCapturedMs: { type: Number, default: 0 },
 })
 
 /**
@@ -3039,6 +3065,17 @@ defineExpose({
 /* Nothing recognised yet: this is a hint, not content — muted so it is not
    mistaken for what the microphone heard. */
 .free-dialog-text.is-hint {
+  color: var(--text-muted, #999);
+}
+/* What this conversation has cost so far. Muted and `nowrap`: it is a live
+   counter, and a second line would make the strip grow on every tick. */
+.free-dialog-usage {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted, #999);
 }
 

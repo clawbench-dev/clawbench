@@ -32,6 +32,7 @@ export interface UseSessionManagerOptions {
   createSessionCore: (agentId?: string) => Promise<void>
   archiveSessionCore: (sessionId: string, backend?: string) => Promise<void>
   destroySessionCore: (sessionId: string) => Promise<void>
+  leaveGoneSessionCore: (goneId: string, replacementId?: string) => Promise<void>
   continueFromExecutionCore: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   forkSessionCore: (sessionId: string, beforeMessageId?: number, target?: ForkTarget) => Promise<boolean>
   rewindSessionCore: (sessionId: string, beforeMessageId: number) => Promise<string>
@@ -63,6 +64,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     createSessionCore,
     archiveSessionCore,
     destroySessionCore,
+    leaveGoneSessionCore,
     continueFromExecutionCore,
     forkSessionCore,
     rewindSessionCore,
@@ -572,6 +574,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       createSession,
       archiveSession,
       destroySession,
+      leaveGoneSession: leaveGoneSessionCore,
       sendMessage: extra.sendMessage,
       enqueueToSession: extra.enqueueToSession,
       openChatPanel: extra.openChatPanel,

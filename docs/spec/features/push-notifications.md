@@ -75,7 +75,7 @@ flowchart TD
 
 - **推送是 WS 的后备而非替代**：推送通知有延迟、有字数限制、无法交互——在线时始终优先使用 WebSocket
 - **系统通知与 IM 推送是两个独立通道**：`desktopNotification`（本地）管桌面端的系统通知；`push_mode`（服务端）管手机原生推送与钉钉/飞书。二者不互为门控，一个用户可能两者都开。`forge_event` 的 WS 广播与未读角标**不受任何通知开关影响**——角标回答「有没有新变化」，开关回答「要不要打扰」
-- **回放事件永不通知**：`fetchPendingEvents()` 拉取的和 WS 重连缓冲回放的（`replayed: true`）都是补历史，用户并未亲眼看到事件发生，因此抑制通知与未读自动清除
+- **回放事件永不通知**：`fetchPendingEvents()` 拉取的和 WS 重连缓冲回放的（`replayed: true`）都是补历史，用户并未亲眼看到事件发生，因此抑制通知与未读自动清除。**聊天流自己的终态也一样**：回放的 `done` / `stream_finalize` 仍要收尾（那是本客户端唯一能拿到的终态帧），但不播提示音、不自动朗读、不弹「AI 已回复」气泡、不清未读。只在页面隐藏时排队（#728）挡不住它——移动端是回到前台才重连，回放帧到达时页面已经可见，于是「打开客户端那一刻响一声」；`useChatStream` 把 `isReplayingEvents` 作为 `onStreamEnd(reason, { replayed })` 交给宿主判断
 - **断线缓冲窗口有限（10s）**：WebSocket 断线后只缓冲 10s 内的事件，超过的事件进入离线持久化
 - **终态推送去重守卫**：服务端用 `terminalPushDone` 标记（`sync.Map`，按 sessionID）保证同一会话只发送一次终态推送——防止 done/cancel 并发竞态导致"完成"与"取消"双重矛盾通知。终态事件统一由 `markDoneAndSendFinal` 触发，新会话开始时重置标记
 

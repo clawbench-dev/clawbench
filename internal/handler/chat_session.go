@@ -555,8 +555,7 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 		// destroy it. Fall back to a regular archive (soft delete).
 		slog.Error("archiving session: GetFinalizedMessageCount failed, falling back to soft archive", "session_id", sessionID, "err", err)
 	} else if msgCount == 0 {
-		archiveEmptySessionHardDelete(w, projectPath, sessionID, agentID)
-		service.BroadcastSessionRemoved(sessionID, removedProject)
+		archiveEmptySessionHardDelete(w, r, projectPath, sessionID, agentID)
 		return
 	}
 
@@ -572,13 +571,18 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	}
 	closeGroupMemberConns(sessionID)
 
+	// If that was the project's last session, the server creates the one that
+	// takes over — see backfillSessionAfterRemoval. Clients are told about it
+	// rather than deciding it themselves.
+	replacement := backfillSessionAfterRemoval(r, removedProject)
+
 	// Tell other devices the row left the list. The caller learns this from the
 	// response below; without the broadcast, a client with the session open keeps
 	// rendering it until it happens to send a message and gets a 404.
-	service.BroadcastSessionRemoved(sessionID, removedProject)
+	service.BroadcastSessionRemoved(sessionID, removedProject, replacement)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": false, "sessionCount": sessionCount})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": false, "sessionCount": sessionCount, "replacementSessionId": replacement})
 }
 
 // archiveEmptySessionHardDelete destroys an archived session that has no
@@ -586,7 +590,7 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 // purges RAG chunks, hard-deletes the DB records, and writes the response. The
 // empty-session path always terminates the request, so the caller returns
 // immediately after invoking it.
-func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID, agentID string) {
+func archiveEmptySessionHardDelete(w http.ResponseWriter, r *http.Request, projectPath, sessionID, agentID string) {
 	slog.Info("archiving empty session → hard-delete", "session_id", sessionID)
 
 	// Close (but do NOT ACP-delete) the agent connection. The agent-side
@@ -617,8 +621,14 @@ func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID
 		return
 	}
 
+	// Same backfill and broadcast as the soft-archive path: the row left the
+	// list, and every other device must drop it (and leave it if it is the one
+	// open there).
+	replacement := backfillSessionAfterRemoval(r, projectPath)
+	service.BroadcastSessionRemoved(sessionID, projectPath, replacement)
+
 	sessionCount, _ := service.GetSessionCount(projectPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount, "replacementSessionId": replacement})
 }
 
 // DestroySession handles DELETE for physically removing a session and all its data.
@@ -684,11 +694,13 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tell other devices the session is gone (see ArchiveSession).
-	service.BroadcastSessionRemoved(sessionID, removedProject)
+	// Tell other devices the session is gone (see ArchiveSession). If it was the
+	// project's last session, the server has already created the replacement.
+	replacement := backfillSessionAfterRemoval(r, removedProject)
+	service.BroadcastSessionRemoved(sessionID, removedProject, replacement)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount, "replacementSessionId": replacement})
 }
 
 // closeGroupMemberConns closes the ACP connection of every member of a group.

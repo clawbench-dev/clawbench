@@ -27,18 +27,89 @@ import (
 
 const maxChatBodySize = 10 << 20 // 10MB
 
-// implicitSessionMu serializes the "recover this project's session, create one
-// when there is none" decision in resolveOrCreateProjectSession.
+// implicitSessionMu serializes every "this project has no visible session, so
+// create one" decision: the recovery GET (resolveOrCreateProjectSession) and
+// the post-removal backfill (backfillSessionAfterRemoval).
 //
-// Opening a project fires two of those GETs at almost the same instant: the
-// identity recovery in App.vue (initSessionFromAPI) and the remounted chat
-// panel's first loadHistory. Both read "no sessions" before either INSERT
-// lands, so each creates its own — a brand-new project then shows two empty
-// "New Session" rows, and the loser is never cleaned up because nothing deletes
-// empty sessions. A single process-wide mutex is enough: it is only taken when
-// a project has no visible sessions at all, and every write already funnels
-// through the store's process-wide write lock.
+// Two ways to reach that decision at once were observed. Opening a project
+// fires two recovery GETs at almost the same instant (the identity recovery in
+// App.vue and the remounted chat panel's first loadHistory); and removing the
+// LAST session makes the DELETE's own response and the session_removed
+// broadcast both find an empty project. Both readers see "no sessions" before
+// either INSERT lands, so each creates its own — two empty "New Session" rows
+// where the user expects one. A single process-wide mutex is enough: it is only
+// taken when a project has no visible sessions at all, and every write already
+// funnels through the store's process-wide write lock.
 var implicitSessionMu sync.Mutex
+
+// createImplicitProjectSession inserts the project's first session, using the
+// default agent visible in THAT project. Returns the new id and its backend.
+//
+// Don't pre-fill the agent's default model — leave it empty so the frontend
+// falls back to global localStorage preference (cross-project).
+func createImplicitProjectSession(r *http.Request, projectPath string) (sessionID, backend string, err error) {
+	agentID := resolveDefaultAgentForProject(projectPath)
+	agentBackend, _, _, agentOK := resolveAgentConfig(agentID)
+	if !agentOK {
+		return "", "", errNoAgentAvailable
+	}
+	createdID, err := service.CreateSession(projectPath, agentBackend, newUnnamedSessionTitle(r, projectPath), agentID, "", "default", "chat")
+	if err != nil {
+		return "", "", err
+	}
+	// Same first-session auto probe as POST /api/ai/sessions: a project whose
+	// only session was just created implicitly would otherwise show empty
+	// pickers too.
+	maybeAutoProbeAgentState(model.GetAgent(agentID), projectPath)
+	return createdID, agentBackend, nil
+}
+
+// errNoAgentAvailable is reported by createImplicitProjectSession when the
+// project has no agent to open a session with. Callers turn it into
+// "NoAgentsAvailable" (recovery GET) or a silent skip (post-removal backfill:
+// the removal itself already succeeded and must not fail over this).
+var errNoAgentAvailable = errors.New("no agent available")
+
+// backfillSessionAfterRemoval keeps the "a project always has at least one
+// session" invariant after a session is archived or destroyed.
+//
+// This is the single owner of "what takes over after the last session is
+// removed". Before it existed the decision lived in the frontend, and THREE
+// independent frontend paths made it (the DELETE response handler, the
+// session_removed broadcast handler, and the 404 recovery), so removing the
+// only session of a project produced two new ones. Clients now never create a
+// replacement — they switch to the id reported here.
+//
+// Returns "" when the project still has a visible session (nothing to do), when
+// no agent is available, or when the insert fails. A failure is only logged: the
+// removal already happened, and the caller must not report it as failed. A
+// client that got "" and finds nothing left simply calls POST
+// /api/ai/sessions itself, which is idempotent from the user's point of view.
+func backfillSessionAfterRemoval(r *http.Request, projectPath string) string {
+	if projectPath == "" {
+		// The session's owning project could not be resolved (already gone), so
+		// there is no project to backfill.
+		return ""
+	}
+	implicitSessionMu.Lock()
+	defer implicitSessionMu.Unlock()
+	if _, _, err := service.GetLatestSessionID(projectPath); err == nil {
+		return ""
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		slog.Warn("post-removal backfill: failed to list sessions", "project", projectPath, "err", err)
+		return ""
+	}
+	createdID, _, err := createImplicitProjectSession(r, projectPath)
+	if err != nil {
+		if !errors.Is(err, errNoAgentAvailable) {
+			slog.Warn("post-removal backfill: failed to create a replacement session", "project", projectPath, "err", err)
+		}
+		return ""
+	}
+	slog.Info("post-removal backfill: created replacement session for emptied project",
+		"project", projectPath, "session", createdID)
+	return createdID
+}
 
 // resolveOrCreateProjectSession returns the project's most recently updated
 // visible session, creating one (with the default agent for THIS project) when
@@ -64,27 +135,16 @@ func resolveOrCreateProjectSession(w http.ResponseWriter, r *http.Request, proje
 		return "", "", false
 	}
 
-	// No sessions exist, create a new one with default agent.
-	// Don't pre-fill agent default model — leave empty so frontend
-	// falls back to global localStorage preference (cross-project).
-	// Scope-aware: the configured default may be scoped to another
-	// project, so resolve to the first agent visible here.
-	agentID := resolveDefaultAgentForProject(projectPath)
-	agentBackend, _, _, agentOK := resolveAgentConfig(agentID)
-	if !agentOK {
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
-		return "", "", false
-	}
-	createdID, err := service.CreateSession(projectPath, agentBackend, newUnnamedSessionTitle(r, projectPath), agentID, "", "default", "chat")
+	createdID, createdBackend, err := createImplicitProjectSession(r, projectPath)
 	if err != nil {
-		model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
+		if errors.Is(err, errNoAgentAvailable) {
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
+		} else {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
+		}
 		return "", "", false
 	}
-	// Same first-session auto probe as POST /api/ai/sessions: a project whose
-	// only session was just created implicitly would otherwise show empty
-	// pickers too.
-	maybeAutoProbeAgentState(model.GetAgent(agentID), projectPath)
-	return createdID, agentBackend, true
+	return createdID, createdBackend, true
 }
 
 // AIChat handles GET (status/history) and POST (send message) for AI chat.

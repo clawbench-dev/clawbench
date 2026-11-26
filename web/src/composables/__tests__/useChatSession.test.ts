@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { _clearBuffer as _clearLogBuffer } from '@/utils/appLog'
 
 // ── Timer leak prevention ──
@@ -386,6 +386,9 @@ vi.mock('@/composables/useAppMode', () => ({
 }))
 vi.mock('@/composables/useGlobalEvents', () => ({
   useGlobalEvents: () => ({ isReplayingEvents: mockIsReplayingEvents }),
+  // The removals send it so the server can name this device on the
+  // session_removed broadcast.
+  getClientId: () => localStorage.getItem('clawbench_client_id') || 'test-client-id',
 }))
 vi.mock('@/composables/useNotification', () => ({
   useNotification: () => ({ play: vi.fn() }),
@@ -473,9 +476,9 @@ const mockAppMode = vi.hoisted(() => ({ isAppMode: false, isDesktopApp: false })
 // create/archive tests do) or it will mutate a stale previous test's ref.
 let lastSessionOptions: ReturnType<typeof createSessionInternal>['options'] | null = null
 
-function createSessionInternal() {
+function createSessionInternal(currentSessionIdOverride?: Ref<string>) {
   const options = {
-    currentSessionId: ref('current-s1'),
+    currentSessionId: currentSessionIdOverride ?? ref('current-s1'),
     messages: ref([]),
     dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
     loading: ref(false),
@@ -498,8 +501,8 @@ function createSessionInternal() {
   return { session, options }
 }
 
-function createSession() {
-  return createSessionInternal().session
+function createSession(currentSessionIdOverride?: Ref<string>) {
+  return createSessionInternal(currentSessionIdOverride).session
 }
 
 // ── Tests ──
@@ -5105,6 +5108,126 @@ describe('createSession', () => {
     expect(currentSessionId.value).toBe('new-s1')
     expect(messages.value).toEqual([])
   })
+
+  it('coalesces concurrent creations so two "new session" presses cannot create two', async () => {
+    // Two callers deciding "this project needs a session" at the same moment
+    // (two presses of New, or the identity recovery racing the panel's first
+    // load) used to POST independently, producing 「新会话 1」+「新会话 2」. The
+    // second call must join the in-flight creation instead.
+    //
+    // Removals no longer reach this at all: the server creates the replacement
+    // itself (backfillSessionAfterRemoval), so no removal path calls
+    // createSession twice.
+    let postResolve!: (v: any) => void
+    const postPromise = new Promise(resolve => { postResolve = resolve })
+    let sessionPosts = 0
+
+    // Routed by URL, not by call order: switchSession also fires
+    // POST /api/ai/chat/read and GET /api/ai/sessions, which made a sequential
+    // mock list fragile.
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/ai/sessions' && init?.method === 'POST') {
+        sessionPosts++
+        return postPromise
+      }
+      if (url.startsWith('/api/ai/chat?')) {
+        const id = new URLSearchParams(url.split('?')[1]).get('session_id') || 'new-s1'
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessionId: id,
+            sessionTitle: id,
+            messages: [],
+            total: 0,
+            backend: 'codebuddy',
+            agentId: 'agent1',
+            running: false,
+          }),
+        })
+      }
+      if (url === '/api/ai/sessions') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const { session } = createSessionInternal()
+
+    const first = session.createSession('')
+    const second = session.createSession('')
+
+    // While the POST is still in flight the second caller must not start its
+    // own creation.
+    expect(sessionPosts).toBe(1)
+
+    postResolve({
+      ok: true,
+      json: () => Promise.resolve({
+        ok: true,
+        sessionId: 'new-s1',
+        title: 'New Session 1',
+        backend: 'codebuddy',
+        agentId: 'agent1',
+        sessionCount: 1,
+      }),
+    })
+    await Promise.all([first, second])
+
+    expect(sessionPosts).toBe(1)
+    expect(lastSessionOptions!.currentSessionId.value).toBe('new-s1')
+  })
+
+  it('creates a second session once the previous creation has settled', async () => {
+    // The dedupe is per in-flight request, not a permanent lock: an explicit
+    // "new session" after the previous one finished must still create a row.
+    let sessionPosts = 0
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === '/api/ai/sessions' && init?.method === 'POST') {
+        sessionPosts++
+        const id = `new-s${sessionPosts}`
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ok: true,
+            sessionId: id,
+            title: id,
+            backend: 'codebuddy',
+            agentId: 'agent1',
+            sessionCount: sessionPosts,
+          }),
+        })
+      }
+      if (url.startsWith('/api/ai/chat?')) {
+        const id = new URLSearchParams(url.split('?')[1]).get('session_id') || ''
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessionId: id,
+            sessionTitle: id,
+            messages: [],
+            total: 0,
+            backend: 'codebuddy',
+            agentId: 'agent1',
+            running: false,
+          }),
+        })
+      }
+      if (url === '/api/ai/sessions') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) })
+    })
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
+
+    const { session } = createSessionInternal()
+    await session.createSession('')
+    expect(sessionPosts).toBe(1)
+    await session.createSession('')
+
+    expect(sessionPosts).toBe(2)
+    expect(lastSessionOptions!.currentSessionId.value).toBe('new-s2')
+  })
 })
 
 // ───────────────────────────────────────────────────────────
@@ -5281,6 +5404,44 @@ describe('archiveSession', () => {
     )
     // Two fetch calls: 1) delete API 2) loadSessionsOnce (refresh global state)
     expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  // Removing the project's LAST session: the server has already created the one
+  // that takes over and names it in the response. The client must switch to it
+  // and must NOT create anything of its own — creating is what made this
+  // removal leave the user with two sessions (「移除唯一的会话后反而变成两个」).
+  it('switches to the replacement the server reported and creates nothing', async () => {
+    const calls: Array<{ url: string; method: string }> = []
+    globalThis.fetch = vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method || 'GET' })
+      const u = String(url)
+      if (u.startsWith('/api/ai/session/archive?')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ok: true, destroyed: false, sessionCount: 1, replacementSessionId: 's-new',
+          }),
+        })
+      }
+      if (u.startsWith('/api/ai/chat?')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessionId: 's-new', sessionTitle: 's-new', messages: [], total: 0,
+            backend: 'claude', agentId: 'a1', modelId: '', thinkingEffort: '', running: false,
+          }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true, sessions: [] }) })
+    }) as unknown as typeof globalThis.fetch
+
+    const currentSessionId = ref('s1')
+    const session = createSession(currentSessionId)
+    await session.archiveSession('s1', 'claude')
+
+    expect(currentSessionId.value).toBe('s-new')
+    const created = calls.filter(c => c.method === 'POST' && c.url === '/api/ai/sessions')
+    expect(created).toHaveLength(0)
   })
 
   it('API returns ok=false: shows error toast', async () => {

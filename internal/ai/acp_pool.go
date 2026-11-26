@@ -1114,6 +1114,13 @@ type ACPConn struct {
 	// given internal category maps to for the connection's agent.
 	setConfigOptionFn func(ctx context.Context, acpSessionID, configID, value string) error
 
+	// setConfigOptionRequestFn overrides the SetSessionConfigOption RPC for
+	// testing with the FULL typed request. The string hook above cannot tell a
+	// boolean option's wire form apart from the legacy string one — both carry
+	// the text "false" — so a test that cares about the JSON type (an agent
+	// rejecting `"false"` for a boolean option) must inspect the request.
+	setConfigOptionRequestFn func(ctx context.Context, acpSessionID string, req acp.SetSessionConfigOptionRequest) error
+
 	// rawCallFnForTest overrides the raw JSON-RPC side channel (CallRaw) for
 	// testing. If non-nil, it is called instead of the real acpRawRPC. Needed
 	// because newACPConn / SetAliveForTest never install a rawRPC, so CallRaw
@@ -3028,6 +3035,16 @@ func (c *ACPConn) SetListSessionsFnForTest(fn func(ctx context.Context, cursor *
 func (c *ACPConn) SetConfigOptionFnForTest(fn func(ctx context.Context, acpSessionID, configID, value string) error) {
 	c.mu.Lock()
 	c.setConfigOptionFn = fn
+	c.mu.Unlock()
+}
+
+// SetConfigOptionRequestFnForTest overrides the SetSessionConfigOption RPC with
+// the full typed request, so a test can assert the JSON type of the value (a
+// boolean option must go out as true/false, not as the string "false").
+// Production code must not use this.
+func (c *ACPConn) SetConfigOptionRequestFnForTest(fn func(ctx context.Context, acpSessionID string, req acp.SetSessionConfigOptionRequest) error) {
+	c.mu.Lock()
+	c.setConfigOptionRequestFn = fn
 	c.mu.Unlock()
 }
 

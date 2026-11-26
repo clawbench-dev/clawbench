@@ -148,6 +148,9 @@ const i18n = createI18n({
       tool: {
         askUser: { recommendationFill: 'Fill' },
       },
+      // Read by the free-dialog usage label (`time.*` is the shared duration
+      // vocabulary, see utils/format.ts).
+      time: { durationMs: '{n} ms', durationSec: '{n} s', durationMin: '{n} min', durationHour: '{n} h', durationDay: '{n} d' },
     },
   },
 })
@@ -753,6 +756,25 @@ describe('ChatInputBar', () => {
     expect(strip.exists()).toBe(true)
     // The hint is muted so it cannot be mistaken for recognised speech.
     expect(strip.find('.free-dialog-text').classes()).toContain('is-hint')
+  })
+
+  it('shows how much audio this conversation has used', () => {
+    // What the recogniser was handed, next to the live transcript: the answer to
+    // "how long have I been talking to it", which nothing else on screen shows.
+    const wrapper = mountBar({
+      currentSessionId: 's1',
+      freeDialogPhase: 'listening',
+      freeDialogCapturedMs: 12500,
+    })
+    const usage = wrapper.find('[data-role="free-dialog-usage"]')
+    expect(usage.exists()).toBe(true)
+    // The timer icon carries the meaning; the label is the bare duration, so a
+    // sentence of explanatory text does not squeeze the transcript out.
+    expect(usage.find('svg.lucide-timer').exists()).toBe(true)
+    expect(usage.text()).toBe('12.5 s')
+    // Before any audio arrives there is nothing to report.
+    const fresh = mountBar({ currentSessionId: 's1', freeDialogPhase: 'listening', freeDialogCapturedMs: 0 })
+    expect(fresh.find('[data-role="free-dialog-usage"]').exists()).toBe(false)
   })
 
   it('says the reply can be interrupted while it is being generated', () => {

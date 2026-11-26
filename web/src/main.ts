@@ -32,8 +32,40 @@ import { installMediaFullscreenGuard } from './utils/mediaFullscreenGuard.ts'
 import { installInlineZoom } from './utils/inlineZoom.ts'
 import { installSvgMediaAutoFit } from './utils/svgMediaFit.ts'
 import { installChunkLoadRecovery } from './utils/chunkLoadRecovery.ts'
+import { renderCrashRecovery } from './utils/renderCrashRecovery.ts'
 
 configureMarkedRenderer()
+
+/**
+ * Best-effort display name for the component that threw. SFCs compiled by
+ * `@vitejs/plugin-vue` carry `__name`; hand-written components use `name`.
+ * Anonymous ones return '' — the log then has no `<...>` suffix.
+ */
+function componentName(type: unknown): string {
+  if (!type || (typeof type !== 'object' && typeof type !== 'function')) return ''
+  const t = type as { name?: unknown; __name?: unknown }
+  if (typeof t.name === 'string' && t.name) return t.name
+  if (typeof t.__name === 'string' && t.__name) return t.__name
+  return ''
+}
+
+/**
+ * `Child<Parent<App>` — the component and the ancestors whose patch threw.
+ *
+ * The failing component is the one whose update aborted; its ancestors are the
+ * only ones that can still be patched into a working state, so knowing both
+ * narrows down which subtree got stuck. Capped: a deep chain is noise.
+ */
+function componentChain(instance: { type?: unknown; parent?: unknown } | null): string {
+  const names: string[] = []
+  let cur: { type?: unknown; parent?: unknown } | null = instance
+  while (cur && names.length < 6) {
+    const n = componentName(cur.type)
+    names.push(n || '?')
+    cur = (cur.parent as typeof cur) ?? null
+  }
+  return names.join('<')
+}
 
 // Observe every /api/* response for a 401 (expired session cookie). When armed
 // by App.vue after auth succeeds, a 401 redirects to /login.
@@ -149,11 +181,25 @@ async function bootstrap() {
   app.directive('dock-tip', DockTipDirective)
   app.directive('chat-drag', ChatDragDirective)
 
-  // Capture Vue component errors (render, lifecycle, event handlers)
-  app.config.errorHandler = (err, _instance, info) => {
+  // Capture Vue component errors (render, lifecycle, event handlers).
+  //
+  // The component name matters: without it a report only says "a render threw",
+  // which is not actionable — the stack is minified and the first frame is a
+  // vendor bundle. `info === 'component update'` additionally means Vue's own
+  // patcher threw, which leaves that component's tree half-patched; from then
+  // on every re-render of it throws again and its subtree never repaints (the
+  // "every tab click does nothing" freeze). renderCrashRecovery reloads once the
+  // same error repeats instead of leaving the app dead.
+  app.config.errorHandler = (err, instance, info) => {
     try {
       const msg = err instanceof Error ? (err.stack || err.message) : String(err)
-      appLog.e('Vue', `${msg} [${info}]`)
+      const name = componentName((instance as { type?: unknown } | null)?.type)
+      const chain = componentChain(instance as { type?: unknown; parent?: unknown } | null)
+      appLog.e('Vue', `${msg} [${info}]${name ? ` <${name}>` : ''}`)
+      if (info === 'component update') {
+        appLog.e('Vue', `update failed in ${chain || '?'} — the subtree can no longer repaint`)
+        renderCrashRecovery.note(err instanceof Error ? err.message : String(err), name)
+      }
     } catch {
       appLog.e('Vue', 'Failed to log error:', err)
     }

@@ -106,6 +106,30 @@ const REOPEN_DELAY_MS = 250
 const BARGE_ARM_DELAY_MS = 500
 
 /**
+ * How long a recogniser handshake may take before the socket is abandoned.
+ *
+ * A handshake that never completes is a real failure mode on a phone: the
+ * socket can sit in CONNECTING for half a minute while connections that are
+ * already established keep working, because a NEW connection has to resolve the
+ * host and get through the radio again. The reported symptom was 24-34 s of
+ * "正在听…" with nothing behind it, then one "连接失败" and the whole
+ * conversation gone.
+ */
+const CONNECT_TIMEOUT_MS = 4000
+
+/**
+ * Handshake attempts for the dictation recogniser (first try plus retries).
+ *
+ * One failed handshake used to end the mode. The transient causes — a dropped
+ * SYN, a resolver hiccup, the OS holding a new socket while the screen is off —
+ * are exactly what a retry fixes, and a try costs one round trip.
+ */
+const CONNECT_ATTEMPTS = 3
+
+/** Gap before a retry, so a stale DNS answer is not reused. */
+const CONNECT_RETRY_DELAY_MS = 400
+
+/**
  * How long the capture may go without handing over a single frame before it is
  * torn down and re-acquired.
  *
@@ -182,6 +206,40 @@ const lastError = ref('')
  * very different affordances, and the user cannot see which one applies.
  */
 const canInterrupt = ref(false)
+/**
+ * Audio captured in THIS conversation, in milliseconds; 0 until the mode starts.
+ *
+ * Shown to the user as 「本次语音 X」. Measured from the capture graph
+ * (`PcmStreamer.capturedMs`) and not from a wall clock: the loop keeps one
+ * microphone open across every turn, and what it costs — what the recogniser is
+ * handed — is exactly the audio that graph produced. A wall clock would also
+ * count the time a suspended context spends producing nothing at all.
+ *
+ * Two counters, because both of the obvious single ones are wrong:
+ *   - `capturedFinished`: graphs already torn down. A re-acquisition opens a NEW
+ *     graph whose own count starts at zero, so its share is added to the total
+ *     instead of replacing it.
+ *   - `capturedPublished`: the number on screen, refreshed at the edges
+ *     (a graph starting or going away, the mode resetting).
+ *
+ * Why the figure is published per frame instead of computed on read: the
+ * graph is a plain module variable, so a computed that reads `capturedMs()` is
+ * memoised on its first access — a zero read before the microphone existed would
+ * stick for the whole conversation, and it also cannot see the count grow (the
+ * worklet's samples are not reactive). Publishing from the frame callback is
+ * what keeps it current, and a label re-render every 100 ms frame is cheap.
+ */
+const capturedFinished = ref(0)
+const capturedPublished = ref(0)
+const capturedMs = computed(() => capturedPublished.value)
+
+/** Refreshes the figure on screen — see `capturedMs`. */
+function publishCaptured(): void {
+  const next = capturedFinished.value + (streamer ? streamer.capturedMs() : 0)
+  // Frames arrive every 100 ms; skipping an unchanged value keeps a render from
+  // being scheduled for a label that would show the same thing.
+  if (next !== capturedPublished.value) capturedPublished.value = next
+}
 
 let tuning: VoiceTuning = { ...VOICE_TUNING_DEFAULTS }
 /** The session's capture graph — see "ONE microphone" in the header. */
@@ -200,6 +258,10 @@ let capturePending: Promise<boolean> | null = null
 let captureGen = 0
 /** Recogniser socket of the dictation (listening) phase. */
 let ws: WebSocket | null = null
+/** Handshake watchdog for the dictation socket currently connecting. */
+let dictationConnectTimer: ReturnType<typeof setTimeout> | null = null
+/** Pending retry of a dictation handshake that failed. */
+let dictationRetryTimer: ReturnType<typeof setTimeout> | null = null
 /**
  * Set while the engine has been asked for its finished sentence and we are
  * waiting for the answer.
@@ -430,9 +492,37 @@ function clearFinalizeWait() {
   }
 }
 
+/** Stops the handshake watchdog and any pending retry of the dictation socket. */
+function clearDictationConnectTimers() {
+  if (dictationConnectTimer !== null) {
+    clearTimeout(dictationConnectTimer)
+    dictationConnectTimer = null
+  }
+  if (dictationRetryTimer !== null) {
+    clearTimeout(dictationRetryTimer)
+    dictationRetryTimer = null
+  }
+}
+
+/**
+ * One line of evidence for a recogniser socket that failed.
+ *
+ * The server cannot supply this: a handshake that never arrives leaves no
+ * request in its log at all, so "连接失败" on screen used to be the only trace —
+ * and it took a manual comparison of client and server logs to learn that. The
+ * elapsed time separates "never connected" from "connected and died", and the
+ * visibility is here because a hidden page is exactly when the browser is
+ * allowed to stall a new socket.
+ */
+function describeSocketFailure(sock: WebSocket, detail: string, elapsedMs: number): string {
+  const visibility = typeof document === 'undefined' ? 'n/a' : document.visibilityState
+  return `after ${elapsedMs}ms (${detail}; readyState=${sock.readyState} visibility=${visibility})`
+}
+
 /** Closes the dictation recogniser, leaving the microphone alone. */
 function closeDictationSocket() {
   listenGen += 1
+  clearDictationConnectTimers()
   if (ws) {
     ws.onmessage = null
     ws.onopen = null
@@ -559,16 +649,20 @@ function recoverCapture(reason: string): void {
 
 /** Releases the microphone and its capture graph. */
 function closeCapture() {
+  // Fold the graph's own count in as it goes away: after `stop()` the worklet
+  // produces nothing more, so its contribution has to move into the total.
+  if (streamer) capturedFinished.value += streamer.capturedMs()
   captureGen += 1
   capturePending = null
   frameSink = null
   stopCaptureWatch()
   streamer?.stop()
   streamer = null
-  if (micStream) {
-    micStream.getTracks().forEach((t) => t.stop())
-    micStream = null
-  }
+  // The tracks are stopped BEFORE `micStream` is cleared, because clearing it is
+  // the signal `capturedMs` recomputes on.
+  micStream?.getTracks().forEach((t) => t.stop())
+  micStream = null
+  publishCaptured()
 }
 
 /** Ends the whole capture side: both recognisers and the device. */
@@ -817,9 +911,15 @@ function ensureCapture(): Promise<boolean> {
   const myCaptureGen = ++captureGen
   const toast = useToast()
   const pending = (async () => {
+    // Published the moment the device is granted, not at the end of this
+    // function: `getUserMedia` and the wait for the graph to start can span more
+    // than a tick, and anything reading `micStream` (the usage counter, and the
+    // `stop()` that may land in between) has to see the real device.
     let stream: MediaStream
     try {
-      stream = await acquireMic({ audio: { echoCancellation: tuning.echoCancellation, noiseSuppression: tuning.noiseSuppression, autoGainControl: tuning.autoGainControl } })
+      const acquiring = acquireMic({ audio: { echoCancellation: tuning.echoCancellation, noiseSuppression: tuning.noiseSuppression, autoGainControl: tuning.autoGainControl } })
+      acquiring.then((s) => { if (myCaptureGen === captureGen) micStream = s }, () => { /* reported below */ })
+      stream = await acquiring
     } catch (e) {
       lastError.value = gt(classifyMicError(e) === 'denied' ? 'chat.voice.micDenied' : 'chat.voice.micUnavailable')
       toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
@@ -835,7 +935,6 @@ function ensureCapture(): Promise<boolean> {
       stream.getTracks().forEach((t) => t.stop())
       return false
     }
-    micStream = stream
 
     // A track can end without us stopping it — another app grabs the microphone
     // (a call, a recorder) or a Bluetooth headset disconnects. The sockets stay
@@ -866,9 +965,15 @@ function ensureCapture(): Promise<boolean> {
       onLevel: (rms) => {
         lastFrameAt = Date.now()
         if (rms > 0) heardSomething = true
+        // Every frame is captured audio, so this is where the figure on screen
+        // moves. Refreshing only at the edges (a graph starting or closing) left
+        // it stuck at the zero it was published with — the graph is at 0 ms the
+        // moment it starts, and nothing else ever read it again.
+        publishCaptured()
       },
     })
     streamer = s
+    publishCaptured()
     startCaptureWatch()
     void s.start().catch((err) => {
       appLog.e(TAG, 'pcm capture failed', err)
@@ -898,70 +1003,153 @@ async function openListening(): Promise<void> {
   if (!(await ensureCapture())) return
   // A barge-in or a sent turn may have moved the phase on during the await.
   if (myGen !== gen || myListenGen !== listenGen) return
-  const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
-  ws = sock
-  sock.onmessage = (e) => {
-    if (ws !== sock || myGen !== gen) return
-    try {
-      const msg = JSON.parse(e.data as string) as { type?: string; text?: string; final?: string; message?: string }
-      if (msg.type === 'partial') {
-        // Cumulative transcript so far: replace, never append.
-        applyTranscript(msg.text ?? '')
-        checkTrigger()
-      } else if (msg.type === 'text' && msg.text) {
-        applyTranscript(utterance + msg.text)
-        checkTrigger()
-      } else if (msg.type === 'done') {
-        const final = (msg.final ?? '').trim()
-        const wait = finalizeWait
-        if (wait) {
-          // This is the answer to the `end` we sent: the finished sentence.
-          // Use it (or the text in hand if the engine had nothing to add) and
-          // do NOT run the trigger check again — the answer still ends with the
-          // trigger word and would fire a second send.
-          clearFinalizeWait()
-          commitTurn(final || wait.fallback, wait.trigger)
-          return
+
+  // One recogniser socket family: the live socket plus its handshake
+  // bookkeeping. A retry replaces the socket, so the attempt counter lives
+  // here and every callback re-checks that it still owns `ws`.
+  let attempts = 0
+  let attemptStartedAt = 0
+
+  const stillMine = (sock: WebSocket) => ws === sock && myGen === gen
+
+  /**
+   * Drops a socket whose handshake failed, then either starts the next attempt
+   * or ends the mode with the one error the user can act on.
+   *
+   * Deliberately not `closeDictationSocket()`: that bumps `listenGen`, which
+   * would invalidate this family's own retry. Only the failed socket is
+   * dropped — the microphone and the phase stay as they are.
+   */
+  function handshakeFailed(sock: WebSocket, detail: string): void {
+    if (!stillMine(sock)) return
+    clearDictationConnectTimers()
+    appLog.w(
+      TAG,
+      `dictation handshake failed ${describeSocketFailure(sock, detail, Date.now() - attemptStartedAt)} (attempt ${attempts}/${CONNECT_ATTEMPTS})`,
+    )
+    ws = null
+    frameSink = null
+    sock.onmessage = null
+    sock.onopen = null
+    sock.onerror = null
+    sock.onclose = null
+    try { sock.close() } catch { /* already closed */ }
+    if (attempts >= CONNECT_ATTEMPTS) {
+      lastError.value = gt('chat.voice.connectFailed')
+      toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
+      stop({ notify: false })
+      return
+    }
+    dictationRetryTimer = setTimeout(() => {
+      dictationRetryTimer = null
+      if (myGen !== gen || myListenGen !== listenGen) return
+      connect()
+    }, CONNECT_RETRY_DELAY_MS)
+  }
+
+  function connect(): void {
+    attempts += 1
+    attemptStartedAt = Date.now()
+    const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
+    ws = sock
+    let opened = false
+    // Without this the mode shows "正在听…" for as long as the handshake hangs,
+    // and the browser's own timeout is what eventually reports a failure — tens
+    // of seconds later, with no retry.
+    dictationConnectTimer = setTimeout(() => {
+      dictationConnectTimer = null
+      handshakeFailed(sock, `no open event within ${CONNECT_TIMEOUT_MS}ms`)
+    }, CONNECT_TIMEOUT_MS)
+    sock.onmessage = (e) => {
+      if (!stillMine(sock)) return
+      try {
+        const msg = JSON.parse(e.data as string) as { type?: string; text?: string; final?: string; message?: string }
+        if (msg.type === 'partial') {
+          // Cumulative transcript so far: replace, never append.
+          applyTranscript(msg.text ?? '')
+          checkTrigger()
+        } else if (msg.type === 'text' && msg.text) {
+          applyTranscript(utterance + msg.text)
+          checkTrigger()
+        } else if (msg.type === 'done') {
+          const final = (msg.final ?? '').trim()
+          const wait = finalizeWait
+          if (wait) {
+            // This is the answer to the `end` we sent: the finished sentence.
+            // Use it (or the text in hand if the engine had nothing to add) and
+            // do NOT run the trigger check again — the answer still ends with the
+            // trigger word and would fire a second send.
+            clearFinalizeWait()
+            commitTurn(final || wait.fallback, wait.trigger)
+            return
+          }
+          if (final) applyTranscript(final)
+          checkTrigger({ finalized: true })
+        } else if (msg.type === 'error') {
+          lastError.value = msg.message || gt('chat.voice.transcribeFailed')
+          toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
+          stop({ notify: false })
         }
-        if (final) applyTranscript(final)
-        checkTrigger({ finalized: true })
-      } else if (msg.type === 'error') {
-        lastError.value = msg.message || gt('chat.voice.transcribeFailed')
-        toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
+      } catch { /* ignore malformed */ }
+    }
+    sock.onopen = () => {
+      if (!stillMine(sock)) return
+      opened = true
+      clearDictationConnectTimers()
+      sock.send(JSON.stringify({ type: 'start', sampleRate: 16000, channels: 1, bits: 16, context: '' }))
+      // Audio withheld while nothing was reading it belongs to the previous
+      // phase; flushing it here would hand the assistant's tail to the
+      // recogniser as if the user had said it.
+      streamer?.resetGate()
+      frameSink = (frame) => {
+        if (ws === sock && sock.readyState === WebSocket.OPEN) sock.send(frame)
+      }
+      appLog.i(TAG, 'dictation recogniser open (listening)')
+    }
+    sock.onerror = () => {
+      if (!stillMine(sock)) return
+      // Before the socket opened this is a failed handshake, which a retry can
+      // still turn into a working session. After it opened, the audio already
+      // streamed belongs to this engine session and cannot be replayed into a
+      // new one, so that case still ends the mode.
+      if (!opened) {
+        handshakeFailed(sock, 'error before open')
+        return
+      }
+      appLog.w(TAG, `dictation socket failed while listening ${describeSocketFailure(sock, 'error', Date.now() - attemptStartedAt)}`)
+      lastError.value = gt('chat.voice.connectFailed')
+      toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
+      stop({ notify: false })
+    }
+    sock.onclose = (ev) => {
+      if (!stillMine(sock)) return
+      const code = (ev as CloseEvent | undefined)?.code ?? 0
+      const clean = (ev as CloseEvent | undefined)?.wasClean === true
+      if (!opened) {
+        handshakeFailed(sock, `closed before open (code=${code} clean=${clean})`)
+        return
+      }
+      // The engine closes the connection right after answering our `end`, and
+      // that answer is the user's turn: leaving the mode here would drop it.
+      if (finalizeWait) return
+      if (phase.value === 'listening') {
+        appLog.i(TAG, `dictation socket closed while listening (code=${code} clean=${clean})`)
         stop({ notify: false })
       }
-    } catch { /* ignore malformed */ }
-  }
-  sock.onopen = () => {
-    if (ws !== sock || myGen !== gen) return
-    sock.send(JSON.stringify({ type: 'start', sampleRate: 16000, channels: 1, bits: 16, context: '' }))
-    // Audio withheld while nothing was reading it belongs to the previous
-    // phase; flushing it here would hand the assistant's tail to the
-    // recogniser as if the user had said it.
-    streamer?.resetGate()
-    frameSink = (frame) => {
-      if (ws === sock && sock.readyState === WebSocket.OPEN) sock.send(frame)
     }
+    appLog.i(
+      TAG,
+      attempts === 1
+        ? 'dictation recogniser connecting (listening)'
+        : `dictation recogniser retrying (attempt ${attempts}/${CONNECT_ATTEMPTS})`,
+    )
   }
-  sock.onerror = () => {
-    if (ws !== sock || myGen !== gen) return
-    lastError.value = gt('chat.voice.connectFailed')
-    toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
-    stop({ notify: false })
-  }
-  sock.onclose = () => {
-    if (ws !== sock || myGen !== gen) return
-    // The engine closes the connection right after answering our `end`, and
-    // that answer is the user's turn: leaving the mode here would drop it.
-    if (finalizeWait) return
-    if (phase.value === 'listening') stop({ notify: false })
-  }
+
+  connect()
   phase.value = 'listening'
-  // The phase is the ONLY thing the UI shows ("正在听…"), and it is set by the
-  // socket opening rather than by anything the microphone produced. Without a
-  // line here, "it looked like it was listening but heard nothing" cannot be
-  // reconstructed from the log at all.
-  appLog.i(TAG, 'dictation recogniser open (listening)')
+  // The phase is the ONLY thing the UI shows ("正在听…"). A line at connect time
+  // makes "it looked like it was listening but heard nothing" reconstructable
+  // from the log even when the handshake never completes.
   // No pause timer here: the pause is measured from the first recognised word
   // (see restartSilenceTimer), and the utterance is empty until one arrives.
   // The idle-exit timer does start now — "nothing was ever heard" is exactly
@@ -1052,6 +1240,7 @@ async function openBargeListener(): Promise<void> {
   if (!(await ensureCapture())) return
   if (myGen !== gen || myBargeGen !== bargeGen) return
   if (phase.value !== 'speaking' && phase.value !== 'thinking') return
+  const startedAt = Date.now()
   const sock = new WebSocket(wsUrl('/api/stt/transcribe/ws'))
   // Tracked at module scope: a local would leave the socket (and the engine
   // session behind it) open forever once playback ends.
@@ -1099,6 +1288,13 @@ async function openBargeListener(): Promise<void> {
     } catch { /* ignore malformed */ }
   }
   sock.onclose = () => { /* the playback watcher owns the lifecycle */ }
+  sock.onerror = () => {
+    // Nothing to recover here — a listener that never connected only means the
+    // user cannot cut in — but a handshake that fails silently is exactly what
+    // made the dictation socket's failures undiagnosable.
+    if (myGen !== gen || bargeWs !== sock) return
+    appLog.w(TAG, `interrupt handshake failed ${describeSocketFailure(sock, 'error', Date.now() - startedAt)}`)
+  }
   appLog.i(TAG, `interrupt recogniser open (${phase.value})`)
 }
 
@@ -1134,6 +1330,11 @@ export async function startFreeDialog(opts: {
   onInterrupt = opts.onInterrupt ?? null
   onSpeakPendingReply = opts.onSpeakPendingReply ?? null
   lastError.value = ''
+  // The usage figure belongs to one conversation, so it is cleared on entry to
+  // the next one — NOT in `stop()`: the closing toast is shown from there and
+  // reading zero on the way out is what tells the user nothing was captured.
+  capturedFinished.value = 0
+  publishCaptured()
   tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
   canInterrupt.value = tuning.bargeIn !== 'off'
   // The loop is built around the reply being read out: it waits for playback
@@ -1347,6 +1548,8 @@ export function useFreeDialog() {
     liveTranscript,
     lastError,
     canInterrupt,
+    /** Audio captured (and sent to the recogniser) in this conversation, ms. */
+    capturedMs,
     start: startFreeDialog,
     stop,
     setThinking: setFreeDialogThinking,

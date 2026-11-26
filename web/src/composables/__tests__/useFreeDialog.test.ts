@@ -25,6 +25,8 @@ interface FakeSocket {
 }
 
 let sockets: FakeSocket[] = []
+/** Set false to simulate a handshake that never completes (the reported bug). */
+let autoOpen = true
 /** One shared toast spy: the real toast is a single slot, so two calls in the
  *  same tick overwrite each other — the count is what proves they do not. */
 let toastShow: ReturnType<typeof vi.fn>
@@ -40,6 +42,7 @@ let cueUnlocked: ReturnType<typeof vi.fn>
 
 function installFakes() {
   sockets = []
+  autoOpen = true
   class FakeWebSocket {
     static OPEN = 1
     static CONNECTING = 0
@@ -54,8 +57,10 @@ function installFakes() {
     constructor(url: string) {
       this.url = url
       sockets.push(this as unknown as FakeSocket)
-      // Deliver `open` asynchronously, like the real thing.
-      queueMicrotask(() => this.onopen?.())
+      // Deliver `open` asynchronously, like the real thing. `autoOpen` lets a
+      // test hold it back: a handshake that never completes is the failure the
+      // watchdog and the retry exist for.
+      if (autoOpen) queueMicrotask(() => this.onopen?.())
     }
     send(data: unknown) { this.sent.push(data) }
     close() {
@@ -82,9 +87,12 @@ function installFakes() {
     PCM_SAMPLE_RATE: 16000,
     PcmStreamer: class {
       stopped = false
+      /** Audio this graph produced; the loop reports it as the session's usage. */
+      captured = 0
       constructor(private readonly opts: { onFrame: (f: ArrayBuffer) => void; onLevel?: (rms: number) => void }) {}
       start() { (globalThis as Record<string, unknown>).__streamer = this; return Promise.resolve() }
       stop() { this.stopped = true }
+      capturedMs() { return Math.round(this.captured) }
       resetGate() { /* the real gate state is not under test here */ }
       emit(rms: number) { this.opts.onLevel?.(rms) }
       frame() { this.opts.onFrame(new ArrayBuffer(4)) }
@@ -177,6 +185,22 @@ async function flush() {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
+}
+
+/**
+ * Advances fake time while keeping the capture watchdog fed.
+ *
+ * The loop tears down a capture that hands over no frame for 3 s (a stalled
+ * graph), so a test that simply jumps forward would trigger a re-acquisition
+ * in the middle of what it is asserting. A level every 250 ms is what a healthy
+ * microphone looks like to that watchdog.
+ */
+function advance(ms: number) {
+  for (let t = 0; t < ms; t += 250) {
+    vi.advanceTimersByTime(250)
+    const streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
+    streamer?.emit(0.02)
+  }
 }
 
 describe('useFreeDialog', () => {
@@ -797,6 +821,65 @@ describe('useFreeDialog', () => {
     expect(useFreeDialog().phase.value).toBe('listening')
     vi.advanceTimersByTime(1000)
     expect(onSend).toHaveBeenCalledWith('这个文件改坏了')
+  })
+
+  it('retries a handshake that never opens instead of dropping the conversation', async () => {
+    // The reported failure: a new recogniser socket sat in CONNECTING for tens
+    // of seconds — the server never logged the request at all — and the mode
+    // then ended with "语音识别连接失败". One failed handshake used to kill the
+    // whole conversation; a retry turns the transient cases into a session.
+    autoOpen = false
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+    expect(sockets).toHaveLength(1)
+    expect(useFreeDialog().phase.value).toBe('listening')
+
+    // The watchdog abandons the silent handshake and schedules a retry.
+    advance(4000)
+    expect(toastShow).not.toHaveBeenCalled()
+    expect(sockets).toHaveLength(1)
+    advance(400)
+    expect(sockets).toHaveLength(2)
+    expect(sockets[0].readyState).toBe(3)
+
+    // The second attempt connects: dictation resumes on it.
+    sockets[1].onopen?.()
+    expect(useFreeDialog().phase.value).toBe('listening')
+    const streamer = (globalThis as Record<string, { frame: () => void }>).__streamer
+    streamer.frame()
+    // The start control frame plus the audio frame the new sink forwarded.
+    expect(sockets[1].sent).toHaveLength(2)
+  })
+
+  it('gives up after three failed handshakes and logs why', async () => {
+    autoOpen = false
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { startFreeDialog, useFreeDialog } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    toastShow.mockClear()
+
+    for (let i = 0; i < 2; i++) {
+      advance(4000)
+      advance(400)
+    }
+    expect(sockets).toHaveLength(3)
+    // Nothing is said until every attempt has failed: a retry that still might
+    // work must not look like a failure to the user.
+    expect(toastShow).not.toHaveBeenCalled()
+    advance(4000)
+
+    expect(useFreeDialog().phase.value).toBe('idle')
+    expect(toastShow).toHaveBeenCalledTimes(1)
+    expect(String(toastShow.mock.calls[0][0])).toMatch(/连接失败|connect/i)
+    // The reason has to survive in the log: the server has no record of a
+    // handshake that never arrived, so "连接失败" alone is undiagnosable.
+    const lines = warn.mock.calls.map((c) => String(c[1] ?? ''))
+    expect(lines.filter((l) => l.includes('handshake failed'))).toHaveLength(3)
+    expect(lines.some((l) => l.includes('attempt 3/3'))).toBe(true)
+    warn.mockRestore()
   })
 
   it('does not send a sentence the user abandoned by closing the mode', async () => {
@@ -1467,9 +1550,13 @@ describe('useFreeDialog', () => {
     toastShow.mockClear()
 
     // Three spans in a row where the graph delivers nothing at all: the third
-    // one exhausts the budget.
+    // one exhausts the budget. Split at the watchdog's own deadline so the
+    // recogniser socket a re-acquisition opens is allowed to finish its
+    // handshake before the 4 s connect watchdog is reached.
     for (let round = 0; round < 3; round++) {
-      vi.advanceTimersByTime(4000)
+      vi.advanceTimersByTime(3000)
+      await flush()
+      vi.advanceTimersByTime(1000)
       await flush()
       streamer = (globalThis as Record<string, { emit: (n: number) => void }>).__streamer
     }
@@ -1477,5 +1564,55 @@ describe('useFreeDialog', () => {
     expect(useFreeDialog().phase.value).toBe('idle')
     expect(toastShow).toHaveBeenCalled()
     expect(String(toastShow.mock.calls.at(-1)![0])).toMatch(/麦克风|microphone/i)
+  })
+
+  it('reports the audio this conversation actually captured', async () => {
+    // The user is told what the recogniser was handed, so the number must be the
+    // capture graph's own count — not the wall clock, which would also count the
+    // time spent waiting for a reply and the time a suspended context produced
+    // nothing at all.
+    const { startFreeDialog, useFreeDialog, stop } = await import('../useFreeDialog')
+    expect(useFreeDialog().capturedMs.value).toBe(0)
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const streamer = (globalThis as Record<string, { captured: number; emit: (n: number) => void }>).__streamer
+    streamer.captured = 4200
+    // A frame arriving is what refreshes the figure — the user watches it climb
+    // WHILE speaking, not only after the capture is torn down. (Publishing only
+    // at the graph's edges left the label stuck at the 0 ms it was started with.)
+    streamer.emit(0.02)
+    expect(useFreeDialog().capturedMs.value).toBe(4200)
+    // A turn cycle does not reset it: the count belongs to the conversation.
+    speak('做点事 发送')
+    await flush()
+    stop()
+    expect(useFreeDialog().capturedMs.value).toBe(4200)
+    // The next conversation starts from zero.
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(useFreeDialog().capturedMs.value).toBe(0)
+  })
+
+  it('keeps the count across a re-acquired capture instead of restarting it', async () => {
+    // A capture that stalls is torn down and reopened mid-conversation. The
+    // graph is new, so its own count starts at zero — the session total must
+    // not, or the user would watch the number jump backwards.
+    const { startFreeDialog, useFreeDialog, stop } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const first = (globalThis as Record<string, { captured: number; emit: (n: number) => void }>).__streamer
+    first.emit(0.02)
+    first.captured = 7000
+    // Nothing for 3 s: the watchdog re-acquires the microphone.
+    vi.advanceTimersByTime(3000)
+    await flush()
+    const second = (globalThis as Record<string, { captured: number; emit: (n: number) => void }>).__streamer
+    expect(second).not.toBe(first)
+    second.captured = 1000
+    second.emit(0.02)
+    // Read where it is read in practice — the mode ending — because the figure
+    // is published at the capture's edges, not per frame.
+    stop()
+    expect(useFreeDialog().capturedMs.value).toBe(8000)
   })
 })

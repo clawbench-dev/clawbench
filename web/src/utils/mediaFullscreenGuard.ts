@@ -105,10 +105,20 @@ export function installMediaFullscreenGuard(): () => void {
     if (installed || typeof document === 'undefined') return () => {}
     installed = true
 
+    // `error` also fires for script/chunk load failures, and exiting fullscreen
+    // is a DOM write. A throw here would surface as an *uncaught* exception
+    // attributed to this bundle — indistinguishable, from a log, from a Vue
+    // render crash — while the UI stays unclickable (any throw in a queued
+    // patcher or scope-close aborts the rest of that queue). Media errors never
+    // throw today; keep the guard unable to cause that symptom.
     handler = (e: Event) => {
-        const target = e.target as Element | null
-        if (!target || !isMediaElement(target)) return
-        exitFullscreenIfContains(target)
+        try {
+            const target = e.target as Element | null
+            if (!target || !target.tagName || !isMediaElement(target)) return
+            exitFullscreenIfContains(target)
+        } catch (err) {
+            appLog.w(TAG, `fullscreen guard threw: ${err instanceof Error ? err.message : String(err)}`)
+        }
     }
 
     document.addEventListener('error', handler, true)

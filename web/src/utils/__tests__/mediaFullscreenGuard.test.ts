@@ -195,6 +195,31 @@ describe('installMediaFullscreenGuard', () => {
     video.remove()
   })
 
+  it('never lets a throw escape the listener (an uncaught error would abort the render queue)', () => {
+    const video = document.createElement('video')
+    document.body.appendChild(video)
+    // Synchronous document listener: a throw escapes dispatchEvent and becomes
+    // a window error — i.e. an "uncaught" crash, which aborts whatever queue
+    // was running. Reported through the window event, not through a throw.
+    const leaked = vi.fn()
+    window.addEventListener('error', leaked)
+    installMediaFullscreenGuard()
+    // A video whose DOM is half-torn-down: `contains` is gone.
+    vi.spyOn(video, 'contains').mockImplementation(() => {
+      throw new Error('detached')
+    })
+    setFullscreenElement(document.body)
+    dispatchMediaError(video)
+    window.removeEventListener('error', leaked)
+    expect(leaked).not.toHaveBeenCalled()
+    video.remove()
+  })
+
+  it('ignores an error whose target is not an element', () => {
+    installMediaFullscreenGuard()
+    expect(() => window.dispatchEvent(new Event('error'))).not.toThrow()
+  })
+
   it('stops responding after teardown', () => {
     const video = document.createElement('video')
     document.body.appendChild(video)

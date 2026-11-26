@@ -81,6 +81,16 @@ type SessionRemovedData struct {
 	// Receivers use it to distinguish "my open session is gone" from "some other
 	// project lost a row", since the event is broadcast to every client.
 	ProjectPath string `json:"project_path,omitempty"`
+	// ReplacementSessionID is the session created BECAUSE this removal left the
+	// project empty ("" when the project still has sessions).
+	//
+	// It exists so that no receiver has to invent a replacement. A project
+	// always keeps at least one session, and this is the one the server made:
+	// "leave the removed session" becomes "switch to ReplacementSessionID", one
+	// decision taken once on the server instead of once per client. Receivers
+	// that get "" and still find nothing left may create a session themselves,
+	// but that only happens if this backfill failed.
+	ReplacementSessionID string `json:"replacement_session_id,omitempty"`
 }
 
 // TaskUpdateData is the data payload for "task_update" events.

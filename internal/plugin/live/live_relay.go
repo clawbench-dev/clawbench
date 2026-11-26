@@ -15,6 +15,13 @@ package live
 //
 //	canPublish = room talk switch && not individually muted
 //
+// `canPublishData` is NOT part of that formula: the data channel is the control
+// bus (chat, annotation, remote control, and the chat-history request a late
+// joiner sends), so it stays granted through every speech change. Tying it to
+// canPublish — LiveKit's default when the field is absent — silently cut every
+// viewer off from chat the moment the host muted someone, and left a member who
+// joined later with an empty chat panel.
+//
 // The viewer's own microphone toggle (talk-start / talk-end), the host's
 // talk-revoke and mute-all all sit INSIDE that permission and change nothing
 // about it: they tell the browser to stop its track, exactly as in p2p mode.

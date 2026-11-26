@@ -36,11 +36,57 @@ describe('meeting key-frame wiring', () => {
     expect(body).toContain("captureNow('manual')")
   })
 
-  it('clears the composited ink when the annotation window goes away', () => {
-    // A leftover stroke would be drawn onto the next frame, in a place the
-    // presenter already erased.
-    expect(stage).toContain('share.clearInkMirror()')
+  it('ends the annotation on every close path, so the audience is wiped too', () => {
+    // Dropping the mirror only cleaned the host's own screenshot copy: the
+    // strokes stayed on every viewer's screen, where the host no longer has a
+    // surface (and therefore no 清空 button) to remove them.
     const close = functionBody('closeAnnotate')
-    expect(close).toContain('share.clearInkMirror()')
+    expect(close).toContain('share.endAnnotation()')
+
+    // The native overlay can be dismissed from inside itself (its close button,
+    // Esc), so its IPC callback is a close path of its own.
+    const closedHandler = stage.slice(stage.indexOf('onAnnotateClosed'))
+    expect(closedHandler.slice(0, closedHandler.indexOf('})'))).toContain('share.endAnnotation()')
+  })
+
+  it('offers 留存画面 and 录制 on the drawing surface as well as in the footer', () => {
+    // A full-screen share puts the surface OVER the footer: while the
+    // annotations are on screen those two buttons cannot be clicked at all, and
+    // closing the surface erases the ink — so a frame captured from the footer
+    // could never carry an annotation.
+    const teleport = stage.slice(stage.indexOf('annotateWindowTarget && share.previewStream.value'))
+    const block = teleport.slice(0, teleport.indexOf('</LiveAnnotateOverlay>'))
+    expect(block).toContain('@shot="captureShot"')
+    expect(block).toContain('@toggle-record="toggleRecording"')
+
+    // The desktop overlay is a separate document, so its buttons arrive as IPC
+    // and its own record button has to be told whether a recording is running.
+    expect(stage).toContain('onAnnotateShot')
+    expect(stage).toContain('onAnnotateRecord')
+    expect(stage).toContain('setAnnotateToolbarState')
+  })
+})
+
+/**
+ * Which endpoint the picture comes from.
+ *
+ * The owner's two surfaces must use the authenticated path: the public one
+ * follows the record's publication switch, and while the room was open that
+ * switch never mattered — after it closed, every frame in the record answered
+ * 404 and the transcript rendered with broken images. A member's share page
+ * must stay on the public path (it has no session to authenticate with).
+ */
+describe('meeting shot image scope', () => {
+  it('points the owner surfaces at the authenticated endpoint', () => {
+    for (const file of ['src/components/live/MeetingDetail.vue', 'src/components/live/MeetingStage.vue']) {
+      const source = readWebFile(file)
+      expect(source, file).toContain("'owner'")
+    }
+  })
+
+  it('keeps the public share page on the token endpoint', () => {
+    const share = readWebFile('src/share/MeetingShareDetail.vue')
+    expect(share).toContain('shotThumbUrl(token, s.id)')
+    expect(share).not.toContain("'owner'")
   })
 })

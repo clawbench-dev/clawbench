@@ -918,3 +918,144 @@ describe('useLiveNotes — live status', () => {
     expect(notes.health.value).toBe('ok')
   })
 })
+
+/**
+ * The transcript socket itself.
+ *
+ * Not the recorder: this is the connection that carries every word of a
+ * meeting, and its failure modes used to be invisible — a handshake that never
+ * completed left the panel saying "ok" while the transcript was frozen, and
+ * nothing was logged anywhere.
+ */
+describe('useLiveNotes — transcript socket', () => {
+  interface FakeSocket {
+    url: string
+    readyState: number
+    sent: unknown[]
+    onopen: (() => void) | null
+    onmessage: ((e: { data: string }) => void) | null
+    onerror: (() => void) | null
+    onclose: ((ev?: { code: number; wasClean: boolean }) => void) | null
+    close(): void
+  }
+
+  let sockets: FakeSocket[] = []
+  /** Set false to simulate a handshake that never completes. */
+  let autoOpen = true
+
+  function startRecording() {
+    const notes = useLiveNotes()
+    notes.start({ token: 'tok', ctx, micStream: {} as MediaStream })
+    return notes
+  }
+
+  /** Opens the transcript stream of the newest fake capture, as the real one would. */
+  function openStream(channel = 'mic', speaker = 'me') {
+    const open = lastCapture().opts.openStream as
+      | ((ch: string, sp: string) => { close: () => void })
+      | undefined
+    if (!open) throw new Error('capture was created without openStream')
+    return open(channel, speaker)
+  }
+
+  beforeEach(() => {
+    sockets = []
+    autoOpen = true
+    class FakeWebSocket {
+      static OPEN = 1
+      static CONNECTING = 0
+      url: string
+      readyState = 0
+      sent: unknown[] = []
+      onopen: (() => void) | null = null
+      onmessage: ((e: { data: string }) => void) | null = null
+      onerror: (() => void) | null = null
+      onclose: ((ev?: { code: number; wasClean: boolean }) => void) | null = null
+      constructor(url: string) {
+        this.url = url
+        sockets.push(this as unknown as FakeSocket)
+        if (autoOpen) queueMicrotask(() => {
+          this.readyState = 1
+          this.onopen?.()
+        })
+      }
+      send(data: unknown) { this.sent.push(data) }
+      close() {
+        this.readyState = 3
+        queueMicrotask(() => this.onclose?.({ code: 1000, wasClean: true }))
+      }
+    }
+    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket)
+    ;(globalThis.WebSocket as unknown as { OPEN: number }).OPEN = 1
+    vi.useFakeTimers()
+  })
+
+  it('abandons a handshake that never opens, redials, and reports the channel as down', () => {
+    autoOpen = false
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const notes = startRecording()
+    openStream()
+    expect(sockets).toHaveLength(1)
+    // A handshake in progress is not a failure yet.
+    expect(notes.health.value).toBe('ok')
+
+    // The watchdog drops the silent socket instead of waiting for the browser's
+    // own (tens of seconds) timeout, during which every frame is discarded.
+    vi.advanceTimersByTime(4000)
+    expect(sockets[0].readyState).toBe(3)
+    expect(notes.health.value).toBe('reconnecting')
+    const logged = warn.mock.calls.flat().map(String).join(' ')
+    expect(logged).toContain('transcript handshake failed')
+    expect(logged).toContain('channel mic')
+
+    // The redial happens on the normal reconnect delay, and the panel recovers.
+    vi.advanceTimersByTime(2000)
+    expect(sockets).toHaveLength(2)
+    sockets[1].onopen?.()
+    expect(notes.health.value).toBe('ok')
+    warn.mockRestore()
+  })
+
+  it('reports reconnecting when an open socket drops, and recovers on redial', () => {
+    autoOpen = false
+    startRecording()
+    openStream('viewer:v1', 'Alice')
+    sockets[0].onopen?.()
+    expect(useLiveNotes().health.value).toBe('ok')
+
+    sockets[0].onclose?.({ code: 1006, wasClean: false })
+    expect(useLiveNotes().health.value).toBe('reconnecting')
+
+    vi.advanceTimersByTime(2000)
+    expect(sockets).toHaveLength(2)
+    sockets[1].onopen?.()
+    expect(useLiveNotes().health.value).toBe('ok')
+  })
+
+  it('logs the stream error message instead of "undefined"', () => {
+    // The endpoint reports failures in `message` while the text messages use
+    // `text`; reading only `text` made every engine error invisible.
+    autoOpen = false
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    startRecording()
+    openStream()
+    sockets[0].onopen?.()
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'error', message: 'audio exceeds limit' }) })
+
+    const logged = warn.mock.calls.flat().map(String).join(' ')
+    expect(logged).toContain('audio exceeds limit')
+    warn.mockRestore()
+  })
+
+  it('stops counting a channel as down once its socket is closed for good', () => {
+    autoOpen = false
+    startRecording()
+    const handle = openStream()
+    sockets[0].onopen?.()
+    sockets[0].onclose?.({ code: 1006, wasClean: false })
+    expect(useLiveNotes().health.value).toBe('reconnecting')
+
+    handle.close()
+    expect(useLiveNotes().health.value).toBe('ok')
+  })
+})

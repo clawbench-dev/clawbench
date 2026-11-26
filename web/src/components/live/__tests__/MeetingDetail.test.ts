@@ -848,12 +848,15 @@ describe('MeetingDetail key frames', () => {
     expect(labels[1]).toContain('arch.md')
 
     const src = rows[0].find('img').attributes('src') ?? ''
-    // Token-scoped: the frame is addressed by id, so no project path reaches
-    // the browser and the same URL works for the member's record.
-    expect(src).toContain('/api/share/tok-1/notes/shot?id=8')
+    // The owner's record uses the AUTHENTICATED frame endpoint, not the public
+    // one: the public one follows the record's publication switch, so after a
+    // meeting ended an unshared record 404'd every picture (the live room used
+    // to be what let the owner through). The frame is still addressed by id —
+    // no project path reaches the browser.
+    expect(src).toContain('/api/live-share/notes/shot/image?token=tok-1&id=8')
     // The row paints a thumbnail; the viewer opens the wide render.
     expect(rows[0].find('img').attributes('data-full-src')).toContain(
-      '/api/share/tok-1/notes/shot?id=8&w=1600',
+      '/api/live-share/notes/shot/image?token=tok-1&id=8&w=1600',
     )
 
     await w.findAll('[data-role="shot-delete"]')[0].trigger('click')

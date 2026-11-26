@@ -751,6 +751,7 @@ let _switchSession: ((sessionId: string, projectPath?: string) => Promise<void>)
 let _createSession: ((agentId?: string) => Promise<void>) | null = null
 let _archiveSession: ((sessionId: string, backend?: string) => Promise<void>) | null = null
 let _destroySession: ((sessionId: string) => Promise<void>) | null = null
+let _leaveGoneSession: ((goneId: string, replacementId?: string) => Promise<void>) | null = null
 let _sendMessage: ((text: string) => Promise<void>) | null = null
 /**
  * Enqueue a message into an ARBITRARY session, without switching to it.
@@ -797,6 +798,10 @@ export interface SessionActions {
   createSession: (agentId?: string) => Promise<void>
   archiveSession: (sessionId: string, backend?: string) => Promise<void>
   destroySession: (sessionId: string) => Promise<void>
+  /** Switch away from a session that no longer exists (see useChatSession's
+   *  leaveGoneSession). Exposed so App.vue's session_removed handler runs the
+   *  exact same code as a local removal instead of a second copy of the rule. */
+  leaveGoneSession: (goneId: string, replacementId?: string) => Promise<void>
   sendMessage: (text: string) => Promise<void>
   /**
    * Send a message to a specific session without switching to it. Registered by
@@ -824,6 +829,7 @@ export function registerSessionActions(actions: SessionActions) {
   _createSession = actions.createSession
   _archiveSession = actions.archiveSession
   _destroySession = actions.destroySession
+  _leaveGoneSession = actions.leaveGoneSession
   _sendMessage = actions.sendMessage
   if (actions.enqueueToSession) _enqueueToSession = actions.enqueueToSession
   _openChatPanel = actions.openChatPanel
@@ -1169,6 +1175,17 @@ export function useSessionIdentity() {
   }
 
   /**
+   * Leave a session that no longer exists. Delegates to ChatPanel's
+   * leaveGoneSession — the same routine a local archive/destroy ends in, so
+   * "I removed it" and "another device removed it" land on the same screen.
+   */
+  async function leaveGoneSession(goneId: string, replacementId?: string) {
+    if (_leaveGoneSession) {
+      await _leaveGoneSession(goneId, replacementId)
+    }
+  }
+
+  /**
    * Send a message to the current session. Delegates to ChatPanel
    * if available, otherwise makes a direct API call.
    */
@@ -1328,6 +1345,7 @@ export function useSessionIdentity() {
     createSessionInBackground,
     archiveSession,
     destroySession,
+    leaveGoneSession,
     sendMessage,
     enqueueToSession,
     openChatPanel,

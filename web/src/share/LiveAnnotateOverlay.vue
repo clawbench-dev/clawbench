@@ -58,6 +58,37 @@
         <Trash2 :size="16" />
       </button>
 
+      <span class="anno__sep" />
+
+      <!-- 留存画面 / 录制 live here as well as in the meeting footer because the
+           footer is UNDER this surface: while the annotations are on screen
+           those buttons cannot be reached, and closing the surface erases the
+           ink — so a frame captured from the footer could never carry an
+           annotation. Same two actions, where the host's hands already are. -->
+      <button
+        v-if="canShot"
+        class="anno__btn"
+        type="button"
+        :title="t('liveShare.annoShot')"
+        data-action="anno-shot"
+        @click="$emit('shot')"
+      >
+        <Camera :size="16" />
+      </button>
+      <button
+        v-if="canRecord"
+        class="anno__btn"
+        :class="{ 'anno__btn--rec': recording }"
+        type="button"
+        :title="recording ? t('liveShare.annoRecordStop') : t('liveShare.annoRecord')"
+        :aria-pressed="recording"
+        data-action="anno-record"
+        @click="$emit('toggleRecord')"
+      >
+        <Square v-if="recording" :size="13" fill="currentColor" />
+        <Circle v-else :size="13" fill="currentColor" />
+      </button>
+
       <span class="anno__spacer" />
 
       <button class="anno__btn anno__btn--close" type="button" :title="t('common.close')" data-action="anno-close" @click="$emit('close')">
@@ -79,13 +110,21 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MousePointer2, Pencil, Trash2, Undo2, X } from 'lucide-vue-next'
+import { Camera, Circle, MousePointer2, Pencil, Square, Trash2, Undo2, X } from 'lucide-vue-next'
 import LiveInkLayer from '@/share/LiveInkLayer.vue'
 import { useInkBoard } from '@/share/useInkBoard'
 import { contentRectOf, toNormalized, type ContentRect, type ControlMessage } from '@/share/liveControl'
 
-const props = defineProps<{ stream: MediaStream | null }>()
-const emit = defineEmits<{ close: []; send: [msg: ControlMessage] }>()
+const props = defineProps<{
+  stream: MediaStream | null
+  /** A recording is running: the record button becomes a stop button. */
+  recording?: boolean
+  /** Key frames can be kept right now (off while capture is paused). */
+  canShot?: boolean
+  /** A recording can be started right now. */
+  canRecord?: boolean
+}>()
+const emit = defineEmits<{ close: []; send: [msg: ControlMessage]; shot: []; toggleRecord: [] }>()
 
 const { t } = useI18n()
 const COLORS = ['#ff3b30', '#ffcc00', '#34c759', '#4a90d9']
@@ -295,6 +334,12 @@ onBeforeUnmount(() => {
 }
 
 .anno__btn--close {
+  color: var(--color-red, #cf222e);
+}
+
+/* Recording: red on the icon, not a filled button — the surface is the picture
+   the audience is watching, and a solid block there is hard to ignore. */
+.anno__btn--rec {
   color: var(--color-red, #cf222e);
 }
 

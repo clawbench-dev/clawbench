@@ -398,10 +398,18 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* Full height of the share root, like every other share view (`.share-view`
+   does the same in share-chrome.css). NOT `flex: 1`: ShareRoot's `.share-root`
+   is a plain block, so a flex basis never applies and this column sized itself
+   from its content — 2425px tall inside an 800px window. With `html,body
+   { overflow: hidden }` (share.html) the overflow was clipped at the viewport
+   edge and `.share-meeting__body`'s own `overflow-y: auto` had no bounded
+   height to scroll in, so a long transcript / minutes / chat showed only its
+   first screenful and could not be scrolled at all. */
 .share-meeting {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  height: 100%;
   min-height: 0;
   overflow: hidden;
   background: var(--bg-primary);

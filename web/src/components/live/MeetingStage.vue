@@ -358,8 +358,13 @@
       <Teleport v-if="annotateWindowTarget && share.previewStream.value" :to="annotateWindowTarget">
         <LiveAnnotateOverlay
           :stream="share.previewStream.value"
+          :recording="recorder.active.value"
+          :can-shot="canShotNow"
+          :can-record="canRecord"
           @close="closeAnnotate"
           @send="share.sendControl"
+          @shot="captureShot"
+          @toggle-record="toggleRecording"
         />
       </Teleport>
 
@@ -698,6 +703,8 @@ const shotSourceReady = computed(() => hasScreen.value || Boolean(share.screenSh
  * is what gets recorded. A camera-only meeting has nothing to record here.
  */
 const canRecord = shotSourceReady
+/** 留存画面 would do something right now (capture running and a picture to grab). */
+const canShotNow = computed(() => shotsOn.value && shotSourceReady.value)
 /** The switch is on and the file is being written. */
 const recording = computed(() => recorder.active.value)
 /** `mm:ss` (or `h:mm:ss` past an hour) next to the stop label. */
@@ -857,6 +864,9 @@ const controlSupported = ref(false)
 let controlUnsupportedWarned = false
 let unsubscribeControl: (() => void) | null = null
 let unsubscribeInk: (() => void) | undefined
+/** 留存画面 / 录制 pressed on the desktop overlay's own toolbar. */
+let unsubscribeAnnoShot: (() => void) | undefined
+let unsubscribeAnnoRecord: (() => void) | undefined
 let unsubscribeClosed: (() => void) | undefined
 
 function toggleChat(): void {
@@ -1170,8 +1180,8 @@ const noteBlocks = computed(() => {
       at: s.at,
       reason: s.reason,
       ref: s.ref,
-      thumbUrl: shotThumbUrl(token, s.id),
-      fullUrl: shotFullUrl(token, s.id),
+      thumbUrl: shotThumbUrl(token, s.id, 480, 'owner'),
+      fullUrl: shotFullUrl(token, s.id, 'owner'),
     })),
   )
   // What the microphone is hearing right now, per channel. It sits at the end
@@ -1336,6 +1346,22 @@ watch(recorder.error, (err) => {
   toast.show(t(RECORDING_ERROR_KEYS[err]), { type: 'error', icon: 'warning' })
 })
 
+/**
+ * Keep the desktop overlay's toolbar in step with this panel.
+ *
+ * That window renders its own toolbar and has no access to the recorder or the
+ * key-frame switch, so it has to be told what to show: whether a recording is
+ * running (the button then reads 停止) and whether each action would do
+ * anything. Pushed on every change and once when the window opens — a button
+ * that says 录制 while a recording is already running is worse than no button.
+ */
+watch(
+  () => [recorder.active.value, canShotNow.value, canRecord.value] as const,
+  ([on, shot, record]) => {
+    void getNative()?.setAnnotateToolbarState?.({ recording: on, canShot: shot, canRecord: record })
+  },
+)
+
 // ── Lifecycle ───────────────────────────────────────────────────────────────
 onMounted(() => {
   // The desktop shell can always give the picture a real window (a popup is an
@@ -1353,9 +1379,18 @@ onMounted(() => {
   })
   unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
     nativeAnnotating.value = false
-    // The strokes are gone with the window; a mirror left behind would be
-    // composited into the next key frame.
-    share.clearInkMirror()
+    // The strokes are gone with the window — and so are they from the
+    // audience's point of view: `endAnnotation` wipes their board (an `ink`
+    // frame would otherwise leave it there for good) and drops the mirror, so
+    // the next key frame is composited without the old ink.
+    share.endAnnotation()
+  })
+  // The footer's two whole-meeting actions, on the surface itself. The footer
+  // sits UNDER a full-screen share, so while the annotations are on screen it
+  // cannot be clicked at all — and closing the surface erases the ink.
+  unsubscribeAnnoShot = getNative()?.onAnnotateShot?.(() => captureShot())
+  unsubscribeAnnoRecord = getNative()?.onAnnotateRecord?.(() => {
+    void toggleRecording()
   })
   void resolveRemoteControlSupport(getNative()).then((ok) => {
     controlSupported.value = ok
@@ -1392,6 +1427,10 @@ onBeforeUnmount(() => {
   unsubscribeControl = null
   unsubscribeInk?.()
   unsubscribeInk = undefined
+  unsubscribeAnnoShot?.()
+  unsubscribeAnnoShot = undefined
+  unsubscribeAnnoRecord?.()
+  unsubscribeAnnoRecord = undefined
   unsubscribeClosed?.()
   unsubscribeClosed = undefined
   closeScreenWindow()
@@ -1484,6 +1523,13 @@ async function openAnnotate(): Promise<void> {
       const res = await bridge.openAnnotateOverlay()
       if (res?.opened) {
         nativeAnnotating.value = true
+        // The page loaded before this resolved, so its listener is up; a
+        // recording that was already running must not show as "not recording".
+        void bridge.setAnnotateToolbarState?.({
+          recording: recorder.active.value,
+          canShot: canShotNow.value,
+          canRecord: canRecord.value,
+        })
         return
       }
     } catch (e) {
@@ -1506,7 +1552,10 @@ async function openAnnotate(): Promise<void> {
 function closeAnnotate(): void {
   annotating.value = false
   annotateWindow.close()
-  share.clearInkMirror()
+  // Closing the surface ends the annotation: the audience must not keep
+  // looking at ink the host can no longer see, and no longer has a button to
+  // erase.
+  share.endAnnotation()
   if (nativeAnnotating.value) {
     nativeAnnotating.value = false
     void getNative()?.closeAnnotateOverlay?.()
@@ -1514,7 +1563,10 @@ function closeAnnotate(): void {
 }
 
 watch(annotateWindowTarget, (target) => {
-  if (!target && annotating.value) annotating.value = false
+  // The window can be closed behind our back (its own close button, a browser
+  // popup blocker). Same rule as `closeAnnotate` — an unannounced close is
+  // exactly the case where the audience is left holding the strokes.
+  if (!target && annotating.value) closeAnnotate()
 })
 
 // The drawing surface has nothing to draw on once the picture is gone: close it

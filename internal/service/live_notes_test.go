@@ -2712,9 +2712,10 @@ func TestReviseLiveNotesTranscript_ChunkErrorIsReported(t *testing.T) {
 	assert.Contains(t, err.Error(), "live notes: revise chunk")
 }
 
-// A reply that hit the output cap is a prefix: the tail of the replacement list
-// is gone, so the transcript would keep half the corrections and nobody would
-// know which half. It must fail the stage instead.
+// A reply that hit the output cap is a prefix: its last line can be half a pair,
+// so that chunk is dropped rather than writing a fragment into the transcript.
+// Here every chunk is truncated, which leaves nothing proofread — and a stage
+// that proofread nothing must not report success.
 func TestReviseLiveNotesTranscript_TruncatedChunkIsAnError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
