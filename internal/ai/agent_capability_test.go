@@ -824,6 +824,34 @@ func TestRegistry_LoadFromDB_EmptyModelList(t *testing.T) {
 	assert.Len(t, got.AvailableModes, 1)
 }
 
+// TestRegistry_LoadFromDB_RestoresExtrasWithoutTransportColumn pins that a row
+// whose retired `transport` column is empty — what EVERY row gets on a database
+// created after that column was retired — still restores its persisted
+// capability.
+//
+// The loader used to filter on `transport = 'acp-stdio'`, which matched nothing
+// there: after a restart the drawer had no mode/model/thinking/advanced lists
+// until a session ran, even though the columns were fully populated. Only
+// pre-existing databases (whose rows were rewritten by the one-time migration)
+// were unaffected.
+func TestRegistry_LoadFromDB_RestoresExtrasWithoutTransportColumn(t *testing.T) {
+	db := setupCapabilityDB(t)
+	_, err := db.Exec(`INSERT INTO agents (id, transport, acp_extra_config_options, acp_available_modes)
+		VALUES ('fresh-install', '', '{"m1":[{"configId":"sandbox","name":"Sandbox","type":"select"}]}', '[{"id":"ask","name":"Ask"}]')`)
+	require.NoError(t, err)
+
+	reg := resetGlobalRegistryForTest(t)
+	reg.LoadFromDB(db)
+
+	got := reg.GetExtraConfigOptions("fresh-install", "m1")
+	require.Len(t, got, 1, "the advanced tab list must survive a restart on a fresh install")
+	assert.Equal(t, "sandbox", got[0].ConfigID)
+
+	modes := reg.GetModeState("fresh-install", "")
+	require.NotNil(t, modes)
+	assert.Len(t, modes.AvailableModes, 1)
+}
+
 func TestRegistry_LoadFromDB_MalformedModelsIgnored(t *testing.T) {
 	db := setupCapabilityDB(t)
 	_, err := db.Exec(`INSERT INTO agents (id, transport, acp_available_models, acp_available_modes)
