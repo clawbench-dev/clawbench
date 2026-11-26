@@ -1426,6 +1426,7 @@ const manager = useSessionManager({
   createSessionCore: session.createSession,
   archiveSessionCore: session.archiveSession,
   destroySessionCore: session.destroySession,
+  leaveGoneSessionCore: session.leaveGoneSession,
   continueFromExecutionCore: session.continueFromExecution,
   forkSessionCore: session.forkSession,
   rewindSessionCore: session.rewindSession,

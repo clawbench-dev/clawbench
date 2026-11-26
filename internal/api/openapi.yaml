@@ -2638,7 +2638,13 @@ paths:
       description: |
         归档后会话从列表中消失。归档成功（含「空会话直接硬删」分支）会向所有
         已连接的客户端广播 `session_removed` 事件，让其他设备收起仍打开着的该
-        会话并刷新列表；发起方从本响应得知结果，不依赖该事件。
+        会话并刷新列表。
+
+        **一个项目永远至少保留一个会话**：被移除的是项目里最后一个会话时，
+        服务端在同一次请求里创建接替它的新会话，并在响应的
+        `replacementSessionId` 与广播的 `replacement_session_id` 里给出同一个
+        id。客户端只负责「切到服务端给的那个会话」，不再自己判断要不要新建——
+        同一条规则散在多个客户端里时，删掉唯一的会话会建出两个。
       operationId: sessionArchive
       parameters:
         - name: session_id
@@ -2669,6 +2675,9 @@ paths:
 
         销毁成功会向所有已连接的客户端广播 `session_removed` 事件，`project_path`
         取被销毁会话自身所属项目（删除前读取），而不是调用方的 cookie。
+
+        与归档一致：被销毁的是项目里最后一个会话时，服务端创建接替它的新会话，
+        通过 `replacementSessionId` 返回，客户端直接切过去。
       operationId: sessionDestroy
       parameters:
         - name: session_id

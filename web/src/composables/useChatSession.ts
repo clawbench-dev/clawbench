@@ -26,7 +26,6 @@ import { hasChatScrollPosition, shouldRestoreChatScroll } from '@/utils/chatScro
 import { markSessionRead as markSessionReadRequest } from '@/utils/sessionRead'
 import { markVisibleSessionRead } from '@/composables/sessionReadGate'
 import { takePendingOpenSession } from '@/composables/usePendingSessionOpen'
-import { planRemoteRemoval } from '@/composables/useRemoteSessionRemoval'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -1335,26 +1334,52 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
-   * Leave a session that no longer exists on the server (deleted or archived
-   * by another device, discovered by a 404). Behaves exactly like a LOCAL
-   * archive of the open session: switch to the first remaining session, or
-   * create a fresh one when the project has none left. Never leaves the panel
-   * empty and never re-selects the session that just vanished.
+   * Leave a session that no longer exists, by switching to whichever session
+   * the project has now.
+   *
+   * The REPLACEMENT IS NEVER CHOSEN HERE. The server guarantees a project always
+   * keeps at least one session — removing the last one makes it create the
+   * successor (see backfillSessionAfterRemoval) — so every client does the same
+   * single thing: take the project's current session.
+   *
+   * That is deliberate. When this file, App.vue's session_removed handler and
+   * the 404 path each decided "nothing is left, create one", removing a
+   * project's only session ran that decision three times and produced two new
+   * sessions with the toast still saying one was removed.
+   *
+   * `replacementId` is what the caller already knows (the DELETE response or
+   * the broadcast named it); it is used directly if it still exists, which
+   * avoids racing a list that may not be refreshed yet.
    */
-  async function leaveGoneSession(goneId: string) {
+  async function leaveGoneSession(goneId: string, replacementId?: string) {
     try {
+      // The await below is an async gap: the user may have opened a session of
+      // their own by now, which takes precedence over anything picked here.
+      if (currentSessionId.value && currentSessionId.value !== goneId) return
+
+      const preferred = replacementId && replacementId !== goneId ? replacementId : ''
+      if (preferred) {
+        await switchSession(preferred)
+        return
+      }
+
       const resp = await fetch('/api/ai/sessions')
       const data = await resp.json()
-      // The list fetch is an async gap: the user may have opened a session of
-      // their own by now, which takes precedence over anything we pick.
-      if (currentSessionId.value) return
+      if (currentSessionId.value && currentSessionId.value !== goneId) return
       const sessions: Array<{ id: string }> = Array.isArray(data?.sessions) ? data.sessions : []
-      // planRemoteRemoval is the shared rule for "which session takes over";
-      // passing goneId as the current id means "the one that just went away",
-      // which is exactly what it filters out.
-      const outcome = planRemoteRemoval(goneId, goneId, sessions)
-      if (outcome.action === 'switch') await switchSession(outcome.sessionId)
-      else if (outcome.action === 'create') await createSession('')
+      // A stale/partial response could still list the session the server just
+      // removed; switching back into it would land on a panel whose every
+      // request 404s.
+      const next = sessions.find(s => s?.id && s.id !== goneId)
+      if (next) {
+        await switchSession(next.id)
+        return
+      }
+      // No session is listed and none was named. This is the one case the server
+      // is supposed to have prevented, so take the ordinary "new session" path
+      // rather than leaving the panel empty.
+      appLog.w(TAG, `no session left after ${goneId} disappeared; creating one`)
+      await createSession('')
     } catch (e) {
       appLog.w(TAG, 'recover after session disappeared failed:', e)
     }
@@ -1372,16 +1397,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       if (data.ok) {
         // Evict usage cache for the deleted session
         clearUsageStateById(sessionId)
-        // If deleted current session, switch to another
         if (sessionId === currentSessionId.value) {
-          const sessionsResp = await fetch('/api/ai/sessions')
-          const sessionsData = await sessionsResp.json()
-          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
-            await switchSession(sessionsData.sessions[0].id)
-          } else {
-            // No sessions left, create a default one
-            await createSession('')
-          }
+          // The server names the session that takes over when this removal left
+          // the project empty; it never leaves a project without one.
+          await leaveGoneSession(sessionId, data.replacementSessionId)
         } else {
           // Deleted a non-current session — refresh global state (chatUnread, runningSessions)
           await loadSessionsOnce()
@@ -1416,15 +1435,8 @@ export function useChatSession(options: UseChatSessionOptions) {
       const data = await resp.json()
       if (data.ok) {
         clearUsageStateById(sessionId)
-        // After destroying current session, switch to another or create new
         if (sessionId === currentSessionId.value) {
-          const sessionsResp = await fetch('/api/ai/sessions')
-          const sessionsData = await sessionsResp.json()
-          if (sessionsData.sessions && sessionsData.sessions.length > 0) {
-            await switchSession(sessionsData.sessions[0].id)
-          } else {
-            await createSession('')
-          }
+          await leaveGoneSession(sessionId, data.replacementSessionId)
         } else {
           await loadSessionsOnce()
         }
@@ -2041,6 +2053,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     createSession,
     archiveSession,
     destroySession,
+    leaveGoneSession,
     onSessionEvent,
     loadSessionsOnce: loadSessionsOnceInner,
     handleWsReconnect,

@@ -92,6 +92,7 @@ function fireAppResume() {
 
 import {
     useGlobalEvents,
+    getClientId,
     _seedLastSeenEventIdForTesting,
     _getLastSeenEventIdForTesting,
 } from '@/composables/useGlobalEvents'
@@ -1225,6 +1226,32 @@ describe('useGlobalEvents', () => {
                 .find((e: any) => e?.type === 'clawbench-session-removed')
             expect(evt).toBeDefined()
             expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's2' })
+            dispatchSpy.mockRestore()
+        })
+
+        // The removal broadcast reaches the initiator too, so the payload names
+        // it and App.vue drops the event for its own client. That comparison is
+        // only possible if BOTH sides use the same id — the WS handshake and the
+        // HTTP DELETE carry the value getClientId() returns.
+        // The server names the session that takes over when a removal emptied
+        // the project; the handler must pass it on, or the client has to decide
+        // a replacement itself — which is what produced two sessions.
+        it('carries replacement_session_id through to the dispatched detail', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_removed',
+                data: { session_id: 's3', project_path: '/p', replacement_session_id: 's-new' },
+            })
+
+            const evt = dispatchSpy.mock.calls
+                .map((call: any[]) => call[0])
+                .find((e: any) => e?.type === 'clawbench-session-removed')
+            expect(evt).toBeDefined()
+            expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's3', replacement_session_id: 's-new' })
             dispatchSpy.mockRestore()
         })
     })

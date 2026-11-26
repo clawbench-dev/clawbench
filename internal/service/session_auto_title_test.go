@@ -635,18 +635,18 @@ func TestBroadcastSessionTitleUpdate_EmitsEvent(t *testing.T) {
 func TestBroadcastSessionRemoved_NoManagerIsNoop(t *testing.T) {
 	ws.SetManagerForTest(nil)
 	assert.NotPanics(t, func() {
-		BroadcastSessionRemoved("sess-x", "/proj")
+		BroadcastSessionRemoved("sess-x", "/proj", "")
 	})
 }
 
-// A removal broadcast must carry both the session id AND the project the caller
+// A removal broadcast must carry the session id AND the project the caller
 // captured: receivers use the id to recognize their own open session and the
 // project to tell a same-named session in another project apart.
 func TestBroadcastSessionRemoved_EmitsEventWithProject(t *testing.T) {
 	sub, cleanup := setupRecommendTest(t)
 	defer cleanup()
 
-	BroadcastSessionRemoved("sess-removed", "/tmp/proj-removed")
+	BroadcastSessionRemoved("sess-removed", "/tmp/proj-removed", "")
 
 	evts := sub.GetBufferedEvents()
 	require.NotEmpty(t, evts, "expected a session_removed event")
@@ -670,6 +670,37 @@ func TestBroadcastSessionRemoved_EmitsEventWithProject(t *testing.T) {
 	require.True(t, found, "expected a session_removed event, got %v", evts)
 	assert.Equal(t, "sess-removed", payload.SessionID)
 	assert.Equal(t, "/tmp/proj-removed", payload.ProjectPath)
+}
+
+// When the removal emptied the project, the event must name the session the
+// server created to take over, so no receiver has to invent one — that
+// invention is exactly what used to leave the user with two sessions.
+func TestBroadcastSessionRemoved_CarriesReplacement(t *testing.T) {
+	sub, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	BroadcastSessionRemoved("sess-removed", "/tmp/proj-removed", "sess-replacement")
+
+	evts := sub.GetBufferedEvents()
+	require.NotEmpty(t, evts, "expected a session_removed event")
+	found := false
+	for _, raw := range evts {
+		b, err := json.Marshal(raw)
+		require.NoError(t, err)
+		if !strings.Contains(string(b), "session_removed") {
+			continue
+		}
+		var msg ws.ServerMessage
+		require.NoError(t, json.Unmarshal(b, &msg))
+		data, ok := msg.Data.(map[string]any)
+		require.True(t, ok)
+		// camelCase on the wire is wrong here: the payload is Go-marshaled from
+		// SessionRemovedData, so the key is its json tag.
+		assert.Equal(t, "sess-replacement", data["replacement_session_id"])
+		found = true
+		break
+	}
+	require.True(t, found, "expected a session_removed event, got %v", evts)
 }
 
 // A quote with only one of the two parts still contributes what it has: the

@@ -216,10 +216,19 @@ func TestArchiveSession_EmptySessionHardDeletes(t *testing.T) {
 	assert.Equal(t, true, result["ok"])
 	assert.Equal(t, true, result["destroyed"], "empty session should be hard-deleted (destroyed=true)")
 
-	// Session should be physically gone — session count should be 0
+	// The archived session itself is physically gone; the project keeps exactly
+	// one session — the replacement the server created because the removal
+	// emptied it (see backfillSessionAfterRemoval). Clients switch to that one
+	// instead of inventing their own, which is what used to leave two.
 	count, err = service.GetSessionCount(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count, "hard-deleted session should not count toward session total")
+	assert.Equal(t, 1, count, "the emptied project must be backfilled with one replacement session")
+	sessions, err := service.GetSessions(env.ProjectDir, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.NotEqual(t, sessionID, sessions[0].ID, "the archived session must not be the surviving one")
+	assert.Equal(t, sessions[0].ID, result["replacementSessionId"],
+		"the response must name the surviving session so the client switches to it")
 }
 
 func TestArchiveSession_SessionWithMessagesSoftDeletes(t *testing.T) {
@@ -281,9 +290,11 @@ func TestArchiveSession_EmptySessionHardDelete_RAGPurgeErrorStillDestroys(t *tes
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["destroyed"], "session must still be destroyed when RAG purge fails")
 
+	// The destroyed row is gone; the emptied project holds its replacement.
 	count, err := service.GetSessionCount(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count)
+	assert.Equal(t, 1, count)
+	assert.NotEqual(t, sessionID, result["replacementSessionId"])
 }
 
 func TestArchiveSession_EmptySessionHardDelete_RAGPurgeChunksLogged(t *testing.T) {
@@ -321,9 +332,10 @@ func TestArchiveSession_EmptySessionHardDelete_RAGPurgeChunksLogged(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, 0, remaining, "the session's RAG chunks must be purged")
 
+	// The destroyed row is gone; the emptied project holds its replacement.
 	count, err := service.GetSessionCount(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count)
+	assert.Equal(t, 1, count)
 }
 
 func TestArchiveSession_CountErrorFallsBackToSoftArchive(t *testing.T) {
@@ -415,10 +427,12 @@ func TestDestroySession_RunningSessionCancelledBeforeDestroy(t *testing.T) {
 	assert.Equal(t, true, result["ok"])
 	assert.Equal(t, true, result["destroyed"])
 
-	// Session and its messages are physically gone.
+	// Session and its messages are physically gone; the emptied project holds
+	// the replacement session the server created.
 	count, err := service.GetSessionCount(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count)
+	assert.Equal(t, 1, count)
+	assert.NotEqual(t, sessionID, result["replacementSessionId"])
 }
 
 func TestServeAISessionUpdate_InvalidJSON(t *testing.T) {

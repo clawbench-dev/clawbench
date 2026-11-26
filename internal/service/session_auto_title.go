@@ -308,7 +308,12 @@ func BroadcastSessionTitleUpdate(sessionID, title string) {
 // service-level cleanup below (archive → hard delete, destroy) removes the row,
 // and GetSessionProjectPath filters archived=0, so looking it up here would
 // return "" for exactly the sessions this event matters most for.
-func BroadcastSessionRemoved(sessionID, projectPath string) {
+//
+// replacementSessionID is the session the server created because this removal
+// emptied the project ("" otherwise). Receivers switch to it instead of picking
+// or creating a replacement of their own — see
+// SessionRemovedData.ReplacementSessionID.
+func BroadcastSessionRemoved(sessionID, projectPath, replacementSessionID string) {
 	mgr := ws.GetManager()
 	if mgr == nil {
 		return
@@ -318,8 +323,9 @@ func BroadcastSessionRemoved(sessionID, projectPath string) {
 		ID:    ws.GenerateEventID(),
 		Event: "session_removed",
 		Data: ws.SessionRemovedData{
-			SessionID:   sessionID,
-			ProjectPath: projectPath,
+			SessionID:            sessionID,
+			ProjectPath:          projectPath,
+			ReplacementSessionID: replacementSessionID,
 		},
 	})
 }

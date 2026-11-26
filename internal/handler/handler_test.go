@@ -531,15 +531,16 @@ func TestArchiveSession_SoftDelete(t *testing.T) {
 	assert.Equal(t, true, result["ok"])
 	assert.Equal(t, false, result["destroyed"], "session with messages should be soft-archived, not destroyed")
 
-	// Verify session no longer appears in active list (archived)
+	// The archived session leaves the active list; the project is left with the
+	// single replacement session the server created for it.
 	sessions, err = service.GetSessions(env.ProjectDir, "")
 	require.NoError(t, err)
-	assert.Empty(t, sessions, "archived session should not appear in session list")
+	require.Len(t, sessions, 1, "the emptied project must be backfilled with one replacement session")
+	assert.NotEqual(t, sessionID, sessions[0].ID, "the archived session must not appear in the list")
 
-	// Verify totalCount decreased
 	count, err := service.GetSessionCount(env.ProjectDir)
 	require.NoError(t, err)
-	assert.Equal(t, 0, count)
+	assert.Equal(t, 1, count)
 }
 
 func TestArchiveSession_SessionCountInResponse(t *testing.T) {
