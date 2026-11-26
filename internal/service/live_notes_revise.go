@@ -423,11 +423,10 @@ func parseLiveNoteAnswer(raw string) ([]liveNotePair, []liveNoteSplit, error) {
 //
 // It always names one real line and why it was rejected: "the model ignored the
 // format" is a conclusion the reader has to be able to check, and a chunk number
-// alone is not enough to tell a wrong arrow from a wrong model.
+// alone is not enough to tell a wrong arrow from a wrong model. An empty reject
+// list cannot reach here — an answer with no content at all fails earlier as an
+// empty answer — so there is no "nothing to quote" branch to write.
 func liveNoteFormatError(rejected []liveNoteReject) error {
-	if len(rejected) == 0 {
-		return fmt.Errorf("%w (no usable line in the answer)", ErrLiveNoteReviseFormat)
-	}
 	detail := fmt.Sprintf("%d unusable line(s); first: %q — %s",
 		len(rejected), truncateRunes(rejected[0].Line, 60), rejected[0].Reason)
 	if hint := liveNoteRejectHint(rejected); hint != "" {

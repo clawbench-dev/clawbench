@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -219,4 +220,69 @@ func TestSplitLiveNoteLineAt_OrdersCutsAndSkipsOverlappingOnes(t *testing.T) {
 	assert.Equal(t, "[00:00] 我：", got[0], "the cut happens BEFORE the word, so it stays with the first speaker")
 	assert.Equal(t, "[00:00] 甲 speaker|甲乙", got[1])
 	assert.Equal(t, "[00:00] 乙 speaker|丙丁", got[2], "the third cut starts at the same offset as the second and must be skipped")
+}
+
+// An arrow with nothing on one side is the model answering half a pair. Both
+// sides are unusable rows (not a missing arrow), so the answer is still
+// measured as "the model tried and got it wrong", and the reason says which
+// side was empty — "empty original" / "empty replacement" is what tells the
+// reader whether the model dropped the word it was replacing or the fix.
+func TestParseLiveNoteAnswer_NamesWhichSideOfAnEmptyPairIsMissing(t *testing.T) {
+	pairs, splits, err := parseLiveNoteAnswer(" => 王总")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNoteReviseFormat)
+	assert.Contains(t, err.Error(), "empty original")
+	assert.Empty(t, pairs)
+	assert.Empty(t, splits)
+
+	pairs, _, err = parseLiveNoteAnswer("王小明 => ")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNoteReviseFormat)
+	assert.Contains(t, err.Error(), "empty replacement")
+	assert.Empty(t, pairs)
+}
+
+// A source side that is too LONG is unappliable for the same reason the target
+// side is: an over-long string is not a term that appears in a transcript, it is
+// the model rewriting a sentence. The reason must state the limit, because the
+// bound itself is what the reader has to relax if the term really is that long.
+func TestParseLiveNoteAnswer_DropsPairWhoseSourceIsTooLong(t *testing.T) {
+	raw := strings.Repeat("很", liveNoteRevisePairMaxRunes+1) + " => 王总\n王小明 => 王总"
+	pairs, _, err := parseLiveNoteAnswer(raw)
+	require.NoError(t, err)
+	require.Len(t, pairs, 1, "the usable pair must survive the unusable one")
+	assert.Equal(t, liveNotePair{From: "王小明", To: "王总"}, pairs[0])
+
+	_, _, err = parseLiveNoteAnswer(strings.Repeat("很", liveNoteRevisePairMaxRunes+1) + " => 王总")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNoteReviseFormat)
+	assert.Contains(t, err.Error(), strconv.Itoa(liveNoteRevisePairMaxRunes), "the reason must name the limit")
+}
+
+// Same bound on the split side: the words to cut at are searched for in one
+// transcript line, so a cut marker longer than the pair limit cannot be a
+// speaker change either. It is dropped, and a usable split in the same answer
+// still lands.
+func TestParseLiveNoteSplitLine_DropsOverlongCutMarker(t *testing.T) {
+	long := strings.Repeat("很", liveNoteRevisePairMaxRunes+1)
+	raw := "[00:12] " + long + " ==> 李四\n[00:20] 那我来补充 ==> 王五"
+	_, splits, err := parseLiveNoteAnswer(raw)
+	require.NoError(t, err)
+	require.Len(t, splits, 1, "the usable split must survive the unusable one")
+	assert.Equal(t, liveNoteSplit{Clock: "00:20", From: "那我来补充", Speaker: "王五"}, splits[0])
+
+	_, reason := parseLiveNoteSplitLine("[00:12] " + long + " ==> 李四")
+	assert.Contains(t, reason, "the limit is", "the reason must name the limit")
+}
+
+// A bare code fence is an empty answer wearing the format: the fence is stripped
+// before anything else looks at it, so it must report "empty answer" rather than
+// reaching the reject-list path with nothing in it.
+func TestParseLiveNoteAnswer_BareFenceIsAnEmptyAnswer(t *testing.T) {
+	for _, raw := range []string{"```\n```", "```\n \n```", "```\n\t\n```"} {
+		_, _, err := parseLiveNoteAnswer(raw)
+		require.Error(t, err, raw)
+		assert.ErrorIs(t, err, ErrLiveNoteReviseFormat, raw)
+		assert.Contains(t, err.Error(), "empty answer", raw)
+	}
 }
