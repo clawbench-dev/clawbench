@@ -54,6 +54,15 @@ func (c LiveKitConfig) Configured() bool {
 // accept roomList. Sending roomAdmin for ListRooms gets 401 "permissions
 // denied" with a perfectly valid key and secret — the same answer as a token
 // that can only join.
+//
+// These are plain bools with `omitempty`, so a false field is left out — and
+// LiveKit GRANTS a permission the token leaves out. For canPublish that is
+// deliberate: the same grant also carries a member's screen share, which is a
+// separate switch from speech, so the media permission cannot be derived from
+// the talk switch alone. Speech is enforced by the app (the server rejects a
+// talk-start when the switch is off, and `UpdateParticipantPermission` states
+// an explicit false when the host mutes somebody). canPublishData is always set
+// to true and never follows canPublish: see JoinToken.
 type LiveKitGrant struct {
 	Room           string `json:"room,omitempty"`
 	RoomJoin       bool   `json:"roomJoin,omitempty"`
@@ -90,6 +99,13 @@ func (c LiveKitConfig) JoinToken(room, identity, name string, canPublish bool, t
 			RoomJoin:     true,
 			CanSubscribe: true,
 			CanPublish:   canPublish,
+			// Data is the CONTROL BUS, not media: chat, annotation, remote
+			// control, and the `chat-history-req` a member sends on joining.
+			// LiveKit defaults this to `canPublish`, so tying it to the speech
+			// permission took every frame away from the audience of a muted
+			// room: a late joiner's request never reached the host and the chat
+			// panel stayed empty with nothing logged anywhere.
+			CanPublishData: true,
 		},
 	}, ttl)
 }
@@ -233,9 +249,15 @@ func (c LiveKitConfig) ListRooms(ctx context.Context) (int, error) {
 
 // UpdateParticipantPermission grants or revokes the right to publish.
 //
-// The permission is REPLACED, not merged, so canSubscribe has to be restated —
-// omitting it would silently turn the participant into a publisher that cannot
-// hear anyone.
+// The permission is REPLACED, not merged, so every field has to be restated:
+// omitting canSubscribe turns the participant into a publisher that cannot hear
+// anyone, and setting canPublishData to false takes the control bus away.
+//
+// That second one is not about speech at all — chat, annotation, remote control
+// and the chat-history request all travel as data packets. This call runs when
+// the host mutes somebody or flips 允许成员发言, so a `false` here silently cut
+// every viewer off from chat until they rejoined, and a member joining
+// afterwards got no transcript replay: the chat panel stayed empty.
 func (c LiveKitConfig) UpdateParticipantPermission(ctx context.Context, room, identity string, canPublish bool) error {
 	return c.call(ctx, "UpdateParticipant", LiveKitGrant{Room: room, RoomAdmin: true}, map[string]any{
 		"room":     room,
@@ -243,7 +265,7 @@ func (c LiveKitConfig) UpdateParticipantPermission(ctx context.Context, room, id
 		"permission": map[string]any{
 			"canSubscribe":   true,
 			"canPublish":     canPublish,
-			"canPublishData": false,
+			"canPublishData": true,
 		},
 	}, nil)
 }

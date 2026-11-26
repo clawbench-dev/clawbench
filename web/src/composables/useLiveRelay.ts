@@ -108,9 +108,26 @@ export async function openRelay(url: string, token: string, handlers: RelayHandl
   room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
     handlers.onTrackGone?.(track.mediaStreamTrack)
   })
-  room.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
-    handlers.onData?.(payload, participant?.identity ?? '')
-  })
+  // `participantIdentity` is the packet's own sender id, and it is present even
+  // when `participant` is undefined — which happens when a frame arrives before
+  // this client has processed that participant's join. A viewer's first frame
+  // IS such a frame: it asks for the chat history the moment its room connects.
+  // Relying on the participant object alone silently dropped the request (the
+  // publisher refuses an unattributed frame), so a member joining a relayed
+  // meeting late got an empty chat panel.
+  room.on(
+    RoomEvent.DataReceived,
+    (
+      payload: Uint8Array,
+      participant?: RemoteParticipant,
+      _kind?: unknown,
+      _topic?: string,
+      _encryption?: unknown,
+      participantIdentity?: string,
+    ) => {
+      handlers.onData?.(payload, participant?.identity ?? participantIdentity ?? '')
+    },
+  )
   room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
     handlers.onActiveSpeakers?.(speakers.map((p) => p.identity))
   })

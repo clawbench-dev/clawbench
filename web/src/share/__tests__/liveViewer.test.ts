@@ -332,6 +332,44 @@ describe('control bus', () => {
     dc.onopen?.()
     expect(dc.sentJSON()).toEqual([{ t: 'chat-history-req' }, { t: 'ink-sync-req' }])
   })
+
+  it('holds a chat line typed while the data channel is still negotiating', () => {
+    const { viewer } = setup()
+    joinRoom(viewer)
+    const dc = lastPC().channels[0]
+
+    // The window where nothing can be sent is real: the channel opens only
+    // after both ends finish negotiating. `sendControl` used to refuse here,
+    // which dropped the line silently — the composer cleared and no echo
+    // appeared, exactly as if the message had been lost in transit.
+    dc.readyState = 'connecting'
+    expect(viewer.sendControl({ t: 'chat', id: 'm1', from: '', name: '我', text: '早', at: 1 })).toBe(true)
+    expect(dc.sent).toHaveLength(0)
+
+    dc.readyState = 'open'
+    dc.onopen?.()
+    expect(dc.sentJSON()).toEqual([
+      { t: 'chat-history-req' },
+      { t: 'ink-sync-req' },
+      expect.objectContaining({ t: 'chat', id: 'm1', text: '早' }),
+    ])
+  })
+
+  it('drops what it queued when the session ends before the bus opened', () => {
+    const { viewer } = setup()
+    joinRoom(viewer)
+    const dc = lastPC().channels[0]
+    dc.readyState = 'connecting'
+
+    viewer.sendControl({ t: 'chat', id: 'm1', from: '', name: '我', text: '早', at: 1 })
+    viewer.close()
+
+    // Sending a queued line into a DIFFERENT session would look like a message
+    // from a stranger; a session that never opened its bus has no reader for it.
+    dc.readyState = 'open'
+    dc.onopen?.()
+    expect(dc.sentJSON()).toEqual([])
+  })
 })
 
 describe('liveSignalUrl', () => {
@@ -1494,6 +1532,26 @@ describe('LiveViewer relay mode', () => {
 
     expect(ok).toBe(true)
     expect(relayMock.sendRelayData).toHaveBeenCalledWith(room, { t: 'ctrl-req' })
+  })
+
+  it('holds a chat line typed while the relay is still connecting', async () => {
+    const { viewer } = setupRelay()
+    viewer.connect()
+    relayMock.sendRelayData.mockClear()
+
+    // The room connect takes seconds, and the composer is usable the whole
+    // time. A frame sent here used to be refused — the sender saw no echo and
+    // nobody got the line.
+    expect(viewer.sendControl({ t: 'chat', id: 'm1', from: '', name: '我', text: '早', at: 1 })).toBe(true)
+    expect(relayMock.sendRelayData).not.toHaveBeenCalled()
+
+    lastWS().emit({ type: 'joined', viewerId: 'v1', mode: 'sfu', relay: RELAY, iceServers: [] })
+    await vi.waitFor(() =>
+      expect(relayMock.sendRelayData).toHaveBeenCalledWith(
+        room,
+        expect.objectContaining({ t: 'chat', id: 'm1', text: '早' }),
+      ),
+    )
   })
 
   it('parses control frames arriving on the relay data channel', async () => {

@@ -301,6 +301,18 @@ export class LiveViewer {
   /** Control bus opened by the publisher. */
   private dc: RTCDataChannel | null = null
   /**
+   * Control frames typed before the bus was up.
+   *
+   * Both transports have a window where nothing can be sent yet: the data
+   * channel is still negotiating in p2p, and the LiveKit room is still
+   * connecting in relay mode — which easily lasts seconds. `sendControl` used to
+   * refuse that window, so a chat line typed during the join handshake was
+   * dropped SILENTLY: the composer cleared, the sender saw their own echo
+   * nowhere, and no log said anything. Queuing them here and flushing the moment
+   * the bus opens keeps the line alive.
+   */
+  private pendingControl: ControlMessage[] = []
+  /**
    * The track carrying the host's picture.
    *
    * Up to three video m-lines arrive (host picture, a forwarded member screen,
@@ -670,6 +682,8 @@ export class LiveViewer {
       // frames sent before this viewer had a channel, so a late joiner would
       // watch the presenter talk about a picture with no annotation on it.
       this.sendControl({ t: 'ink-sync-req' })
+      // …and anything the user typed while the channel was still negotiating.
+      this.flushPendingControl()
     }
 
     pc.ontrack = (ev) => {
@@ -781,6 +795,8 @@ export class LiveViewer {
     void sendRelayData(room, { t: 'chat-history-req' })
     // …and for the ink already on the board, for the same reason.
     void sendRelayData(room, { t: 'ink-sync-req' })
+    // Anything the user typed while the relay was still connecting.
+    this.flushPendingControl()
   }
 
   /**
@@ -1167,14 +1183,24 @@ export class LiveViewer {
       void sendRelayData(this.relayRoom, msg)
       return true
     }
-    if (this.dc?.readyState !== 'open') return false
-    try {
-      this.dc.send(JSON.stringify(msg))
-      return true
-    } catch (e) {
-      appLog.d(TAG, 'control send failed', e)
-      return false
+    if (this.dc?.readyState === 'open') {
+      try {
+        this.dc.send(JSON.stringify(msg))
+        return true
+      } catch (e) {
+        appLog.d(TAG, 'control send failed', e)
+        return false
+      }
     }
+    // The bus is not up yet (still joining, or reconnecting): hold the frame
+    // rather than lose it. `flushPendingControl` drains it the moment the bus
+    // opens; `teardown` drops whatever a closed session was still holding.
+    this.pendingControl.push(msg)
+    return true
+  }
+
+  private flushPendingControl(): void {
+    for (const msg of this.pendingControl.splice(0)) this.sendControl(msg)
   }
 
   /**
@@ -1312,6 +1338,9 @@ export class LiveViewer {
 
   private teardown(): void {
     navigator.mediaDevices?.removeEventListener?.('devicechange', this.onDeviceChange)
+    // A frame still queued belongs to the session that is ending; sending it
+    // into the next one would look like a message from a stranger.
+    this.pendingControl = []
     void this.stopTalking()
     this.releaseScreenTrack()
     // Clear the handle BEFORE closing: LiveKit reports the close through
