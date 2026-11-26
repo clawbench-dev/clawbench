@@ -1359,6 +1359,14 @@ func (r *AgentCapabilityRegistry) saveToDB(db dbutil.Writer, agentID string, age
 }
 
 // LoadFromDB loads persisted capabilities from the agents table on startup.
+//
+// Deliberately NOT filtered by the retired `transport` column: it is derived
+// from the agent's command and is never written for rows created after that
+// retirement, so a fresh install has it empty for every agent. Filtering on it
+// made this load a no-op on every new database — after a restart the drawer had
+// no mode/model/thinking/advanced lists until a session ran, even though the
+// columns were populated. Rows that carry nothing are dropped by the HasData
+// gate below.
 func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 	rows, err := db.Query(`
 		SELECT id, acp_available_modes,
@@ -1367,7 +1375,6 @@ func (r *AgentCapabilityRegistry) LoadFromDB(db dbutil.Reader) {
 		       acp_load_session, acp_list_sessions, acp_mcp_http, acp_mcp_sse,
 		       acp_delete_session_probed, acp_delete_session_confirmed
 		FROM agents
-		WHERE transport = 'acp-stdio'
 	`)
 	if err != nil {
 		slog.Warn("failed to load agent capabilities from DB", "error", err)

@@ -1013,7 +1013,30 @@ func (c *ACPConn) reapplyConfigOption(ctx context.Context, acpSID, configID, val
 	reapplyStart := time.Now()
 	slog.Info("acp conn: reapplyConfigOption starting", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
 	c.mu.Unlock()
-	reapplyErr := c.setSessionConfigOption(ctx, acpSID, configID, value)
+	var reapplyErr error
+	// A boolean option must go out as a JSON boolean, not the string "false".
+	// Measured against a live codebuddy: `session/set_config_option` with
+	// `value: "false"` on the `multitask` option is refused with -32602
+	// ("Invalid value type for config option multitask: expected boolean"), so
+	// a user who turned Multitask off silently got it back after every resume.
+	// The turn-start path (applyExtraConfigOptionsAtTurn) already types the
+	// request from the advertised option; this path must do the same.
+	if c.configOptionIsBoolean(configID) {
+		parsed, ok := parseBoolConfigValue(value)
+		if !ok {
+			// A stored value that is not a boolean cannot be expressed on the
+			// wire at all; re-sending it would fail on every resume. Return
+			// WITHOUT marking it set — the log must not claim a value the agent
+			// never received.
+			c.mu.Lock()
+			slog.Warn("acp conn: skipping reapply of non-boolean value for boolean config",
+				"config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
+			return
+		}
+		reapplyErr = c.setSessionConfigOptionBool(ctx, acpSID, configID, parsed)
+	} else {
+		reapplyErr = c.setSessionConfigOption(ctx, acpSID, configID, value)
+	}
 	c.mu.Lock()
 	slog.Info("acp conn: reapplyConfigOption done", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID, "elapsed", time.Since(reapplyStart), "error", reapplyErr)
 	if c.alive && !isInvalidConfigValue(reapplyErr) {
@@ -1046,6 +1069,24 @@ func (c *ACPConn) reapplyConfigOption(ctx context.Context, acpSID, configID, val
 		}
 		slog.Info("acp conn: re-applied config after resume", "config_id", configID, "value", value, "clawbench_sid", c.clawbenchSID)
 	}
+}
+
+// configOptionIsBoolean reports whether the agent advertised configID as a
+// boolean option in THIS session (the resume path needs the typed request).
+//
+// Only the agent's generic options can be boolean: mode/model/effort are
+// string-valued by contract, so an id that is not in the extras list answers
+// false and keeps the historical string request.
+//
+// Takes stateMu (a leaf lock) via GetExtraConfigOptions, so it is safe to call
+// while holding c.mu.
+func (c *ACPConn) configOptionIsBoolean(configID string) bool {
+	for _, opt := range c.GetExtraConfigOptions() {
+		if opt.ConfigID == configID {
+			return opt.Type == "boolean"
+		}
+	}
+	return false
 }
 
 // isAliveLocked checks if the connection is still alive (must hold c.mu).
@@ -1668,11 +1709,18 @@ func (c *ACPConn) setSessionConfigOptionRequest(ctx context.Context, acpSessionI
 	conn := c.conn
 	alive := c.alive && c.isAliveLocked()
 	hook := c.setConfigOptionFn
+	typedHook := c.setConfigOptionRequestFn
 	c.mu.Unlock()
 
 	if conn == nil || !alive {
 		slog.Debug("acp conn: skipping set_config_option on dead connection", "config_id", configID, "value", value)
 		return nil
+	}
+
+	// Test override with the typed request: lets a test assert the JSON type of
+	// the value (boolean vs string), which the string hook cannot express.
+	if typedHook != nil {
+		return typedHook(ctx, acpSessionID, req)
 	}
 
 	// Test override: record the (resolved) wire config id without an RPC.

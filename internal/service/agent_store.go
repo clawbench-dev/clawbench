@@ -1105,6 +1105,22 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 			clone.ThinkingEffortByModel[m] = lvl
 		}
 	}
+	// Per-model generic config-option picks (issue #746) ARE copied for the same
+	// reason as the effort picks above: the clone runs the same backend and
+	// models, and the options are advertised by the BACKEND, so the choices
+	// describe the same thing. Dropping them made a duplicated agent start on
+	// the agent's own defaults (e.g. CodeBuddy's sandbox ON) even though the
+	// user had configured the original — the "高级" tab looked reset.
+	if len(source.PreferredConfigOptions) > 0 {
+		clone.PreferredConfigOptions = make(map[string]map[string]string, len(source.PreferredConfigOptions))
+		for modelID, picks := range source.PreferredConfigOptions {
+			copied := make(map[string]string, len(picks))
+			for id, value := range picks {
+				copied[id] = value
+			}
+			clone.PreferredConfigOptions[modelID] = copied
+		}
+	}
 	if len(source.Models) > 0 {
 		clone.Models = make([]model.AgentModel, len(source.Models))
 		copy(clone.Models, source.Models)
