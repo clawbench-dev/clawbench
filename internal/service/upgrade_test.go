@@ -819,7 +819,7 @@ func TestFetchUpgradeInfo_Success(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	// Pin non-China so the test is independent of the machine's region.
 	origChina := platform.ChinaMirrorChecked.Load()
@@ -843,7 +843,7 @@ func TestFetchUpgradeInfo_NonOKStatus(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	_, err := fetchUpgradeInfoWithBase(ts.URL)
 	assert.Error(t, err)
@@ -861,7 +861,7 @@ func TestFetchUpgradeInfo_EmptyTarballURL(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	_, err := fetchUpgradeInfoWithBase(ts.URL)
 	assert.Error(t, err)
@@ -878,7 +878,7 @@ func TestFetchUpgradeInfo_InvalidJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	_, err := fetchUpgradeInfoWithBase(ts.URL)
 	assert.Error(t, err)
@@ -899,14 +899,14 @@ func TestFetchUpgradeInfo_NPMMirrorTarballRewrite(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	// Set China mode so npmmirror tarball rewrite triggers
 	origChina := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(origChina)
 	platform.ChinaMirrorChecked.Store(1)
 
-	info, err := fetchUpgradeInfoWithBase("https://registry.npmmirror.com")
+	info, err := fetchUpgradeInfoWithBase(ts.URL)
 	require.NoError(t, err)
 	assert.Contains(t, info.TarballURL, "registry.npmmirror.com")
 	assert.NotContains(t, info.TarballURL, "registry.npmjs.org")
@@ -926,6 +926,37 @@ func fetchUpgradeInfoWithBase(baseURL string) (*UpgradeInfo, error) {
 	return fetchUpgradeInfoFromBase(context.Background(), baseURL, pkg, version.Get())
 }
 
+// hermeticUpgradeClient wraps an httptest server's client so any request the
+// test did not intend reaches NOTHING.
+//
+// Several paths in fetchUpgradeInfoFromBase talk to hosts the caller cannot
+// redirect — the signature-key fetch always asks source.NpmJsBase. Left on the
+// default transport, a unit test then depends on that host being reachable from
+// the runner, which is exactly how TestFetchUpgradeInfo_NPMMirrorTarballRewrite
+// went red on the macOS runner while passing everywhere else
+// ("context deadline exceeded" against registry.npmmirror.com). The test was
+// flaky, not the code.
+//
+// The server's own URL is passed through untouched; every other URL is answered
+// with an explicit transport error, so the signature check reports "keys
+// unreachable" (a warning, not a failure) instead of hanging on a real network.
+func hermeticUpgradeClient(ts *httptest.Server) *http.Client {
+	base := ts.Client()
+	return &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Scheme+"://"+req.URL.Host == ts.URL {
+				return base.Transport.RoundTrip(req)
+			}
+			return nil, fmt.Errorf("test is offline: %s is not the test server", req.URL)
+		}),
+	}
+}
+
+// roundTripFunc adapts a function to http.RoundTripper.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 // --- downloadAndExtract ---
 
 func TestDownloadAndExtract_Success(t *testing.T) {
@@ -942,7 +973,7 @@ func TestDownloadAndExtract_Success(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destDir := t.TempDir()
 	destPath := filepath.Join(destDir, "clawbench-new")
@@ -975,7 +1006,7 @@ func TestDownloadAndExtract_SHA1ShasumFallback(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "", shasum), destPath)
@@ -1002,7 +1033,7 @@ func TestDownloadAndExtract_ShasumMismatch(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "", wrongShasum), destPath)
@@ -1022,7 +1053,7 @@ func TestDownloadAndExtract_NonOKStatus(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destDir := t.TempDir()
 	err := downloadAndExtract(context.Background(), ts.URL, mustDigest(t, "sha512-"+base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)), ""), filepath.Join(destDir, "out"))
@@ -1048,7 +1079,7 @@ func TestDownloadAndExtract_IntegrityMismatch(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destDir := t.TempDir()
 	destPath := filepath.Join(destDir, "clawbench-new")
@@ -1088,7 +1119,7 @@ func TestDownloadAndExtract_BinaryNotFoundInTarball(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destDir := t.TempDir()
 	err = downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
@@ -1106,7 +1137,7 @@ func TestDownloadAndExtract_InvalidGzip(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destDir := t.TempDir()
 	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(destDir, "out"))
@@ -1125,7 +1156,7 @@ func TestDownloadAndExtract_CancelledContext(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -1157,7 +1188,7 @@ func TestDownloadAndExtract_StalledStreamAborts(t *testing.T) {
 	defer ts.Close()
 	defer close(release)
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	start := time.Now()
 	err := downloadAndExtract(context.Background(), ts.URL, dummyDigest(t), filepath.Join(t.TempDir(), "out"))
@@ -1197,7 +1228,7 @@ func TestDownloadAndExtract_SlowButProgressingSucceeds(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 	require.NoError(t, downloadAndExtract(context.Background(), ts.URL, mustDigest(t, integrity, ""), destPath))
@@ -1235,7 +1266,7 @@ func TestDownloadAndExtract_DestNotWritable(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	// Create a read-only destination directory
 	destDir := t.TempDir()
@@ -1659,7 +1690,7 @@ func TestDownloadAndExtract_AlwaysVerifies(t *testing.T) {
 		w.Write(tarball)
 	}))
 	defer ts.Close()
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 
@@ -1707,7 +1738,7 @@ func TestDownloadAndExtract_UnverifiedReportsNotVerified(t *testing.T) {
 		w.Write(tarball)
 	}))
 	defer ts.Close()
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	digest, _, err := resolveExpectedDigest("", "")
 	require.NoError(t, err)
@@ -1747,7 +1778,7 @@ func TestDownloadAndExtract_RejectsOversizedBinary(t *testing.T) {
 		w.Write(tarball)
 	}))
 	defer ts.Close()
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	digest, _, err := resolveExpectedDigest("", "")
 	require.NoError(t, err)
@@ -1779,7 +1810,7 @@ func TestDownloadAndExtract_DetectsSwappedTarball(t *testing.T) {
 		w.Write(swapped)
 	}))
 	defer ts.Close()
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	destPath := filepath.Join(t.TempDir(), "clawbench-new")
 
@@ -1842,7 +1873,7 @@ func TestCheckForUpgrade_Success(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	origChina := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(origChina)
@@ -1873,7 +1904,7 @@ func TestCheckForUpgrade_DirectCall(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	origChina := platform.ChinaMirrorChecked.Load()
 	defer platform.ChinaMirrorChecked.Store(origChina)
@@ -1963,7 +1994,7 @@ func TestCheckForUpgrade_Error(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	currentVer, latestVer, err := checkForUpgradeWithBase(ts.URL)
 	assert.Error(t, err)
@@ -2375,10 +2406,50 @@ func TestFetchUpgradeInfo_NormalizesMalformedMirrorTarball(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	upgradeHTTPClient = ts.Client()
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
 
 	info, err := fetchUpgradeInfoWithBase(ts.URL)
 	require.NoError(t, err)
 	assert.NotContains(t, info.TarballURL, "@latest")
 	assert.Contains(t, info.TarballURL, "/@scope/pkg/-/pkg-0.91.0.tgz")
+}
+
+// Regression: the upgrade-check path must not need the real internet.
+//
+// It used to. fetchUpgradeInfoFromBase always asks source.NpmJsBase for npm's
+// signing keys whenever the registry sent no signature — every test registry
+// does — so the whole suite depended on that host answering. On the macOS CI
+// runner the very same check timed out and turned a green suite red, which is
+// what "flaky" means here: the outcome hung on something unrelated to the code.
+//
+// The servers below are the ONLY reachable hosts (see hermeticUpgradeClient),
+// and the test asserts that the signature-key fetch actually reached them: the
+// "keys unreachable" issue is absent. A future call that starts talking to a
+// hard-coded host again fails right here, offline, instead of on one runner.
+func TestFetchUpgradeInfo_NeedsNoNetworkBeyondTheRegistry(t *testing.T) {
+	origClient := upgradeHTTPClient
+	defer func() { upgradeHTTPClient = origClient }()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == npmKeysPath {
+			fmt.Fprint(w, `{"keys":[{"keyid":"SHA256:deadbeef","keytype":"ecdsa-sha2-nistp256","scheme":"ecdsa-sha2-nistp256","key":"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE"}]}`)
+			return
+		}
+		resp := npmRegistryResponse{Version: "99.0.0"}
+		resp.Dist.Tarball = "https://registry.npmjs.org/test/-/test-99.0.0.tgz"
+		resp.Dist.Integrity = wellFormedIntegrity
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	upgradeHTTPClient = hermeticUpgradeClient(ts)
+
+	pkg, err := getPlatformPkg()
+	require.NoError(t, err)
+	info, err := fetchUpgradeInfoFromBase(context.Background(), ts.URL, pkg, version.Get())
+	require.NoError(t, err)
+
+	assert.NotContains(t, info.VerificationIssues, VerifyIssueSignatureKeysUnreachable,
+		"the key fetch must reach a server the test controls, never the real internet")
 }
