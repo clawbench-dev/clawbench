@@ -267,6 +267,24 @@ export interface ClawBenchNative {
   onAnnotateInk?(cb: (msg: string) => void): () => void
   /** The overlay window went away (its own close button or Esc). */
   onAnnotateClosed?(cb: () => void): () => void
+  /**
+   * 留存画面 / 录制 pressed on the overlay's own toolbar.
+   *
+   * The meeting footer sits under a full-screen overlay, so while the
+   * annotations are on screen those two buttons are out of reach — and closing
+   * the surface erases the ink. These are the same two actions, on the surface.
+   */
+  onAnnotateShot?(cb: () => void): () => void
+  onAnnotateRecord?(cb: () => void): () => void
+  /**
+   * Everything the overlay's toolbar needs from the meeting panel.
+   *
+   * The overlay renders its own toolbar and cannot see the recorder or the
+   * key-frame switch, so the buttons it shows — and whether the record one says
+   * 停止 — have to be pushed from here. One-way on purpose: the overlay never
+   * holds meeting state, it only reports clicks.
+   */
+  setAnnotateToolbarState?(state: { recording: boolean; canShot: boolean; canRecord: boolean }): Promise<void> | void
 
   // Async reads (main-process / native state)
   getAppVersion(): Promise<string>

@@ -137,6 +137,25 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
     ipcRenderer.on('native:annotate-closed', handler)
     return () => ipcRenderer.removeListener('native:annotate-closed', handler)
   },
+  // The overlay's own 留存画面 / 录制 buttons. The overlay cannot call into the
+  // app renderer, so the click travels overlay → main → here → the meeting
+  // panel, which owns both actions.
+  onAnnotateShot: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('native:annotate-shot', handler)
+    return () => ipcRenderer.removeListener('native:annotate-shot', handler)
+  },
+  onAnnotateRecord: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('native:annotate-record', handler)
+    return () => ipcRenderer.removeListener('native:annotate-record', handler)
+  },
+  setAnnotateToolbarState: (state: { recording: boolean; canShot: boolean; canRecord: boolean }) =>
+    ipcRenderer.send('native:annotate-toolbar', {
+      recording: state.recording === true,
+      canShot: state.canShot === true,
+      canRecord: state.canRecord === true,
+    }),
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
   // The desktop shell DOES have a splash overlay (a native WebContentsView
   // floating above the app while it connects and boots — see main/splash.ts).

@@ -187,6 +187,30 @@ export function registerAnnotateIpc(): void {
     if (!isOverlaySender(e.sender)) return
     closeAnnotateOverlay()
   })
+  // The overlay's 留存画面 / 录制. Relayed to the app window, which owns both
+  // actions — the overlay document has no access to the meeting at all.
+  ipcMain.on('annotate:shot', (e) => {
+    if (!isOverlaySender(e.sender)) return
+    getMainWindow()?.webContents.send('native:annotate-shot')
+  })
+  ipcMain.on('annotate:record', (e) => {
+    if (!isOverlaySender(e.sender)) return
+    getMainWindow()?.webContents.send('native:annotate-record')
+  })
+  // What the overlay's own toolbar should show: recording state, and whether
+  // each of the two actions would do anything right now. Only the app window
+  // may set it — the values are what the audience-affecting buttons will do.
+  ipcMain.on('native:annotate-toolbar', (e, state: unknown) => {
+    if (!isMainSender(e.sender)) return
+    const raw = (state ?? {}) as Record<string, unknown>
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('annotate:toolbar', {
+        recording: raw.recording === true,
+        canShot: raw.canShot === true,
+        canRecord: raw.canRecord === true,
+      })
+    }
+  })
 }
 
 /** Test seam: drop the window reference without touching Electron. */

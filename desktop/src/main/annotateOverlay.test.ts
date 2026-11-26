@@ -274,6 +274,55 @@ describe('ink forwarding', () => {
   })
 })
 
+describe('capture actions from the overlay', () => {
+  it('relays 留存画面 / 录制 to the app window', async () => {
+    // The overlay document has no access to the meeting: the two actions exist
+    // there only because the footer is underneath the full-screen surface.
+    const mod = await load('win32')
+    mod.registerAnnotateIpc()
+    await mod.openAnnotateOverlay()
+
+    state.events['annotate:shot']?.(overlaySender())
+    state.events['annotate:record']?.(overlaySender())
+
+    expect(state.sent).toEqual([
+      { channel: 'native:annotate-shot', payload: undefined },
+      { channel: 'native:annotate-record', payload: undefined },
+    ])
+  })
+
+  it('ignores capture actions from anything but the overlay document', async () => {
+    const mod = await load('win32')
+    mod.registerAnnotateIpc()
+    await mod.openAnnotateOverlay()
+
+    state.events['annotate:shot']?.({ sender: { id: 42 } })
+    state.events['annotate:record']?.({ sender: state.mainWebContents })
+
+    expect(state.sent).toEqual([])
+  })
+
+  it('pushes the toolbar state only into the overlay, only from the app window', async () => {
+    // The overlay renders its own toolbar and cannot see the recorder or the
+    // key-frame switch, so it has to be told — but a page holding the preload
+    // must not be able to fake a recording indicator.
+    const mod = await load('win32')
+    mod.registerAnnotateIpc()
+    await mod.openAnnotateOverlay()
+
+    const toolbar = { recording: true, canShot: true, canRecord: false }
+    state.events['native:annotate-toolbar']?.({ sender: { id: 42 } }, toolbar)
+    expect(state.windows[0].webContents.send).not.toHaveBeenCalledWith('annotate:toolbar', expect.anything())
+
+    state.events['native:annotate-toolbar']?.({ sender: state.mainWebContents }, toolbar)
+    expect(state.windows[0].webContents.send).toHaveBeenCalledWith('annotate:toolbar', {
+      recording: true,
+      canShot: true,
+      canRecord: false,
+    })
+  })
+})
+
 describe('IPC sender checks', () => {
   it('refuses to open the overlay for anything but the app window', async () => {
     // The same preload runs in the share page, which renders conference data.

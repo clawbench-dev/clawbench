@@ -240,7 +240,10 @@ describe('manual key-frame button visibility', () => {
 
     const shot = wrapper.find('[data-role="notes-pane"] [data-role="shot-open"]')
     expect(shot.exists()).toBe(true)
-    expect(shot.find('img').attributes('src')).toContain('/api/share/tok-1/notes/shot?id=8')
+    // The host's own transcript reads the authenticated endpoint: the public
+    // one follows the record's publication switch, so every frame went 404 the
+    // moment the room closed (see meetingShots.ts `owner`).
+    expect(shot.find('img').attributes('src')).toContain('/api/live-share/notes/shot/image?token=tok-1&id=8')
   })
 
   it('stays hidden while key frames are paused, even with a picture', async () => {

@@ -100,6 +100,12 @@
         background: rgba(88, 166, 255, 0.85);
         color: #fff;
       }
+      /* Recording is a state, not a mode: keep it red so it reads at a glance
+         against the blue tool toggles. */
+      #record.rec {
+        background: rgba(207, 34, 46, 0.9);
+        color: #fff;
+      }
       .swatch {
         width: 18px;
         height: 18px;
@@ -134,6 +140,15 @@
       <span class="sep"></span>
       <button id="undo" title="撤销">↶</button>
       <button id="clear" title="清空">✕</button>
+      <span class="sep"></span>
+      <!-- The footer's 留存画面 / 录制, repeated here because the footer is under
+           this window: while the annotations are on screen those buttons cannot
+           be clicked at all, and closing the window erases the ink. -->
+      <!-- Hidden until the app window says what it can do (one push when the
+           window opens). An older web UI never pushes, and a button that
+           silently does nothing is worse than no button. -->
+      <button id="shot" hidden title="留存画面（含标注）">留存</button>
+      <button id="record" hidden title="录制">录制</button>
       <button id="close" title="关闭标注">关闭</button>
     </div>
     <script>
@@ -141,7 +156,7 @@
         const canvas = document.getElementById('ink')
         const ctx = canvas.getContext('2d')
         const bar = document.getElementById('bar')
-        const host = window.AnnotateHost || { ink() {}, close() {} }
+        const host = window.AnnotateHost || { ink() {}, close() {}, shot() {}, record() {} }
         /**
          * Whether the bar may fade out. False when the overlay is excluded from
          * the capture: the audience cannot see the bar there, so hiding it only
@@ -323,6 +338,38 @@
           wake()
         })
         document.getElementById('close').addEventListener('click', () => host.close())
+
+        /**
+         * 留存画面 / 录制: the same two actions as the meeting footer, which this
+         * full-screen window covers. The page owns neither: the click goes to the
+         * app window (host.shot / host.record) and the toolbar state comes back
+         * the other way — whether a recording is running, and whether each
+         * action would do anything right now.
+         */
+        const shotBtn = document.getElementById('shot')
+        const recordBtn = document.getElementById('record')
+        function setRecording(on) {
+          recordBtn.textContent = on ? '停止' : '录制'
+          recordBtn.title = on ? '停止录制' : '录制'
+          recordBtn.classList.toggle('rec', on)
+        }
+        function applyToolbar(state) {
+          if (!state) return
+          setRecording(state.recording === true)
+          // A button that would silently do nothing reads as broken (key frames
+          // paused, no picture to record): hide it, like the footer does.
+          shotBtn.hidden = state.canShot !== true
+          recordBtn.hidden = state.canRecord !== true
+        }
+        shotBtn.addEventListener('click', () => {
+          wake()
+          host.shot()
+        })
+        recordBtn.addEventListener('click', () => {
+          wake()
+          host.record()
+        })
+        if (typeof host.onToolbar === 'function') host.onToolbar(applyToolbar)
 
         document.addEventListener('keydown', (ev) => {
           if (ev.key === 'Escape') host.close()

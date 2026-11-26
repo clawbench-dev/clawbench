@@ -48,6 +48,23 @@ describe('meeting key-frame wiring', () => {
     const closedHandler = stage.slice(stage.indexOf('onAnnotateClosed'))
     expect(closedHandler.slice(0, closedHandler.indexOf('})'))).toContain('share.endAnnotation()')
   })
+
+  it('offers 留存画面 and 录制 on the drawing surface as well as in the footer', () => {
+    // A full-screen share puts the surface OVER the footer: while the
+    // annotations are on screen those two buttons cannot be clicked at all, and
+    // closing the surface erases the ink — so a frame captured from the footer
+    // could never carry an annotation.
+    const teleport = stage.slice(stage.indexOf('annotateWindowTarget && share.previewStream.value'))
+    const block = teleport.slice(0, teleport.indexOf('</LiveAnnotateOverlay>'))
+    expect(block).toContain('@shot="captureShot"')
+    expect(block).toContain('@toggle-record="toggleRecording"')
+
+    // The desktop overlay is a separate document, so its buttons arrive as IPC
+    // and its own record button has to be told whether a recording is running.
+    expect(stage).toContain('onAnnotateShot')
+    expect(stage).toContain('onAnnotateRecord')
+    expect(stage).toContain('setAnnotateToolbarState')
+  })
 })
 
 /**
