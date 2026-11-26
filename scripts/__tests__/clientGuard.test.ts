@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  AUX_PRELOAD_BRIDGES,
   BRIDGE_CONTRACT_PATH,
   CONTRACT_PATHS,
   DESKTOP_BRIDGE_IMPLEMENTATION_PATH,
@@ -366,6 +367,35 @@ describe('preloadBridgeBreakingChanges', () => {
     expect(preloadBridgeBreakingChanges(before, null)).toHaveLength(1)
     expect(preloadBridgeBreakingChanges('', before)).toHaveLength(1)
   })
+
+  it('reads a named bridge other than ClawBenchNative', () => {
+    // v0.149.0 failed the release here: the overlay's preload exposes
+    // `AnnotateHost`, but every file under desktop/src/preload was diffed as
+    // `ClawBenchNative` and could not be read — so two ADDED verbs (留存画面 /
+    // 录制) were reported as a breaking contract change.
+    const overlay = (...members: string[]) =>
+      [
+        "contextBridge.exposeInMainWorld('AnnotateHost', {",
+        ...members,
+        '})',
+      ].join('\n')
+    const old = overlay('  ink(msg: string): void {},', '  close(): void {},')
+    const next = overlay(
+      '  ink(msg: string): void {},',
+      '  close(): void {},',
+      '  shot(): void {},',
+      '  record(): void {},',
+      '  onToolbar(cb: (state: unknown) => void): void {},',
+    )
+    expect(preloadBridgeBreakingChanges(old, next, 'AnnotateHost')).toEqual([])
+    expect(preloadBridgeBreakingChanges(next, old, 'AnnotateHost')).toEqual([
+      'preload: shot was removed',
+      'preload: record was removed',
+      'preload: onToolbar was removed',
+    ])
+    // Not found under this name → still fails closed rather than passes.
+    expect(preloadBridgeBreakingChanges(old, next)).toHaveLength(1)
+  })
 })
 
 describe('parseProtocol', () => {
@@ -469,5 +499,19 @@ describe('release workflow wiring', () => {
     expect(CONTRACT_PATHS).toContain('web/src/utils/clawbenchNative.ts')
     expect(CONTRACT_PATHS).toContain('desktop/src/preload')
     expect(PROTOCOL_FILE).toBe('internal/version/client_protocol.txt')
+  })
+
+  it('judges the overlay and capsule preloads as growing bridges too', () => {
+    // Each is its own window's entire bridge, named by the global it exposes.
+    // A preload added to the folder but missing here would fall back to the
+    // all-or-nothing rule and fail every additive verb.
+    for (const { path, global } of AUX_PRELOAD_BRIDGES) {
+      expect(CONTRACT_PATHS.some((p) => path.startsWith(p))).toBe(true)
+      expect([...preloadBridgeMembers(repoFile(path), global).keys()].length).toBeGreaterThan(0)
+    }
+    // The main bridge must not be listed twice: its comparison is stricter.
+    expect(AUX_PRELOAD_BRIDGES.map((b) => b.path)).not.toContain(
+      DESKTOP_BRIDGE_IMPLEMENTATION_PATH,
+    )
   })
 })
