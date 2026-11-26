@@ -936,6 +936,21 @@ describe('ChatPanelContent — group auto-speech is per speaker', () => {
     expect(groupBranch).not.toContain('speakMessage')
   })
 
+  it('suppresses the chime and read-aloud for a replayed terminal frame', async () => {
+    // #728 leftover: a `done` replayed from the reconnect buffer arrives while
+    // the page is VISIBLE (the app just opened / returned), so deferring chimes
+    // on a hidden page never suppressed it. onStreamEnd must treat it as
+    // catch-up: no sound, no read-aloud, no mark-read.
+    const src = await source()
+    const start = src.indexOf('async function onStreamEnd(')
+    expect(start, 'onStreamEnd must exist').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n}\n', start))
+    expect(region).toMatch(/const replayed = opts\?\.replayed === true/)
+    expect(region).toMatch(/if \(!replayed\) playNotificationSound\(\)/)
+    expect(region).toMatch(/isGroupSession\.value \|\| replayed/)
+    expect(region).toMatch(/replaying: replayed/)
+  })
+
   it('registers onTurnBoundary and re-anchors last_read_at when the user is watching', async () => {
     // A group member finalize (stream_finalize) is a turn boundary: the member
     // reply just stamped its completed_at, so the session is unread for the rest

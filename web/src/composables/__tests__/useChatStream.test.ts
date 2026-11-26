@@ -1226,8 +1226,48 @@ describe('useChatStream', () => {
       simulateWsEvent('done', {})
 
       await vi.waitFor(() => {
-        expect(options.onStreamEnd).toHaveBeenCalledWith('done')
+        expect(options.onStreamEnd).toHaveBeenCalledWith('done', { replayed: false })
       })
+    })
+
+    it('tags a replayed done as catch-up so the host can suppress the chime', async () => {
+      // The server replays the buffered terminal frame after a reconnect (or an
+      // app restart with the same client id). The turn ended while this client
+      // was disconnected, so the host must not announce it — this is the
+      // remaining half of #728: the replay arrives AFTER the app is visible, so
+      // deferring hidden-page chimes never covered it.
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      mockIsReplayingEvents.value = true
+
+      simulateWsEvent('done', {})
+
+      await vi.waitFor(() => {
+        expect(options.onStreamEnd).toHaveBeenCalledWith('done', { replayed: true })
+      })
+      // Finalization itself must still happen — this is the only terminal frame.
+      expect(options.loading.value).toBe(false)
+      expect(options.onLoadHistory).toHaveBeenCalled()
+    })
+
+    it('does not raise the "reply finished" toast for a replayed done', async () => {
+      const options = createOptions({ isOpen: ref(false) })
+      const { connectStream } = useChatStream(options)
+
+      options.loading.value = true
+      connectStream('test-session-1')
+      mockIsReplayingEvents.value = true
+
+      simulateWsEvent('content', { content: 'Done reply' })
+      simulateWsEvent('done', {})
+
+      await vi.waitFor(() => {
+        expect(options.loading.value).toBe(false)
+      })
+      expect(options.onNotification).not.toHaveBeenCalled()
     })
 
     it('should call onMessage after done', async () => {
@@ -1352,7 +1392,7 @@ describe('useChatStream', () => {
       )
       expect(assistantMsg.cancelled).toBe(true)
       expect(options.loading.value).toBe(false)
-      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
+      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled', { replayed: false })
     })
 
     it('should not affect new session when cancelled arrives for old session', () => {
@@ -1407,7 +1447,7 @@ describe('useChatStream', () => {
       simulateWsEvent('cancelled', {})
 
       expect(options.loading.value).toBe(false)
-      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
+      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled', { replayed: false })
     })
 
     it('resyncs from the DB on cancelled, like done/error', async () => {
@@ -1447,7 +1487,7 @@ describe('useChatStream', () => {
       simulateWsEvent('done', {})
 
       expect(options.loading.value).toBe(false)
-      expect(options.onStreamEnd).toHaveBeenCalledWith('done')
+      expect(options.onStreamEnd).toHaveBeenCalledWith('done', { replayed: false })
     })
   })
 
@@ -1464,7 +1504,7 @@ describe('useChatStream', () => {
 
       // error stops streaming but keeps the persistent subscription.
       expect(mockSendWsMessage).not.toHaveBeenCalled()
-      expect(options.onStreamEnd).toHaveBeenCalledWith('error')
+      expect(options.onStreamEnd).toHaveBeenCalledWith('error', { replayed: false })
     })
 
     it('should call onLoadHistory on error', () => {
@@ -1702,6 +1742,28 @@ describe('useChatStream', () => {
       simulateWsEvent('stream_finalize', { message_id: 42 })
 
       expect(onTurnBoundary).not.toHaveBeenCalled()
+    })
+
+    it('auto-speaks a LIVE member finalize but not a replayed one', () => {
+      // onMemberFinalize exists to read THIS speaker's reply aloud. A replayed
+      // finalize means the member spoke while this client was disconnected, so
+      // reading it on return is the same stale announcement as a replayed done.
+      const onMemberFinalize = vi.fn()
+      const options = createOptions({ onMemberFinalize })
+      useChatStream(options)
+
+      simulateWsEvent('stream_start', { message_id: 42 })
+      simulateWsEvent('content', { content: 'A says' }, 'test-session-1', 42)
+      simulateWsEvent('stream_finalize', { message_id: 42 })
+      expect(onMemberFinalize).toHaveBeenCalledTimes(1)
+      expect(onMemberFinalize).toHaveBeenCalledWith(42)
+
+      onMemberFinalize.mockClear()
+      simulateWsEvent('stream_start', { message_id: 43 })
+      simulateWsEvent('content', { content: 'B says' }, 'test-session-1', 43)
+      mockIsReplayingEvents.value = true
+      simulateWsEvent('stream_finalize', { message_id: 43 })
+      expect(onMemberFinalize).not.toHaveBeenCalled()
     })
 
     it('does NOT call onTurnBoundary for a different session', () => {
@@ -3749,7 +3811,7 @@ describe('useChatStream', () => {
       simulateWsEvent('cancelled', {})
 
       expect(options.loading.value).toBe(false)
-      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled')
+      expect(options.onStreamEnd).toHaveBeenCalledWith('cancelled', { replayed: false })
     })
 
     it('logs events for another session while the current one is loading', () => {

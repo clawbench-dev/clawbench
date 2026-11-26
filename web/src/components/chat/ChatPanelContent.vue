@@ -1265,13 +1265,22 @@ watch(() => identity.currentSessionId.value, (sid) => {
 //   useSessionManager's watch(loading) safety net (loading true→false triggers fetchQueue)
 // - 'cancelled': user cancelled → clear locally for immediate UI response
 // - 'error': error occurred → don't touch pending messages; backend preserves queue
-async function onStreamEnd(reason) {
+async function onStreamEnd(reason, opts) {
+  // `replayed` = the server replayed this terminal frame from its reconnect
+  // buffer, so the turn ended while this client was disconnected. Finalize as
+  // usual, but do not ANNOUNCE it: no chime, no read-aloud, no toast, and no
+  // mark-read (the badge rule in sessionReadGate). #728 deferred the chime while
+  // the page was hidden, but on mobile the replay arrives right AFTER the app
+  // becomes visible, so that deferral never applied — the chime then played the
+  // moment the client was opened.
+  const replayed = opts?.replayed === true
   if (reason === 'done') {
-    playNotificationSound()
-    if (isGroupSession.value) {
+    if (!replayed) playNotificationSound()
+    if (isGroupSession.value || replayed) {
       // Group runs are read per speaker at stream_finalize
       // (handleMemberFinalize). The terminal `done` carries only the LAST
       // member's reply, so speaking here would duplicate/replace it.
+      // A replayed `done` is catch-up (see above) — no read-aloud either.
       // onOutputEndNoSpeech is still called so the screen lock is released
       // when nothing is queued or playing.
       autoSpeech.onOutputEndNoSpeech()
@@ -1288,7 +1297,7 @@ async function onStreamEnd(reason) {
     // panel that is not the chat, must keep its badge.
     const sid = identity.currentSessionId.value
     if (sid) {
-      await session.markVisibleSessionRead(sid).catch(() => {})
+      await session.markVisibleSessionRead(sid, { replaying: replayed }).catch(() => {})
     }
     loadSessionsOnce()
     // Refresh git branch — AI agent may have checked out a different branch
@@ -1302,7 +1311,7 @@ async function onStreamEnd(reason) {
     // Same shared gate as the completion branch above.
     const sid = identity.currentSessionId.value
     if (sid) {
-      session.markVisibleSessionRead(sid).catch(() => {})
+      session.markVisibleSessionRead(sid, { replaying: replayed }).catch(() => {})
     }
     // Refresh git state — agent may have modified files before cancellation
     store.loadGitBranch().catch(() => {})
