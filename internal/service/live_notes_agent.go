@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -184,6 +185,9 @@ func reviseLiveNotesTranscriptWithAgent(
 		}
 		chunkPairs, chunkSplits, err := parseLiveNoteAnswer(answer)
 		if err != nil {
+			slog.Warn("live notes: unusable proofread answer",
+				"chunk", i+1, "chunks", len(chunks), "agent", true, "err", err,
+				"answer", truncateRunes(answer, liveNotesReviseLogRunes))
 			return "", fmt.Errorf("live notes: agent revise chunk %d: %w", i+1, err)
 		}
 		pairs = append(pairs, chunkPairs...)

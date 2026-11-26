@@ -35,20 +35,60 @@ func TestParseLiveNoteAnswer_DropsPairWhoseTargetIsTooLong(t *testing.T) {
 	assert.Equal(t, liveNotePair{From: "王小明", To: "王总"}, pairs[0])
 }
 
+// An answer where every line HAS an arrow but none of them can be applied is the
+// case the old error reported as `(first line: "")` — it collected only lines
+// without an arrow, which is the one thing this answer does not contain. The
+// message has to name the line and the reason, because the person reading it is
+// the one deciding whether to retry or switch models.
+func TestParseLiveNoteAnswer_UnusableAnswerNamesTheLineAndTheReason(t *testing.T) {
+	raw := "好 => 好\n云 => 云\n在 => 再"
+	_, _, err := parseLiveNoteAnswer(raw)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNoteReviseFormat)
+	assert.NotContains(t, err.Error(), `first: ""`, "an answer full of arrows must not report an empty sample")
+	assert.Contains(t, err.Error(), "好 => 好", "the offending line itself must be quoted")
+	assert.Contains(t, err.Error(), "same", "the reason must be stated")
+	assert.Contains(t, err.Error(), "3 unusable line(s)")
+}
+
+// The clock-less `==>` answer is a distinct failure: the model used the
+// speaker-split arrow for plain replacements. Naming that pattern is what tells
+// the reader the prompt needs sharpening rather than the model being hopeless.
+func TestParseLiveNoteAnswer_HintsAtTheSplitArrowWhenEveryLineUsesIt(t *testing.T) {
+	raw := "科劳本奇 ==> ClawBench\n王小明 ==> 王总"
+	_, _, err := parseLiveNoteAnswer(raw)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNoteReviseFormat)
+	assert.Contains(t, err.Error(), "科劳本奇 ==> ClawBench")
+	assert.Contains(t, err.Error(), "speaker-split arrow", "the whole-answer pattern must be named")
+}
+
+// The hint is for the whole-answer pattern only: one stray `==>` line among
+// prose lines says nothing about what the model was doing, so it must not be
+// claimed.
+func TestParseLiveNoteAnswer_NoSplitHintWhenOnlyOneLineUsesTheArrow(t *testing.T) {
+	raw := "科劳本奇 ==> ClawBench\n这段没有需要修改的地方"
+	_, _, err := parseLiveNoteAnswer(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "2 unusable line(s)")
+	assert.NotContains(t, err.Error(), "speaker-split arrow")
+}
+
 // ── Split lines ────────────────────────────────────────────────────────────
 
 // A "==>" line that carries no clock is not a split: the clock is what keeps a
 // split from being applied to an unrelated line.
 func TestParseLiveNoteSplitLine_WithoutClockIsNotASplit(t *testing.T) {
-	split, ok := parseLiveNoteSplitLine("我：你好 ==> 张三")
-	assert.False(t, ok)
+	split, reason := parseLiveNoteSplitLine("我：你好 ==> 张三")
+	assert.NotEmpty(t, reason, "the rejection must say why")
+	assert.Contains(t, reason, "[mm:ss]")
 	assert.Equal(t, liveNoteSplit{}, split)
 }
 
 // A clocked line that has no "==>" arrow is not a split either.
 func TestParseLiveNoteSplitLine_WithoutArrowIsNotASplit(t *testing.T) {
-	split, ok := parseLiveNoteSplitLine("[00:03] 我：你好")
-	assert.False(t, ok)
+	split, reason := parseLiveNoteSplitLine("[00:03] 我：你好")
+	assert.NotEmpty(t, reason)
 	assert.Equal(t, liveNoteSplit{}, split)
 }
 
