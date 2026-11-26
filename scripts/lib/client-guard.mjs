@@ -150,11 +150,27 @@ export const BRIDGE_CONTRACT_PATH = 'web/src/utils/clawbenchNative.ts'
 export const DESKTOP_BRIDGE_IMPLEMENTATION_PATH = 'desktop/src/preload/index.ts'
 
 /**
- * Read the member list of the preload bridge object.
+ * The other two preloads. Each is its own window's whole bridge
+ * (`AnnotateHost` for the annotation overlay, `FloatingHost` for the capsule),
+ * so it grows the same way: an old shell without the new verb simply returns
+ * `undefined` and the page degrades. They used to be judged all-or-nothing
+ * along with the rest of `desktop/src/preload`, which made an additive verb —
+ * e.g. the overlay's 留存画面 / 录制 buttons — fail the release as "breaking".
+ *
+ * `index.ts` is never listed here: its bridge is `ClawBenchNative`, judged
+ * against the page's interface, and that comparison is the stricter one.
+ */
+export const AUX_PRELOAD_BRIDGES = [
+  { path: 'desktop/src/preload/annotate.ts', global: 'AnnotateHost' },
+  { path: 'desktop/src/preload/floating.ts', global: 'FloatingHost' },
+]
+
+/**
+ * Read the member list of a preload bridge object.
  *
  * The object is the literal handed to
- * `contextBridge.exposeInMainWorld('ClawBenchNative', { ... })`. Members are
- * found line-based — key at the conventional two-space indent, arrow or method
+ * `contextBridge.exposeInMainWorld(<global>, { ... })`. Members are found
+ * line-based — key at the conventional two-space indent, arrow or method
  * shorthand — the same rule `bridgeMembers` uses for the interface. Brace
  * matching is deliberately NOT used: the bodies contain strings and comments
  * with stray braces (a truncated `'}` in a message is enough), and one mismatch
@@ -163,10 +179,10 @@ export const DESKTOP_BRIDGE_IMPLEMENTATION_PATH = 'desktop/src/preload/index.ts'
  * @returns Map<memberName, {optional: boolean}> — empty when the object cannot
  * be found (callers must treat that as "unknown", not "compatible").
  */
-export function preloadBridgeMembers(source) {
+export function preloadBridgeMembers(source, global = 'ClawBenchNative') {
   const members = new Map()
   if (typeof source !== 'string') return members
-  const marker = "exposeInMainWorld('ClawBenchNative', {"
+  const marker = `exposeInMainWorld('${global}', {`
   const open = source.indexOf(marker)
   if (open === -1) return members
   // The literal closes with the first `})` at column 0. A member's own body
@@ -186,9 +202,9 @@ export function preloadBridgeMembers(source) {
 /**
  * @returns string[] human-readable reasons; empty means purely additive.
  */
-export function preloadBridgeBreakingChanges(prevSource, nextSource) {
-  const before = preloadBridgeMembers(prevSource)
-  const after = preloadBridgeMembers(nextSource)
+export function preloadBridgeBreakingChanges(prevSource, nextSource, global = 'ClawBenchNative') {
+  const before = preloadBridgeMembers(prevSource, global)
+  const after = preloadBridgeMembers(nextSource, global)
   // An unreadable object is not evidence of compatibility. Fail closed.
   if (before.size === 0 || after.size === 0) {
     return ['the desktop preload bridge could not be read at one of the two releases']
@@ -409,9 +425,10 @@ function main() {
   const contractChanged = prevTag ? changedPaths(prevTag, tag, CONTRACT_PATHS) : []
 
   // Split the changed contract files into "a stale shell can still live with
-  // this" and "it cannot". The two bridge files — the page's interface and the
-  // desktop shell's implementation of it — and the /api/health response only
-  // break on removals; the rest stay all-or-nothing.
+  // this" and "it cannot". The three bridges — the page's interface, the
+  // desktop shell's implementation of it, and the overlay/capsule preloads —
+  // and the /api/health response only break on removals; the rest stay
+  // all-or-nothing.
   const bridgeResult = (path, compare) =>
     contractChanged.includes(path) ? compare(fileAt(prevTag, path), fileAt(tag, path)) : []
   const bridgeReasons = bridgeResult(BRIDGE_CONTRACT_PATH, bridgeBreakingChanges)
@@ -420,11 +437,27 @@ function main() {
     preloadBridgeBreakingChanges,
   )
   const healthReasons = bridgeResult(HEALTH_CONTRACT_PATH, healthBreakingChanges)
+  const auxPreloadResults = AUX_PRELOAD_BRIDGES.map(({ path, global }) => ({
+    path,
+    // The reads are passed in so the bridge's global cannot be forgotten.
+    reasons: contractChanged.includes(path)
+      ? preloadBridgeBreakingChanges(
+          fileAt(prevTag, path),
+          fileAt(tag, path),
+          global,
+        )
+      : [],
+  }))
+  const auxReasons = auxPreloadResults.flatMap((r) => r.reasons)
+  const auxPaths = new Set(
+    auxPreloadResults.filter((r) => r.reasons.length > 0).map((r) => r.path),
+  )
   const breakingContractPaths = contractChanged.filter(
     (p) =>
       (p !== BRIDGE_CONTRACT_PATH || bridgeReasons.length > 0) &&
       (p !== DESKTOP_BRIDGE_IMPLEMENTATION_PATH || preloadReasons.length > 0) &&
-      (p !== HEALTH_CONTRACT_PATH || healthReasons.length > 0),
+      (p !== HEALTH_CONTRACT_PATH || healthReasons.length > 0) &&
+      !auxPaths.has(p),
   )
 
   const protocolBumped = prevProtocol !== null && prevProtocol !== currentProtocol
@@ -447,6 +480,7 @@ function main() {
         ...breakingContractPaths.map((p) => `  - ${p}`),
         ...(bridgeReasons.length > 0 ? bridgeReasons.map((r) => `    · ${r}`) : []),
         ...(preloadReasons.length > 0 ? preloadReasons.map((r) => `    · ${r}`) : []),
+        ...(auxReasons.length > 0 ? auxReasons.map((r) => `    · ${r}`) : []),
         ...(healthReasons.length > 0 ? healthReasons.map((r) => `    · ${r}`) : []),
         '',
         `The previous release was protocol ${prevProtocol}, this one is ${currentProtocol}.`,
