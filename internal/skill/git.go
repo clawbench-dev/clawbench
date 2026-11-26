@@ -18,9 +18,10 @@ import (
 // sync worker.
 const gitTimeout = 2 * time.Minute
 
-// maxRepoBytes is a post-clone size cap. A skills repository is text; anything
-// this large is either a mistake or hostile, and scanning it would waste time.
-const maxRepoBytes = 200 << 20 // 200 MiB
+// maxRepoBytes is a post-clone size cap. It exists so that a mistaken or
+// hostile remote cannot fill the data disk or wedge the sync worker; 5 GiB
+// still leaves room for repos that carry bundled assets alongside their text.
+const maxRepoBytes = 5 << 30 // 5 GiB
 
 // EnsureRepo makes sure the local checkout for repo exists and is up to date.
 // It clones when the directory is missing and pulls otherwise. Returns the
