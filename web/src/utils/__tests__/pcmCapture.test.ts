@@ -155,6 +155,23 @@ describe('PcmStreamer', () => {
     s2.stop()
   })
 
+  it('counts every frame it produced, gated or not', async () => {
+    // The figure shown to the user as 本次语音 must be the audio the recogniser
+    // was handed, so a frame the gate withheld still counts: it was captured,
+    // and the engine session is open for it either way.
+    const s = new PcmStreamer({ stream, tuning: VOICE_TUNING_DEFAULTS, onFrame: vi.fn() })
+    await s.start()
+    expect(s.capturedMs()).toBe(0)
+    // 160 samples per frame at 16 kHz = 10 ms.
+    workletNode.port.onmessage!({ data: frameAt(0) })
+    workletNode.port.onmessage!({ data: frameAt(8000) })
+    expect(s.capturedMs()).toBe(20)
+    // The flush marker carries no audio and must not be counted as a frame.
+    workletNode.port.onmessage!({ data: 'flushed' })
+    expect(s.capturedMs()).toBe(20)
+    s.stop()
+  })
+
   it('sends the frames that led into the first loud one', async () => {
     // The gate can only react to a frame that is already loud, so without a
     // pre-roll the first syllable is always lost ("帮我看下" arrives as "看下").

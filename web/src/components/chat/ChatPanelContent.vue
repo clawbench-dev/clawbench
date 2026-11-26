@@ -145,6 +145,7 @@
       :freeDialogPhase="freeDialog.phase.value"
       :freeDialogTranscript="freeDialog.liveTranscript.value"
       :freeDialogCanInterrupt="freeDialog.canInterrupt.value"
+      :freeDialogCapturedMs="freeDialog.capturedMs.value"
       :refreshingSession="refreshingSession"
       :currentSessionId="identity.currentSessionId.value"
       :chatUnreadCount="store.state.chatUnreadCount"

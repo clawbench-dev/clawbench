@@ -206,6 +206,40 @@ const lastError = ref('')
  * very different affordances, and the user cannot see which one applies.
  */
 const canInterrupt = ref(false)
+/**
+ * Audio captured in THIS conversation, in milliseconds; 0 until the mode starts.
+ *
+ * Shown to the user as 「本次语音 X」. Measured from the capture graph
+ * (`PcmStreamer.capturedMs`) and not from a wall clock: the loop keeps one
+ * microphone open across every turn, and what it costs — what the recogniser is
+ * handed — is exactly the audio that graph produced. A wall clock would also
+ * count the time a suspended context spends producing nothing at all.
+ *
+ * Two counters, because both of the obvious single ones are wrong:
+ *   - `capturedFinished`: graphs already torn down. A re-acquisition opens a NEW
+ *     graph whose own count starts at zero, so its share is added to the total
+ *     instead of replacing it.
+ *   - `capturedPublished`: the number on screen, refreshed at the edges
+ *     (a graph starting or going away, the mode resetting).
+ *
+ * Why the figure is published per frame instead of computed on read: the
+ * graph is a plain module variable, so a computed that reads `capturedMs()` is
+ * memoised on its first access — a zero read before the microphone existed would
+ * stick for the whole conversation, and it also cannot see the count grow (the
+ * worklet's samples are not reactive). Publishing from the frame callback is
+ * what keeps it current, and a label re-render every 100 ms frame is cheap.
+ */
+const capturedFinished = ref(0)
+const capturedPublished = ref(0)
+const capturedMs = computed(() => capturedPublished.value)
+
+/** Refreshes the figure on screen — see `capturedMs`. */
+function publishCaptured(): void {
+  const next = capturedFinished.value + (streamer ? streamer.capturedMs() : 0)
+  // Frames arrive every 100 ms; skipping an unchanged value keeps a render from
+  // being scheduled for a label that would show the same thing.
+  if (next !== capturedPublished.value) capturedPublished.value = next
+}
 
 let tuning: VoiceTuning = { ...VOICE_TUNING_DEFAULTS }
 /** The session's capture graph — see "ONE microphone" in the header. */
@@ -615,16 +649,20 @@ function recoverCapture(reason: string): void {
 
 /** Releases the microphone and its capture graph. */
 function closeCapture() {
+  // Fold the graph's own count in as it goes away: after `stop()` the worklet
+  // produces nothing more, so its contribution has to move into the total.
+  if (streamer) capturedFinished.value += streamer.capturedMs()
   captureGen += 1
   capturePending = null
   frameSink = null
   stopCaptureWatch()
   streamer?.stop()
   streamer = null
-  if (micStream) {
-    micStream.getTracks().forEach((t) => t.stop())
-    micStream = null
-  }
+  // The tracks are stopped BEFORE `micStream` is cleared, because clearing it is
+  // the signal `capturedMs` recomputes on.
+  micStream?.getTracks().forEach((t) => t.stop())
+  micStream = null
+  publishCaptured()
 }
 
 /** Ends the whole capture side: both recognisers and the device. */
@@ -873,9 +911,15 @@ function ensureCapture(): Promise<boolean> {
   const myCaptureGen = ++captureGen
   const toast = useToast()
   const pending = (async () => {
+    // Published the moment the device is granted, not at the end of this
+    // function: `getUserMedia` and the wait for the graph to start can span more
+    // than a tick, and anything reading `micStream` (the usage counter, and the
+    // `stop()` that may land in between) has to see the real device.
     let stream: MediaStream
     try {
-      stream = await acquireMic({ audio: { echoCancellation: tuning.echoCancellation, noiseSuppression: tuning.noiseSuppression, autoGainControl: tuning.autoGainControl } })
+      const acquiring = acquireMic({ audio: { echoCancellation: tuning.echoCancellation, noiseSuppression: tuning.noiseSuppression, autoGainControl: tuning.autoGainControl } })
+      acquiring.then((s) => { if (myCaptureGen === captureGen) micStream = s }, () => { /* reported below */ })
+      stream = await acquiring
     } catch (e) {
       lastError.value = gt(classifyMicError(e) === 'denied' ? 'chat.voice.micDenied' : 'chat.voice.micUnavailable')
       toast.show(lastError.value, { icon: 'warning', type: 'error', duration: 6000 })
@@ -891,7 +935,6 @@ function ensureCapture(): Promise<boolean> {
       stream.getTracks().forEach((t) => t.stop())
       return false
     }
-    micStream = stream
 
     // A track can end without us stopping it — another app grabs the microphone
     // (a call, a recorder) or a Bluetooth headset disconnects. The sockets stay
@@ -922,9 +965,15 @@ function ensureCapture(): Promise<boolean> {
       onLevel: (rms) => {
         lastFrameAt = Date.now()
         if (rms > 0) heardSomething = true
+        // Every frame is captured audio, so this is where the figure on screen
+        // moves. Refreshing only at the edges (a graph starting or closing) left
+        // it stuck at the zero it was published with — the graph is at 0 ms the
+        // moment it starts, and nothing else ever read it again.
+        publishCaptured()
       },
     })
     streamer = s
+    publishCaptured()
     startCaptureWatch()
     void s.start().catch((err) => {
       appLog.e(TAG, 'pcm capture failed', err)
@@ -1281,6 +1330,11 @@ export async function startFreeDialog(opts: {
   onInterrupt = opts.onInterrupt ?? null
   onSpeakPendingReply = opts.onSpeakPendingReply ?? null
   lastError.value = ''
+  // The usage figure belongs to one conversation, so it is cleared on entry to
+  // the next one — NOT in `stop()`: the closing toast is shown from there and
+  // reading zero on the way out is what tells the user nothing was captured.
+  capturedFinished.value = 0
+  publishCaptured()
   tuning = readVoiceTuning(serverConfig.value as Record<string, unknown>)
   canInterrupt.value = tuning.bargeIn !== 'off'
   // The loop is built around the reply being read out: it waits for playback
@@ -1494,6 +1548,8 @@ export function useFreeDialog() {
     liveTranscript,
     lastError,
     canInterrupt,
+    /** Audio captured (and sent to the recogniser) in this conversation, ms. */
+    capturedMs,
     start: startFreeDialog,
     stop,
     setThinking: setFreeDialogThinking,

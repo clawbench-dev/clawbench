@@ -222,6 +222,16 @@ export class PcmStreamer {
   private flushWaiters: Array<() => void> = []
   /** When the last frame above the speech threshold reached us (epoch ms). */
   private lastVoiceAt = 0
+  /**
+   * Samples the worklet has produced since `start()` — the capture graph's own
+   * clock, not `Date.now()`.
+   *
+   * This is what the recogniser is billed and how long the microphone was
+   * actually open. A wall clock measured in the page counts the time the
+   * context was suspended (a backgrounded phone) and the time a fresh graph
+   * spends loading its worklet, so the two disagree exactly when it matters.
+   */
+  private capturedSamples = 0
 
   constructor(private readonly opts: PcmStreamerOptions) {}
 
@@ -283,6 +293,9 @@ export class PcmStreamer {
         this.settleFlush()
         return
       }
+      // Counted before the gate: audio withheld from the consumer was still
+      // captured, and the recogniser session is open for it either way.
+      this.capturedSamples += buf.byteLength / 2
       if (buf.byteLength < 2) {
         // "Cannot tell" must never mean "discard".
         this.lastSentAt = Date.now()
@@ -391,6 +404,18 @@ export class PcmStreamer {
   tailWaitMs(): number {
     if (!this.lastVoiceAt) return 0
     return Math.max(0, this.lastVoiceAt + PIPELINE_SLACK_MS - Date.now())
+  }
+
+  /**
+   * How much audio this graph has captured since `start()`, in milliseconds.
+   *
+   * The one honest measure of what a live recogniser session cost: the engine
+   * is handed this audio, and the microphone is open for exactly this long.
+   * Independent of the voice gate, of where a frame was routed, and of whether
+   * the page was visible.
+   */
+  capturedMs(): number {
+    return Math.round((this.capturedSamples / PCM_SAMPLE_RATE) * 1000)
   }
 
   /** Tears the graph down. Safe to call more than once, and before `start()`. */

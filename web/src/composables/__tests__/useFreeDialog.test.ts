@@ -87,9 +87,12 @@ function installFakes() {
     PCM_SAMPLE_RATE: 16000,
     PcmStreamer: class {
       stopped = false
+      /** Audio this graph produced; the loop reports it as the session's usage. */
+      captured = 0
       constructor(private readonly opts: { onFrame: (f: ArrayBuffer) => void; onLevel?: (rms: number) => void }) {}
       start() { (globalThis as Record<string, unknown>).__streamer = this; return Promise.resolve() }
       stop() { this.stopped = true }
+      capturedMs() { return Math.round(this.captured) }
       resetGate() { /* the real gate state is not under test here */ }
       emit(rms: number) { this.opts.onLevel?.(rms) }
       frame() { this.opts.onFrame(new ArrayBuffer(4)) }
@@ -1561,5 +1564,55 @@ describe('useFreeDialog', () => {
     expect(useFreeDialog().phase.value).toBe('idle')
     expect(toastShow).toHaveBeenCalled()
     expect(String(toastShow.mock.calls.at(-1)![0])).toMatch(/麦克风|microphone/i)
+  })
+
+  it('reports the audio this conversation actually captured', async () => {
+    // The user is told what the recogniser was handed, so the number must be the
+    // capture graph's own count — not the wall clock, which would also count the
+    // time spent waiting for a reply and the time a suspended context produced
+    // nothing at all.
+    const { startFreeDialog, useFreeDialog, stop } = await import('../useFreeDialog')
+    expect(useFreeDialog().capturedMs.value).toBe(0)
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const streamer = (globalThis as Record<string, { captured: number; emit: (n: number) => void }>).__streamer
+    streamer.captured = 4200
+    // A frame arriving is what refreshes the figure — the user watches it climb
+    // WHILE speaking, not only after the capture is torn down. (Publishing only
+    // at the graph's edges left the label stuck at the 0 ms it was started with.)
+    streamer.emit(0.02)
+    expect(useFreeDialog().capturedMs.value).toBe(4200)
+    // A turn cycle does not reset it: the count belongs to the conversation.
+    speak('做点事 发送')
+    await flush()
+    stop()
+    expect(useFreeDialog().capturedMs.value).toBe(4200)
+    // The next conversation starts from zero.
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    expect(useFreeDialog().capturedMs.value).toBe(0)
+  })
+
+  it('keeps the count across a re-acquired capture instead of restarting it', async () => {
+    // A capture that stalls is torn down and reopened mid-conversation. The
+    // graph is new, so its own count starts at zero — the session total must
+    // not, or the user would watch the number jump backwards.
+    const { startFreeDialog, useFreeDialog, stop } = await import('../useFreeDialog')
+    await startFreeDialog({ sessionId: 's1', onSend: vi.fn() })
+    await flush()
+    const first = (globalThis as Record<string, { captured: number; emit: (n: number) => void }>).__streamer
+    first.emit(0.02)
+    first.captured = 7000
+    // Nothing for 3 s: the watchdog re-acquires the microphone.
+    vi.advanceTimersByTime(3000)
+    await flush()
+    const second = (globalThis as Record<string, { captured: number; emit: (n: number) => void }>).__streamer
+    expect(second).not.toBe(first)
+    second.captured = 1000
+    second.emit(0.02)
+    // Read where it is read in practice — the mode ending — because the figure
+    // is published at the capture's edges, not per frame.
+    stop()
+    expect(useFreeDialog().capturedMs.value).toBe(8000)
   })
 })
