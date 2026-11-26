@@ -36,11 +36,16 @@ describe('meeting key-frame wiring', () => {
     expect(body).toContain("captureNow('manual')")
   })
 
-  it('clears the composited ink when the annotation window goes away', () => {
-    // A leftover stroke would be drawn onto the next frame, in a place the
-    // presenter already erased.
-    expect(stage).toContain('share.clearInkMirror()')
+  it('ends the annotation on every close path, so the audience is wiped too', () => {
+    // Dropping the mirror only cleaned the host's own screenshot copy: the
+    // strokes stayed on every viewer's screen, where the host no longer has a
+    // surface (and therefore no 清空 button) to remove them.
     const close = functionBody('closeAnnotate')
-    expect(close).toContain('share.clearInkMirror()')
+    expect(close).toContain('share.endAnnotation()')
+
+    // The native overlay can be dismissed from inside itself (its close button,
+    // Esc), so its IPC callback is a close path of its own.
+    const closedHandler = stage.slice(stage.indexOf('onAnnotateClosed'))
+    expect(closedHandler.slice(0, closedHandler.indexOf('})'))).toContain('share.endAnnotation()')
   })
 })

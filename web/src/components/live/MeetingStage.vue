@@ -1353,9 +1353,11 @@ onMounted(() => {
   })
   unsubscribeClosed = getNative()?.onAnnotateClosed?.(() => {
     nativeAnnotating.value = false
-    // The strokes are gone with the window; a mirror left behind would be
-    // composited into the next key frame.
-    share.clearInkMirror()
+    // The strokes are gone with the window — and so are they from the
+    // audience's point of view: `endAnnotation` wipes their board (an `ink`
+    // frame would otherwise leave it there for good) and drops the mirror, so
+    // the next key frame is composited without the old ink.
+    share.endAnnotation()
   })
   void resolveRemoteControlSupport(getNative()).then((ok) => {
     controlSupported.value = ok
@@ -1506,7 +1508,10 @@ async function openAnnotate(): Promise<void> {
 function closeAnnotate(): void {
   annotating.value = false
   annotateWindow.close()
-  share.clearInkMirror()
+  // Closing the surface ends the annotation: the audience must not keep
+  // looking at ink the host can no longer see, and no longer has a button to
+  // erase.
+  share.endAnnotation()
   if (nativeAnnotating.value) {
     nativeAnnotating.value = false
     void getNative()?.closeAnnotateOverlay?.()
@@ -1514,7 +1519,10 @@ function closeAnnotate(): void {
 }
 
 watch(annotateWindowTarget, (target) => {
-  if (!target && annotating.value) annotating.value = false
+  // The window can be closed behind our back (its own close button, a browser
+  // popup blocker). Same rule as `closeAnnotate` — an unannounced close is
+  // exactly the case where the audience is left holding the strokes.
+  if (!target && annotating.value) closeAnnotate()
 })
 
 // The drawing surface has nothing to draw on once the picture is gone: close it

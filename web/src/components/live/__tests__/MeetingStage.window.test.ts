@@ -95,6 +95,7 @@ vi.mock('@/composables/useLiveShare', async () => {
     startShots: vi.fn(),
     stopShots: vi.fn(),
     clearInkMirror: vi.fn(),
+    endAnnotation: vi.fn(),
     start: vi.fn(async () => true),
     stop: vi.fn(async () => undefined),
     setTalkEnabled: vi.fn(),

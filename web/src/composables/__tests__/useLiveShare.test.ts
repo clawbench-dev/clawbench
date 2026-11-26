@@ -2498,6 +2498,33 @@ describe('ink mirror for key frames', () => {
 
     await share.stop()
   })
+
+  it('wipes the audience board when the annotation ends, not just the mirror', async () => {
+    const { share } = await startSharing()
+    const { _inkMirrorForTest } = await import('../useLiveShare')
+    await joinAndOffer('v1')
+    const [dc] = FakeDataChannel.instances
+
+    share.sendControl({ t: 'ink', phase: 'start', x: 0.1, y: 0.2, color: '#ff3b30', width: 3 })
+    share.sendControl({ t: 'ink', phase: 'end', x: 0.2, y: 0.3, color: '#ff3b30', width: 3 })
+    expect(_inkMirrorForTest()).toHaveLength(1)
+
+    share.endAnnotation()
+
+    // The audience's board is fed by live frames only: without this frame the
+    // strokes stay on their screen after the host closed the surface, with no
+    // button left to erase them — and `ink-sync` replays them to a rejoin.
+    const clears = dc.sentJSON().filter((m) => m.t === 'ink-clear')
+    expect(clears).toHaveLength(1)
+    // Everything cleared, locally too: a leftover would be composited into the
+    // next key frame.
+    expect(_inkMirrorForTest()).toHaveLength(0)
+    // And a late joiner is told nothing, because there is nothing left to tell.
+    dc.emit({ t: 'ink-sync-req' })
+    expect(dc.sentJSON().filter((m) => m.t === 'ink-sync')).toHaveLength(0)
+
+    await share.stop()
+  })
 })
 
 describe('leaving the page during a meeting', () => {
