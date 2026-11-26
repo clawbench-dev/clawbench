@@ -514,4 +514,16 @@ describe('release workflow wiring', () => {
       DESKTOP_BRIDGE_IMPLEMENTATION_PATH,
     )
   })
+
+  it('keys the bridge set off the registration, not the reasons', () => {
+    // The bug behind v0.149.0 failing twice: `auxPaths` was keyed off the
+    // REASONS instead of the registration, so a registered bridge whose change
+    // was additive (no reasons) still fell through to the all-or-nothing path.
+    // A source guard because the wrong wiring produces no observable reason to
+    // assert on — it only changes which filter the file ends up in.
+    const source = repoFile('scripts/lib/client-guard.mjs')
+    expect(source).toMatch(
+      /const auxPaths = new Set\(\s*AUX_PRELOAD_BRIDGES\.map\(\(b\) => b\.path\)/,
+    )
+  })
 })
