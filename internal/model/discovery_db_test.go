@@ -662,6 +662,36 @@ func TestLoadAgentsFromDBRows_PreferredModeRoundTrip(t *testing.T) {
 	assert.Equal(t, "my custom instructions", found.CustomSystemPrompt)
 }
 
+// TestLoadAgentsFromDBRows_ConfigOptionPicksRoundTrip pins that the per-model
+// generic config-option picks (issue #746) are read by the loader that builds
+// the LIVE agent list.
+//
+// This is the regression guard for "在 A 项目配过，换个新项目就没了": the pick was
+// written to the column and published in memory, but this SELECT omitted the
+// column, so every LoadAgentsIntoMemory (agent create/edit/refresh, restart)
+// silently reset it — and a new session then started on the agent's defaults.
+func TestLoadAgentsFromDBRows_ConfigOptionPicksRoundTrip(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, preferred_config_options)
+		VALUES ('codebuddy', 'Codebuddy', 'codebuddy', '{"m1":{"sandbox":"false","multitask":"false"}}')`)
+	require.NoError(t, err)
+
+	agents, err := loadAgentsFromDBRows(db)
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, map[string]string{"sandbox": "false", "multitask": "false"},
+		agents[0].ConfigOptionsForModel("m1"))
+
+	// The published list must carry it too, not just the raw loader result.
+	require.NoError(t, LoadAgentsIntoMemoryFromDB(db))
+	t.Cleanup(func() { Agents = map[string]*Agent{} })
+	live := GetAgent("codebuddy")
+	require.NotNil(t, live)
+	assert.Equal(t, map[string]string{"sandbox": "false", "multitask": "false"},
+		live.ConfigOptionsForModel("m1"))
+}
+
 func TestLoadAgentsFromDBRows_ToleratesEmptyJSONColumns(t *testing.T) {
 	db := setupTestDBForDiscovery(t)
 

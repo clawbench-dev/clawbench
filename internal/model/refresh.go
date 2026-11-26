@@ -727,7 +727,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 		preferred_mode, preferred_model, preferred_thinking_effort,
 		custom_system_prompt, avatar, avatar_style, avatar_seed, models, models_auto_detected, sort_order,
 		acp_command, auto_approve, disabled, project_id,
-		provider_id, thinking_effort_by_model, mcp_servers, tool_policy,
+		provider_id, thinking_effort_by_model, preferred_config_options, mcp_servers, tool_policy,
 		skip_project_context
 		FROM agents ORDER BY id`)
 	if err != nil {
@@ -749,7 +749,7 @@ func loadAgentsFromDBRows(db dbutil.Reader) ([]*Agent, error) {
 // scanAgentRow reads one agent row, including the JSON-encoded columns.
 func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 	agent := &Agent{}
-	var modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON, toolPolicyJSON string
+	var modelsJSON, levelsJSON, effortByModelJSON, configOptionsJSON, mcpServersJSON, toolPolicyJSON string
 	var autoDetected, autoApprove, disabled, skipProjectContext int
 	var projectID, providerID sql.NullInt64
 
@@ -758,7 +758,7 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		&agent.PreferredMode, &agent.PreferredModel, &agent.PreferredThinkingEffort,
 		&agent.CustomSystemPrompt, &agent.Avatar, &agent.AvatarStyle, &agent.AvatarSeed, &modelsJSON, &autoDetected,
 		&agent.SortOrder, &agent.AcpCommand, &autoApprove, &disabled, &projectID,
-		&providerID, &effortByModelJSON, &mcpServersJSON, &toolPolicyJSON, &skipProjectContext); err != nil {
+		&providerID, &effortByModelJSON, &configOptionsJSON, &mcpServersJSON, &toolPolicyJSON, &skipProjectContext); err != nil {
 		return nil, err
 	}
 
@@ -775,15 +775,15 @@ func scanAgentRow(rows *sql.Rows) (*Agent, error) {
 		agent.ProviderID = &id
 	}
 
-	decodeAgentColumns(agent, modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON)
+	decodeAgentColumns(agent, modelsJSON, levelsJSON, effortByModelJSON, configOptionsJSON, mcpServersJSON)
 	agent.ToolPolicy = DecodeToolPolicy(toolPolicyJSON)
 	return agent, nil
 }
 
-// decodeAgentColumns turns the four JSON-encoded agent columns into model
-// fields. Every failure degrades to the zero value rather than aborting the
-// load — see the per-column notes below.
-func decodeAgentColumns(agent *Agent, modelsJSON, levelsJSON, effortByModelJSON, mcpServersJSON string) {
+// decodeAgentColumns turns the JSON-encoded agent columns into model fields.
+// Every failure degrades to the zero value rather than aborting the load — see
+// the per-column notes below.
+func decodeAgentColumns(agent *Agent, modelsJSON, levelsJSON, effortByModelJSON, configOptionsJSON, mcpServersJSON string) {
 	if err := json.Unmarshal([]byte(modelsJSON), &agent.Models); err != nil {
 		agent.Models = nil
 	}
@@ -802,10 +802,29 @@ func decodeAgentColumns(agent *Agent, modelsJSON, levelsJSON, effortByModelJSON,
 	// Unreadable per-model picks degrade to "none" rather than failing the
 	// whole load: they only affect a default, and refusing to start (or to
 	// reload) over them would be far worse.
+	decodePerModelPicks(agent, effortByModelJSON, configOptionsJSON)
+}
+
+// decodePerModelPicks fills the two per-model memory maps: the thinking-effort
+// picks (issue #552) and the generic config-option picks (issue #746).
+//
+// The config-option column MUST be read here: the live AgentList is built by
+// this loader, so a pick written by a session (rememberConfigOptionPicks) lived
+// only in the published *Agent until the next reload — and every agent
+// create/edit/refresh calls LoadAgentsIntoMemory, which then silently dropped
+// it. That is what made "configured it in project A, a new session elsewhere
+// starts on the defaults" reproducible.
+func decodePerModelPicks(agent *Agent, effortByModelJSON, configOptionsJSON string) {
 	if effortByModelJSON != "" && effortByModelJSON != "{}" && effortByModelJSON != "null" {
 		var byModel map[string]string
 		if err := json.Unmarshal([]byte(effortByModelJSON), &byModel); err == nil && len(byModel) > 0 {
 			agent.ThinkingEffortByModel = byModel
+		}
+	}
+	if configOptionsJSON != "" && configOptionsJSON != "{}" && configOptionsJSON != "null" {
+		var byModel map[string]map[string]string
+		if err := json.Unmarshal([]byte(configOptionsJSON), &byModel); err == nil && len(byModel) > 0 {
+			agent.PreferredConfigOptions = byModel
 		}
 	}
 }
