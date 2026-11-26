@@ -166,6 +166,9 @@ func reviseLiveNotesTranscriptWithAgent(
 	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
 	pairs := make([]liveNotePair, 0, len(chunks)*8)
 	splits := make([]liveNoteSplit, 0, 2)
+	unusable := 0
+	var firstUnusable error
+	var firstUnusableChunk int
 	for i, chunk := range chunks {
 		block := liveNoteReviseBlock(background, glossary, chunk)
 		question := liveNotesReviseQuestion
@@ -185,16 +188,25 @@ func reviseLiveNotesTranscriptWithAgent(
 		}
 		chunkPairs, chunkSplits, err := parseLiveNoteAnswer(answer)
 		if err != nil {
-			slog.Warn("live notes: unusable proofread answer",
+			// Same rule as the summary path: one chunk's unusable answer costs
+			// that chunk's corrections, not the meeting's.
+			unusable++
+			if firstUnusable == nil {
+				firstUnusable, firstUnusableChunk = err, i+1
+			}
+			slog.Warn("live notes: unusable proofread answer, chunk left unproofread",
 				"chunk", i+1, "chunks", len(chunks), "agent", true, "err", err,
 				"answer", truncateRunes(answer, liveNotesReviseLogRunes))
-			return "", fmt.Errorf("live notes: agent revise chunk %d: %w", i+1, err)
+		} else {
+			pairs = append(pairs, chunkPairs...)
+			splits = append(splits, chunkSplits...)
 		}
-		pairs = append(pairs, chunkPairs...)
-		splits = append(splits, chunkSplits...)
 		if len(progress) > 0 && progress[0] != nil {
 			progress[0](i+1, len(chunks))
 		}
+	}
+	if unusable == len(chunks) {
+		return "", fmt.Errorf("live notes: agent revise chunk %d: %w", firstUnusableChunk, firstUnusable)
 	}
 	return applyLiveNoteEdits(transcript, pairs, splits), nil
 }

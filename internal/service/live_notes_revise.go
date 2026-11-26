@@ -63,11 +63,16 @@ const liveNoteSplitSpeakerMaxRunes = 20
 // ErrLiveNoteReviseFormat is returned when a chunk's answer is not a list of
 // replacement pairs.
 //
-// Deliberately fatal rather than falling back to "keep the raw text": the pair
-// format is what guarantees every timestamp, speaker and line survives, and a
-// proofreader that answered in some other shape has not demonstrated that. The
-// chain turns this into the usual proofread failure (raw transcript for the
-// initial job, a visible error for a manual regeneration).
+// One such chunk is no longer fatal. The pair format is what guarantees every
+// timestamp, speaker and line survives, so an answer in some other shape simply
+// contributes no edits — the chunk's raw text is already what the output keeps,
+// and the other chunks' corrections are unaffected. Failing the whole meeting
+// for it threw away every good chunk too, which is a worse trade than a chunk
+// that stays unproofread.
+//
+// It is still returned when EVERY chunk answered unusably: that is a model or
+// prompt problem, and a "proofread" that proofread nothing should say so rather
+// than hand back the raw transcript as if it had worked.
 var ErrLiveNoteReviseFormat = errors.New("live notes: proofreader did not answer with replacement pairs")
 
 // liveNotesRevisePrompt turns the proofreader into a diff generator.
@@ -229,6 +234,9 @@ func ReviseLiveNotesTranscript(
 	chunks := splitRunes(transcript, liveNotesReviseChunkRunes)
 	pairs := make([]liveNotePair, 0, len(chunks)*8)
 	splits := make([]liveNoteSplit, 0, 2)
+	unusable := 0
+	var firstUnusable error
+	var firstUnusableChunk int
 	for i, chunk := range chunks {
 		block := liveNoteReviseBlock(background, glossary, chunk)
 		question := liveNotesReviseQuestion
@@ -241,19 +249,30 @@ func ReviseLiveNotesTranscript(
 		}
 		chunkPairs, chunkSplits, err := parseLiveNoteAnswer(answer)
 		if err != nil {
+			// One chunk answering in the wrong shape costs this chunk's
+			// corrections and nothing else: the transcript it came from is
+			// already in the output verbatim, so the meeting keeps the other
+			// chunks' work instead of losing all of it.
+			unusable++
+			if firstUnusable == nil {
+				firstUnusable, firstUnusableChunk = err, i+1
+			}
 			// The answer itself goes to the log: the error only carries one
 			// line, and diagnosing "the model ignored the format" needs to see
 			// what it wrote instead.
-			slog.Warn("live notes: unusable proofread answer",
+			slog.Warn("live notes: unusable proofread answer, chunk left unproofread",
 				"chunk", i+1, "chunks", len(chunks), "err", err,
 				"answer", truncateRunes(answer, liveNotesReviseLogRunes))
-			return "", fmt.Errorf("live notes: revise chunk %d: %w", i+1, err)
+		} else {
+			pairs = append(pairs, chunkPairs...)
+			splits = append(splits, chunkSplits...)
 		}
-		pairs = append(pairs, chunkPairs...)
-		splits = append(splits, chunkSplits...)
 		if len(progress) > 0 && progress[0] != nil {
 			progress[0](i+1, len(chunks))
 		}
+	}
+	if unusable == len(chunks) {
+		return "", fmt.Errorf("live notes: revise chunk %d: %w", firstUnusableChunk, firstUnusable)
 	}
 	return applyLiveNoteEdits(transcript, pairs, splits), nil
 }

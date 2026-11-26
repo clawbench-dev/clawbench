@@ -1,12 +1,53 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// ── A chunk that answers in the wrong shape ────────────────────────────────
+
+// reviseFixture is a transcript long enough to be cut into two chunks, with the
+// misheard word only in the first one — so "the correction landed" and "the
+// second chunk is untouched" are both observable.
+func reviseFixture() []LiveNoteSegment {
+	return []LiveNoteSegment{
+		seg(1, "mic", "我", 1_700_000_000_000, "错词甲"+strings.Repeat("第一段的内容。", 700)),
+		seg(2, "mic", "我", 1_700_000_060_000, strings.Repeat("第二段的内容。", 700)),
+	}
+}
+
+// One chunk answering in prose used to fail the whole meeting, which threw away
+// every other chunk's corrections. The chunk's own text is already in the output
+// verbatim, so the honest result is "this part was not proofread".
+func TestReviseLiveNotesTranscript_OneUnusableChunkKeepsTheOtherChunksWork(t *testing.T) {
+	segments := reviseFixture()
+	require.Greater(t, len([]rune(BuildLiveNotesTranscript(segments))), liveNotesReviseChunkRunes,
+		"fixture must exceed one chunk or the chunk path is not exercised")
+	captureSummaryBodies(t, "错词甲 => 正确甲", "这一段整体没什么问题，建议人工再核对一下。")
+
+	got, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{Segments: segments})
+	require.NoError(t, err, "one bad chunk must not fail the meeting")
+	assert.Contains(t, got, "正确甲", "the usable chunk's correction must land")
+	assert.NotContains(t, got, "错词甲")
+	assert.Contains(t, got, "第二段的内容。", "the unusable chunk keeps its raw text")
+}
+
+// When every chunk answers unusably there is no proofread at all, and saying
+// "success" would hand back the raw transcript as if it had been checked.
+func TestReviseLiveNotesTranscript_EveryChunkUnusableIsAnError(t *testing.T) {
+	segments := reviseFixture()
+	captureSummaryBodies(t, "这一段整体没什么问题。", "这一段整体没什么问题。")
+
+	_, err := ReviseLiveNotesTranscript(context.Background(), LiveNotesReviseInput{Segments: segments})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrLiveNoteReviseFormat)
+	assert.Contains(t, err.Error(), "revise chunk 1")
+}
 
 // ── Empty and unusable answers ─────────────────────────────────────────────
 
