@@ -14,9 +14,9 @@ vi.mock('@/config/shortcutTips', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/config/shortcutTips')>()
   return {
     ...actual,
-    getShortcutTipsForContext: (ctx: ShortcutContext) =>
+    getShortcutTipsForContext: (ctx: ShortcutContext, voiceShortcut?: string) =>
       ctx === 'chat'
-        ? [{ context: 'chat' as ShortcutContext, contextKey: 'c.ctx', keys: ['Ctrl+K'], actionKey: 'a.ctx' }]
+        ? [{ context: 'chat' as ShortcutContext, contextKey: 'c.ctx', keys: [voiceShortcut ?? 'Ctrl+K'], actionKey: 'a.ctx' }]
         : [],
   }
 })
@@ -101,6 +101,11 @@ describe('ShortcutTipTicker', () => {
   it('renders context tips when no tips prop is given', async () => {
     const wrapper = await mountTicker({ tips: undefined, context: 'chat' })
     expect(wrapper.text()).toContain('c.ctx')
+  })
+
+  it('passes the configured recording shortcut to the context tips', async () => {
+    const wrapper = await mountTicker({ tips: undefined, context: 'chat', voiceShortcut: 'Ctrl+M' })
+    expect(wrapper.findAll('.stt-kbd').map((k) => k.text())).toEqual(['Ctrl+M'])
   })
 
   it('resets to the first tip when the tips list changes', async () => {

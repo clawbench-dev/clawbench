@@ -110,7 +110,7 @@ let bufferedGateTimer: ReturnType<typeof setInterval> | null = null
  * Read from the server config at `start()` rather than held as reactive state:
  * the microphone constraints and the gate threshold are baked into the audio
  * graph when it is built, so a change mid-recording could not take effect
- * anyway. A module-level value keeps every entry point (button, F9, free-dialog
+ * anyway. A module-level value keeps every entry point (button, shortcut, free-dialog
  * mode) using the same numbers.
  */
 let tuning: VoiceTuning = { ...VOICE_TUNING_DEFAULTS }
@@ -191,7 +191,7 @@ export function useVoiceInput() {
    *
    * The touch mic button is hidden while this is false: an entry point whose
    * only possible outcome is "go configure something" is worse than no entry
-   * point. The F9 shortcut still answers with the same hint, so the feature is
+   * point. The recording shortcut still answers with the same hint, so the feature is
    * discoverable without a dead button sitting on screen.
    */
   const configured = computed(() => Boolean(provider()))

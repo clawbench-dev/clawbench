@@ -1442,7 +1442,7 @@ export default {
       freeDialogOff: 'Continuous conversation off',
       freeDialogOffWithSpeech: 'Continuous conversation off — read-aloud turned back off',
       listening: 'Listening…',
-      releaseToStop: 'Release F9 to finish',
+      releaseToStop: 'Release {key} to finish',
       escToCancel: 'Esc to cancel',
       capsuleDoneHint: 'Not inserted — pick a destination',
       copied: 'Copied',

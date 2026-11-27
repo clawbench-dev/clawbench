@@ -121,6 +121,43 @@ describe('VoiceOverlay', () => {
     expect(el.selectionStart).toBe(4)
   })
 
+  // 设置 → 语音识别 → 录音快捷键: the configured key replaces F9 outright.
+  it('records on the configured shortcut instead of F9', async () => {
+    serverConfig.value = { stt: { provider: 'vllm', shortcut_key: 'Ctrl+M' } }
+    mountOverlay()
+    const el = field('帮我', 2)
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'F9' }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(useVoiceInput().state.value).toBe('idle')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyM', ctrlKey: true }))
+    await vi.waitFor(() => expect(useVoiceInput().state.value).toBe('recording'))
+    expect(document.querySelector('.voice-pill, .voice-capsule')?.textContent ?? '').not.toContain('F9')
+    // Letting go of Ctrl first still ends the take.
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'ControlLeft' }))
+    await vi.waitFor(() => expect(el.value).toBe('帮我听写'))
+  })
+
+  it('binds right Alt without answering to left Alt', async () => {
+    serverConfig.value = { stt: { provider: 'vllm', shortcut_key: 'AltRight' } }
+    mountOverlay()
+    document.body.focus()
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'AltLeft', altKey: true }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(useVoiceInput().state.value).toBe('idle')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'AltRight', altKey: true }))
+    await vi.waitFor(() => expect(useVoiceInput().state.value).toBe('recording'))
+    expect(document.querySelector('.voice-capsule')?.textContent).toContain('AltRight')
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'AltLeft' }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(useVoiceInput().state.value).toBe('recording')
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'AltRight' }))
+    await vi.waitFor(() => expect(useVoiceInput().draftPending.value).toBe(true))
+  })
+
   // The gesture that started a take cannot be released into a window that has
   // gone away: the keyup goes to the other app. Losing the window therefore ends
   // the take on its own — including while the microphone is still opening, the

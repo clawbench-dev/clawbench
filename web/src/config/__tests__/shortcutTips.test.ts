@@ -22,6 +22,21 @@ describe('SHORTCUT_TIPS', () => {
     }
   })
 
+  describe('voice recording tip', () => {
+    const voiceKeys = (tips: ReturnType<typeof getAllShortcutTips>) =>
+      tips.find(t => t.contextKey.endsWith('.contextVoice'))?.keys
+
+    it('shows F9 until a shortcut is configured', () => {
+      expect(voiceKeys(getAllShortcutTips())).toEqual(['F9'])
+      expect(voiceKeys(getAllShortcutTips('  '))).toEqual(['F9'])
+    })
+
+    it('follows the configured stt.shortcut_key', () => {
+      expect(voiceKeys(getAllShortcutTips('ctrl+m'))).toEqual(['Ctrl+M'])
+      expect(voiceKeys(getShortcutTipsForContext('browse', 'ctrl+m'))).toEqual(['Ctrl+M'])
+    })
+  })
+
   it('includes the jump-to-unread shortcut with the Ctrl+U key', () => {
     const jumpUnread = SHORTCUT_TIPS.find(tip => tip.contextKey.endsWith('.contextJumpUnread'))
     expect(jumpUnread).toBeDefined()

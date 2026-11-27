@@ -45,7 +45,7 @@
           </div>
           <div class="voice-capsule-sub">
             <template v-if="voiceState === 'recording'">
-              {{ elapsedText }} · {{ t('chat.voice.releaseToStop') }} · {{ t('chat.voice.escToCancel') }}
+              {{ elapsedText }} · {{ t('chat.voice.releaseToStop', { key: shortcutText }) }} · {{ t('chat.voice.escToCancel') }}
             </template>
             <template v-else-if="voiceState === 'transcribing'">{{ t('chat.voice.transcribing') }}</template>
             <template v-else>{{ t('chat.voice.capsuleDoneHint') }}</template>
@@ -97,10 +97,11 @@
  *   - nothing writable owns the caret → the capsule banner collects the text
  *     and offers copy / send to chat / discard (the `buffer` mode).
  *   - touch devices → a mic button floats next to the focused field, because
- *     there is no F9 to hold.
+ *     there is no shortcut key to hold.
  *
- * The F9 shortcut lives here rather than in the chat composer: it has to work
- * with focus anywhere in the app, and only one place may own it.
+ * The recording shortcut (`stt.shortcut_key`, F9 by default) lives here rather
+ * than in the chat composer: it has to work with focus anywhere in the app, and
+ * only one place may own it.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -112,6 +113,7 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useToast } from '@/composables/useToast'
 import { createVoiceTarget, writeVoiceText } from '@/utils/voiceTarget'
 import { copyText } from '@/utils/clipboard'
+import { matchesShortcut, parseShortcut, releasesShortcut, shortcutLabel } from '@/utils/shortcutKey'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -265,7 +267,7 @@ let fabRect: { left: number; right: number; top: number; bottom: number } | null
 
 const fabVisible = computed(() => {
   // No recognition engine → no button. Pressing it could only ever produce
-  // "go configure it"; F9 still gives that hint for discoverability.
+  // "go configure it"; the shortcut still gives that hint for discoverability.
   if (!configured.value) return false
   if (!isTouchPrimary.value || voiceState.value !== 'idle' || targetEl.value) return false
   const el = focusEl.value
@@ -374,6 +376,12 @@ function onFabCancel() {
 }
 
 /* ── global shortcut ──────────────────────────────────────────────── */
+const recordShortcut = computed(() => parseShortcut(shortcutKey()))
+const shortcutText = computed(() => shortcutLabel(shortcutKey()))
+// Set by the keydown that started a take, so releasing a bare Ctrl while
+// typing does not end (or pre-empt) anything.
+let shortcutHeld = false
+
 function inTerminal(): boolean {
   const el = document.activeElement as HTMLElement | null
   return !!el?.closest?.('.xterm')
@@ -388,19 +396,19 @@ function onKeyDown(e: KeyboardEvent) {
     cancel()
     return
   }
-  if (e.code !== 'F9' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-  // Only the F9 binding is supported (see useVoiceInput.shortcutKey).
-  if (shortcutKey() !== 'F9') return
-  // The terminal consumes function keys itself; F9 there belongs to the shell.
+  if (!matchesShortcut(e, recordShortcut.value)) return
+  // The terminal consumes function keys itself; the shortcut there belongs to the shell.
   if (inTerminal()) return
   e.preventDefault()
+  shortcutHeld = true
   if (e.repeat) return
   void startGlobal()
 }
 
 function onKeyUp(e: KeyboardEvent) {
-  if (e.code !== 'F9' || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
-  if (shortcutKey() !== 'F9' || inTerminal()) return
+  // Releasing the main key or any modifier of the combination ends the take.
+  if (!shortcutHeld || !releasesShortcut(e, recordShortcut.value)) return
+  shortcutHeld = false
   e.preventDefault()
   void stop()
 }
@@ -417,6 +425,7 @@ function onKeyUp(e: KeyboardEvent) {
  * that is still waiting for the microphone, and the next begin() clears it.
  */
 function onWindowBlur() {
+  shortcutHeld = false
   void stop()
 }
 

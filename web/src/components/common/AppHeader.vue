@@ -58,11 +58,12 @@
     <ShortcutTipTicker
       v-if="isWideScreen && (!isAppMode || isDesktopApp) && localConfig.headerShortcutTips"
       :context="shortcutContext"
+      :voice-shortcut="voiceShortcut"
       class="header-tips"
       :title="t('appHeader.shortcutTipsDialog.openTip')"
       @click="shortcutTipsOpen = true"
     />
-    <ShortcutTipsDialog :open="shortcutTipsOpen" @close="shortcutTipsOpen = false" />
+    <ShortcutTipsDialog :open="shortcutTipsOpen" :voice-shortcut="voiceShortcut" @close="shortcutTipsOpen = false" />
 
     <!-- Usage meter capsule. Wide screens only: the header is a desktop
          surface, and on a phone the same numbers live at the end of the
@@ -366,7 +367,8 @@ import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
-import { localConfig } from '@/composables/useSettingsConfig'
+import { localConfig, serverConfig } from '@/composables/useSettingsConfig'
+import { readSttField } from '@/utils/audioTuning'
 import { useSystemResources } from '@/composables/useSystemResources'
 import { useUsageMeter } from '@/composables/useUsageMeter'
 import UsageMeterPopover from '@/components/common/UsageMeterPopover.vue'
@@ -406,6 +408,11 @@ const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
 // stranded next to the project badge.
 const showUsageMeter = computed(() => isWideScreen.value && usageMeter.hasData.value)
 const activeTab = inject<Ref<string>>('activeTab', ref('chat'))
+// The recording shortcut from 设置 → 语音识别, shown in the voice tip instead of F9.
+const voiceShortcut = computed(() => {
+  const raw = readSttField(serverConfig.value, 'shortcut_key')
+  return typeof raw === 'string' ? raw : undefined
+})
 const shortcutContext = computed<ShortcutContext>(() =>
   resolveShortcutContext({
     isWideScreen: isWideScreen.value,

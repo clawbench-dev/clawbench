@@ -1445,7 +1445,7 @@ export default {
       freeDialogOff: '连续对话已关闭',
       freeDialogOffWithSpeech: '连续对话已关闭，朗读已恢复关闭',
       listening: '正在听…',
-      releaseToStop: '松开 F9 结束',
+      releaseToStop: '松开 {key} 结束',
       escToCancel: 'Esc 取消',
       capsuleDoneHint: '还没插入，选个去处',
       copied: '已复制',

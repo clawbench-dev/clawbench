@@ -42,11 +42,15 @@ import { Keyboard } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { getAllShortcutTips, SHORTCUT_CONTEXT_ORDER, type ShortcutTipDef } from '@/config/shortcutTips'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{
+  open: boolean
+  /** Configured recording shortcut (`stt.shortcut_key`). */
+  voiceShortcut?: string
+}>()
 defineEmits(['close'])
 const { t } = useI18n()
 
-const all = computed<ShortcutTipDef[]>(() => getAllShortcutTips())
+const all = computed<ShortcutTipDef[]>(() => getAllShortcutTips(props.voiceShortcut))
 const groups = computed(() =>
   SHORTCUT_CONTEXT_ORDER
     .map((ctx) => ({ context: ctx, tips: all.value.filter((x) => x.context === ctx) }))

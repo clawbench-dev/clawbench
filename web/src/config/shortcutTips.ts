@@ -5,6 +5,8 @@
  * adding its context/action text to the i18n locales). No component changes.
  */
 
+import { shortcutLabel } from '@/utils/shortcutKey'
+
 export type ShortcutContext =
   | 'common'   // 公共/全局，任何 tab 都显示
   | 'chat'     // 常驻聊天（PC 模式聊天面板常驻，任何 tab 都显示）
@@ -23,6 +25,8 @@ export interface ShortcutTipDef {
   contextKey: string
   /** Highlighted key names (language-neutral). Optional. */
   keys?: string[]
+  /** `keys` is the recording shortcut (`stt.shortcut_key`); the getters swap in the configured one. */
+  voiceShortcut?: boolean
   /** i18n key → action description / how to enable. */
   actionKey: string
 }
@@ -48,7 +52,7 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextArchiveSession', keys: ['Ctrl+Delete'], actionKey: 'appHeader.shortcutTip.actionArchiveSession' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextJumpMessage', keys: ['Ctrl+↑', 'Ctrl+↓'], actionKey: 'appHeader.shortcutTip.actionJumpMessage' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextAskSubmit', keys: ['Ctrl+Enter'], actionKey: 'appHeader.shortcutTip.actionAskSubmit' },
-  { context: 'chat', contextKey: 'appHeader.shortcutTip.contextVoice', keys: ['F9'], actionKey: 'appHeader.shortcutTip.actionVoice' },
+  { context: 'chat', contextKey: 'appHeader.shortcutTip.contextVoice', keys: ['F9'], voiceShortcut: true, actionKey: 'appHeader.shortcutTip.actionVoice' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextRecommend', actionKey: 'appHeader.shortcutTip.actionRecommend' },
   { context: 'chat', contextKey: 'appHeader.shortcutTip.contextRecommendEnable', actionKey: 'appHeader.shortcutTip.actionRecommendEnable' },
 
@@ -96,14 +100,21 @@ export const SHORTCUT_TIPS: ShortcutTipDef[] = [
   { context: 'proxy', contextKey: 'appHeader.shortcutTip.contextProxySave', keys: ['Enter'], actionKey: 'appHeader.shortcutTip.actionProxySave' },
 ]
 
+/** Show the configured recording shortcut (设置 → 语音识别) instead of the default F9. */
+function withVoiceShortcut(tips: ShortcutTipDef[], voiceShortcut?: string): ShortcutTipDef[] {
+  const key = voiceShortcut?.trim()
+  if (!key) return tips
+  return tips.map(tip => (tip.voiceShortcut ? { ...tip, keys: [shortcutLabel(key)] } : tip))
+}
+
 /** 轮播列表：common 恒包含 + chat 常驻恒包含 + 指定 context 自身的提示。 */
-export function getShortcutTipsForContext(ctx: ShortcutContext): ShortcutTipDef[] {
-  return SHORTCUT_TIPS.filter(tip => tip.context === ctx || tip.context === 'common' || tip.context === 'chat')
+export function getShortcutTipsForContext(ctx: ShortcutContext, voiceShortcut?: string): ShortcutTipDef[] {
+  return withVoiceShortcut(SHORTCUT_TIPS.filter(tip => tip.context === ctx || tip.context === 'common' || tip.context === 'chat'), voiceShortcut)
 }
 
 /** 对话框全部提示，按 SHORTCUT_CONTEXT_ORDER 排序。 */
-export function getAllShortcutTips(): ShortcutTipDef[] {
-  return SHORTCUT_CONTEXT_ORDER.flatMap(ctx => SHORTCUT_TIPS.filter(tip => tip.context === ctx))
+export function getAllShortcutTips(voiceShortcut?: string): ShortcutTipDef[] {
+  return withVoiceShortcut(SHORTCUT_CONTEXT_ORDER.flatMap(ctx => SHORTCUT_TIPS.filter(tip => tip.context === ctx)), voiceShortcut)
 }
 
 /**

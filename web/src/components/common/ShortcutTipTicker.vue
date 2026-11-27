@@ -20,6 +20,8 @@ import { getShortcutTipsForContext, type ShortcutContext, type ShortcutTipDef } 
 const props = withDefaults(defineProps<{
   tips?: ShortcutTipDef[]
   context?: ShortcutContext
+  /** Configured recording shortcut (`stt.shortcut_key`). */
+  voiceShortcut?: string
   showMs?: number
   horizDelayMs?: number
   horizMsPerPx?: number
@@ -28,6 +30,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   tips: undefined,
   context: 'chat',
+  voiceShortcut: undefined,
   showMs: 10000,
   horizDelayMs: 800,
   horizMsPerPx: 8,
@@ -45,7 +48,7 @@ const overflowPx = ref(0)
 const horizDurationMs = ref(0)
 const vertPhase = ref<'out' | 'in' | ''>('')
 
-const effectiveTips = computed(() => props.tips ?? getShortcutTipsForContext(props.context))
+const effectiveTips = computed(() => props.tips ?? getShortcutTipsForContext(props.context, props.voiceShortcut))
 const tip = computed(() => effectiveTips.value[currentIndex.value] ?? null)
 
 const hscrollStyle = computed(() => {

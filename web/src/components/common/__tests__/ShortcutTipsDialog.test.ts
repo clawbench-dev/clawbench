@@ -15,15 +15,15 @@ vi.mock('vue-i18n', async (importOriginal) => {
 })
 
 type MockTip = { context: string; contextKey: string; keys?: string[]; actionKey: string }
-const mockAll = vi.fn<() => MockTip[]>()
+const mockAll = vi.fn<(voiceShortcut?: string) => MockTip[]>()
 vi.mock('@/config/shortcutTips', () => ({
-  getAllShortcutTips: () => mockAll(),
+  getAllShortcutTips: (voiceShortcut?: string) => mockAll(voiceShortcut),
   SHORTCUT_CONTEXT_ORDER: ['common', 'chat', 'browse'],
 }))
 
-async function mountDialog(open = true) {
+async function mountDialog(open = true, voiceShortcut?: string) {
   const wrapper = mount(ShortcutTipsDialog, {
-    props: { open },
+    props: { open, voiceShortcut },
     attachTo: document.body,
   })
   await nextTick()
@@ -34,6 +34,12 @@ describe('ShortcutTipsDialog', () => {
   beforeEach(() => {
     mockAll.mockReset()
     document.body.innerHTML = ''
+  })
+
+  it('passes the configured recording shortcut to the tips', async () => {
+    mockAll.mockReturnValue([])
+    await mountDialog(true, 'Ctrl+M')
+    expect(mockAll).toHaveBeenCalledWith('Ctrl+M')
   })
 
   it('renders grouped tables with keys/context/action columns', async () => {
